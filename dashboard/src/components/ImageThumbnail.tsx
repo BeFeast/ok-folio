@@ -10,7 +10,7 @@ interface ImageThumbnailProps {
 export default function ImageThumbnail({ photoId, title, onClick, className = '' }: ImageThumbnailProps) {
   return (
     <div
-      className={`bg-gray-200 rounded overflow-hidden cursor-pointer hover:opacity-80 transition-opacity ${className || 'w-32 h-24'}`}
+      className={`overflow-hidden bg-[color:var(--folio-surface-muted)] cursor-pointer transition-opacity hover:opacity-85 ${className || 'w-32 h-24'}`}
       onClick={onClick}
       title={title}
     >

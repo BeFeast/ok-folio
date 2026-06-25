@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { fetchGalleryCatalog } from "../api";
 import ImageThumbnail from "../components/ImageThumbnail";
-import type { GalleryFavoriteFacet } from "../types";
+import type { GalleryFavoriteFacet, Photo } from "../types";
 import { formatBytes, formatDate, formatNumber } from "../utils";
 
 const PAGE_SIZE = 100;
@@ -11,9 +11,17 @@ const ALL_FAVORITES = "all";
 const ALL_ARTISTS = "__all_artists__";
 
 type FavoriteFilter = typeof ALL_FAVORITES | "true" | "false";
+type GalleryMode = "library" | "magazine" | "wall";
+
+const galleryModes: { id: GalleryMode; label: string }[] = [
+  { id: "library", label: "Library" },
+  { id: "magazine", label: "Magazine" },
+  { id: "wall", label: "Wall" },
+];
 
 export default function Gallery() {
   const [offset, setOffset] = useState(0);
+  const [mode, setMode] = useState<GalleryMode>("library");
   const [providerFilter, setProviderFilter] = useState("");
   const [sourceFilter, setSourceFilter] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
@@ -119,7 +127,7 @@ export default function Gallery() {
 
   if (isLoading) {
     return (
-      <div className="flex min-h-64 items-center justify-center text-sm text-gray-600" role="status">
+      <div className="flex min-h-64 items-center justify-center text-sm text-[color:var(--folio-graphite)]" role="status">
         Loading OK Folio gallery...
       </div>
     );
@@ -127,9 +135,9 @@ export default function Gallery() {
 
   if (error) {
     return (
-      <div className="rounded border border-red-200 bg-red-50 p-4">
-        <p className="text-sm font-medium text-red-900">Failed to load OK Folio gallery.</p>
-        <p className="mt-1 text-sm text-red-800">
+      <div className="border border-red-300 bg-red-50 p-4 dark:bg-red-950/30">
+        <p className="text-sm font-medium text-red-900 dark:text-red-100">Failed to load OK Folio gallery.</p>
+        <p className="mt-1 text-sm text-red-800 dark:text-red-200">
           The gallery uses the local catalog and image endpoints. Check the API service, then retry.
         </p>
       </div>
@@ -138,24 +146,38 @@ export default function Gallery() {
 
   return (
     <div className="space-y-6">
-      <section className="flex flex-col gap-4 border-b border-gray-200 pb-5 md:flex-row md:items-end md:justify-between">
+      <section className="flex flex-col gap-4 border-b border-[color:var(--folio-line)] pb-5 md:flex-row md:items-end md:justify-between">
         <div>
-          <h2 className="text-2xl font-semibold text-gray-950">Gallery</h2>
-          <p className="mt-1 text-sm text-gray-600">{resultCopy}</p>
+          <p className="text-xs font-medium uppercase tracking-[0.18em] text-[color:var(--folio-accent)]">
+            Aggregated catalog
+          </p>
+          <h2 className="mt-1 font-serif text-3xl text-[color:var(--folio-ink)]">Gallery</h2>
+          <p className="mt-1 text-sm text-[color:var(--folio-graphite)]">{resultCopy}</p>
         </div>
-        <div className="flex flex-wrap items-center gap-2 text-sm text-gray-600">
-          <Link
-            to="/operations"
-            className="rounded border border-gray-300 bg-white px-3 py-2 text-gray-800 hover:bg-gray-50"
-          >
-            Operations
-          </Link>
+        <div className="flex flex-wrap items-center gap-3 text-sm text-[color:var(--folio-graphite)]">
+          <div className="inline-flex border border-[color:var(--folio-line)] bg-[color:var(--folio-surface)] p-1">
+            {galleryModes.map((galleryMode) => (
+              <button
+                key={galleryMode.id}
+                type="button"
+                className={`px-3 py-1.5 text-sm font-medium transition-colors ${
+                  mode === galleryMode.id
+                    ? "bg-[color:var(--folio-accent)] text-white"
+                    : "text-[color:var(--folio-graphite)] hover:text-[color:var(--folio-ink)]"
+                }`}
+                onClick={() => setMode(galleryMode.id)}
+                aria-pressed={mode === galleryMode.id}
+              >
+                {galleryMode.label}
+              </button>
+            ))}
+          </div>
           <span>
             Showing {formatNumber(showingStart)}-{formatNumber(showingEnd)}
           </span>
           <button
             type="button"
-            className="rounded border border-gray-300 bg-white px-3 py-2 text-gray-800 disabled:cursor-not-allowed disabled:opacity-40"
+            className="border border-[color:var(--folio-line)] bg-[color:var(--folio-surface)] px-3 py-2 text-[color:var(--folio-ink)] disabled:cursor-not-allowed disabled:opacity-40"
             disabled={!hasPreviousPage || isFetching}
             onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
           >
@@ -163,7 +185,7 @@ export default function Gallery() {
           </button>
           <button
             type="button"
-            className="rounded border border-gray-300 bg-white px-3 py-2 text-gray-800 disabled:cursor-not-allowed disabled:opacity-40"
+            className="border border-[color:var(--folio-line)] bg-[color:var(--folio-surface)] px-3 py-2 text-[color:var(--folio-ink)] disabled:cursor-not-allowed disabled:opacity-40"
             disabled={!hasNextPage || isFetching}
             onClick={() => setOffset(offset + PAGE_SIZE)}
           >
@@ -173,15 +195,15 @@ export default function Gallery() {
       </section>
 
       <div className="grid gap-6 lg:grid-cols-[18rem_minmax(0,1fr)]">
-        <aside className="space-y-5 border-b border-gray-200 pb-5 lg:border-b-0 lg:border-r lg:pb-0 lg:pr-6">
+        <aside className="space-y-5 border-b border-[color:var(--folio-line)] pb-5 lg:border-b-0 lg:border-r lg:pb-0 lg:pr-6">
           <div className="space-y-2">
-            <label htmlFor="gallery-search" className="text-sm font-medium text-gray-800">
+            <label htmlFor="gallery-search" className="text-sm font-medium text-[color:var(--folio-ink)]">
               Search
             </label>
             <input
               id="gallery-search"
               type="search"
-              className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900"
+              className="w-full border border-[color:var(--folio-line)] bg-[color:var(--folio-surface)] px-3 py-2 text-sm text-[color:var(--folio-ink)]"
               value={query}
               onChange={(event) => {
                 setQuery(event.target.value);
@@ -233,10 +255,10 @@ export default function Gallery() {
             }}
           />
 
-          <label className="block text-sm font-medium text-gray-800">
+          <label className="block text-sm font-medium text-[color:var(--folio-ink)]">
             <span className="mb-1 block">Favorites</span>
             <select
-              className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900"
+              className="w-full border border-[color:var(--folio-line)] bg-[color:var(--folio-surface)] px-3 py-2 text-sm text-[color:var(--folio-ink)]"
               value={favoriteFilter}
               onChange={(event) => {
                 setFavoriteFilter(event.target.value as FavoriteFilter);
@@ -253,12 +275,12 @@ export default function Gallery() {
           </label>
 
           {activeFilters.length > 0 && (
-            <div className="space-y-3 border-t border-gray-200 pt-4">
+            <div className="space-y-3 border-t border-[color:var(--folio-line)] pt-4">
               <div className="flex items-center justify-between gap-3">
-                <h3 className="text-sm font-medium text-gray-900">Active filters</h3>
+                <h3 className="text-sm font-medium text-[color:var(--folio-ink)]">Active filters</h3>
                 <button
                   type="button"
-                  className="text-sm text-gray-600 hover:text-gray-950"
+                  className="text-sm text-[color:var(--folio-graphite)] hover:text-[color:var(--folio-ink)]"
                   onClick={clearFilters}
                 >
                   Clear
@@ -267,8 +289,8 @@ export default function Gallery() {
               <dl className="space-y-2">
                 {activeFilters.map((filter) => (
                   <div key={`${filter.label}:${filter.value}`} className="min-w-0">
-                    <dt className="text-xs uppercase text-gray-500">{filter.label}</dt>
-                    <dd className="truncate text-sm text-gray-900" title={filter.value}>
+                    <dt className="text-xs uppercase text-[color:var(--folio-graphite)]">{filter.label}</dt>
+                    <dd className="truncate text-sm text-[color:var(--folio-ink)]" title={filter.value}>
                       {filter.value}
                     </dd>
                   </div>
@@ -278,7 +300,7 @@ export default function Gallery() {
           )}
 
           {isFetching && (
-            <span className="text-sm text-gray-500" role="status">
+            <span className="text-sm text-[color:var(--folio-graphite)]" role="status">
               Refreshing catalog...
             </span>
           )}
@@ -286,69 +308,139 @@ export default function Gallery() {
 
         <div className="min-w-0">
           {total === 0 ? (
-            <section className="rounded border border-dashed border-gray-300 bg-white px-6 py-14 text-center">
-              <h3 className="text-base font-medium text-gray-900">
+            <section className="border border-dashed border-[color:var(--folio-line)] bg-[color:var(--folio-surface)] px-6 py-14 text-center">
+              <h3 className="text-base font-medium text-[color:var(--folio-ink)]">
                 {hasActiveFilter ? "No pieces match these filters" : "No cataloged pieces yet"}
               </h3>
-              <p className="mt-2 text-sm text-gray-600">
+              <p className="mt-2 text-sm text-[color:var(--folio-graphite)]">
                 {hasActiveFilter
                   ? "Try another search term or relax one of the facets."
-                  : "Run an extraction from Operations, then downloaded provider media will appear here."}
+                  : "Connect streams, then downloaded provider media will appear here."}
               </p>
               <div className="mt-5 flex justify-center gap-2">
                 {hasActiveFilter && (
                   <button
                     type="button"
-                    className="rounded border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 hover:bg-gray-50"
+                    className="border border-[color:var(--folio-line)] bg-[color:var(--folio-surface)] px-3 py-2 text-sm text-[color:var(--folio-ink)] hover:bg-[color:var(--folio-surface-muted)]"
                     onClick={clearFilters}
                   >
                     Clear filters
                   </button>
                 )}
                 <Link
-                  to="/operations"
-                  className="rounded border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 hover:bg-gray-50"
+                  to="/streams"
+                  className="border border-[color:var(--folio-line)] bg-[color:var(--folio-surface)] px-3 py-2 text-sm text-[color:var(--folio-ink)] hover:bg-[color:var(--folio-surface-muted)]"
                 >
-                  Operations
+                  Streams
                 </Link>
               </div>
             </section>
           ) : (
-            <section className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5">
-              {photos.map((photo) => (
-                <article key={photo.ID} className="min-w-0">
-                  <Link to={`/pieces/${photo.ID}`} className="block">
-                    <ImageThumbnail
-                      photoId={photo.ID}
-                      title={photo.Title}
-                      className="aspect-[4/3] w-full rounded"
-                    />
-                  </Link>
-                  <div className="mt-2 min-w-0 text-xs">
-                    <Link
-                      to={`/pieces/${photo.ID}`}
-                      className="block w-full truncate text-left font-medium text-gray-950"
-                      title={photo.Title}
-                    >
-                      {photo.Title || photo.FileName}
-                    </Link>
-                    <Link
-                      to={`/artists/${encodeURIComponent(photo.Artist)}`}
-                      className="mt-1 block truncate text-gray-600 hover:text-gray-950"
-                      title={photo.Artist}
-                    >
-                      {photo.Artist || "Unknown artist"}
-                    </Link>
-                    <div className="mt-1 truncate text-gray-500">
-                      {formatDate(photo.DownloadedAt)} · {formatBytes(photo.FileSize)}
-                    </div>
-                  </div>
-                </article>
-              ))}
-            </section>
+            <GalleryModeView mode={mode} photos={photos} />
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function GalleryModeView({ mode, photos }: { mode: GalleryMode; photos: Photo[] }) {
+  if (mode === "magazine") {
+    const [feature, ...rest] = photos;
+    return (
+      <section className="space-y-6">
+        {feature && (
+          <article className="grid gap-5 border border-[color:var(--folio-line)] bg-[color:var(--folio-surface)] p-4 shadow-[var(--folio-shadow)] md:grid-cols-[minmax(0,1.4fr)_minmax(16rem,0.6fr)]">
+            <Link to={`/pieces/${feature.ID}`} className="block">
+              <ImageThumbnail
+                photoId={feature.ID}
+                title={feature.Title}
+                className="aspect-[16/10] w-full"
+              />
+            </Link>
+            <PieceText photo={feature} size="large" />
+          </article>
+        )}
+        <section className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-3">
+          {rest.map((photo) => (
+            <article key={photo.ID} className="min-w-0 border border-[color:var(--folio-line)] bg-[color:var(--folio-surface)] p-3">
+              <Link to={`/pieces/${photo.ID}`} className="block">
+                <ImageThumbnail
+                  photoId={photo.ID}
+                  title={photo.Title}
+                  className="aspect-[5/4] w-full"
+                />
+              </Link>
+              <PieceText photo={photo} />
+            </article>
+          ))}
+        </section>
+      </section>
+    );
+  }
+
+  if (mode === "wall") {
+    return (
+      <section className="columns-2 gap-3 sm:columns-3 lg:columns-4 xl:columns-5">
+        {photos.map((photo, index) => (
+          <Link
+            key={photo.ID}
+            to={`/pieces/${photo.ID}`}
+            className="mb-3 block break-inside-avoid border border-[color:var(--folio-line)] bg-[color:var(--folio-surface)] p-2"
+            title={photo.Title || photo.FileName}
+          >
+            <ImageThumbnail
+              photoId={photo.ID}
+              title={photo.Title}
+              className={`${index % 5 === 0 ? "aspect-[3/4]" : index % 3 === 0 ? "aspect-square" : "aspect-[4/3]"} w-full`}
+            />
+          </Link>
+        ))}
+      </section>
+    );
+  }
+
+  return (
+    <section className="grid grid-cols-3 gap-x-3 gap-y-5 sm:grid-cols-4 md:grid-cols-5 xl:grid-cols-7">
+      {photos.map((photo) => (
+        <article key={photo.ID} className="min-w-0">
+          <Link to={`/pieces/${photo.ID}`} className="block">
+            <ImageThumbnail
+              photoId={photo.ID}
+              title={photo.Title}
+              className="aspect-[4/3] w-full"
+            />
+          </Link>
+          <PieceText photo={photo} compact />
+        </article>
+      ))}
+    </section>
+  );
+}
+
+function PieceText({ photo, compact = false, size = "normal" }: { photo: Photo; compact?: boolean; size?: "normal" | "large" }) {
+  const title = photo.Title || photo.FileName;
+  return (
+    <div className={`${compact ? "mt-1.5" : "mt-3"} min-w-0 text-xs`}>
+      <Link
+        to={`/pieces/${photo.ID}`}
+        className={`${size === "large" ? "font-serif text-2xl" : "font-medium"} block w-full truncate text-left text-[color:var(--folio-ink)]`}
+        title={title}
+      >
+        {title}
+      </Link>
+      <Link
+        to={`/artists/${encodeURIComponent(photo.Artist)}`}
+        className={`${compact ? "mt-0.5" : "mt-1"} block truncate text-[color:var(--folio-graphite)] hover:text-[color:var(--folio-ink)]`}
+        title={photo.Artist}
+      >
+        {photo.Artist || "Unknown artist"}
+      </Link>
+      {!compact && (
+        <div className="mt-1 truncate text-[color:var(--folio-graphite)]">
+          {formatDate(photo.DownloadedAt)} - {formatBytes(photo.FileSize)}
+        </div>
+      )}
     </div>
   );
 }
@@ -364,10 +456,10 @@ interface FacetSelectProps {
 
 function FacetSelect({ label, value, allLabel, allValue = "", options, onChange }: FacetSelectProps) {
   return (
-    <label className="block text-sm font-medium text-gray-800">
+    <label className="block text-sm font-medium text-[color:var(--folio-ink)]">
       <span className="mb-1 block">{label}</span>
       <select
-        className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900"
+        className="w-full border border-[color:var(--folio-line)] bg-[color:var(--folio-surface)] px-3 py-2 text-sm text-[color:var(--folio-ink)]"
         value={value ?? allValue}
         onChange={(event) => onChange(event.target.value)}
       >
