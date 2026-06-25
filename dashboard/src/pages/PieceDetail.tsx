@@ -39,15 +39,15 @@ export default function PieceDetail() {
 
   if (!Number.isInteger(id) || id <= 0) {
     return (
-      <div className="rounded border border-red-200 bg-red-50 p-4">
-        <p className="text-sm font-medium text-red-900">Invalid piece route.</p>
+      <div className="border border-red-300 bg-red-50 p-4 dark:bg-red-950/30">
+        <p className="text-sm font-medium text-red-900 dark:text-red-100">Invalid piece route.</p>
       </div>
     );
   }
 
   if (isLoading) {
     return (
-      <div className="flex min-h-64 items-center justify-center text-sm text-gray-600" role="status">
+      <div className="flex min-h-64 items-center justify-center text-sm text-[color:var(--folio-graphite)]" role="status">
         Loading piece...
       </div>
     );
@@ -55,9 +55,9 @@ export default function PieceDetail() {
 
   if (error || !piece) {
     return (
-      <div className="rounded border border-red-200 bg-red-50 p-4">
-        <p className="text-sm font-medium text-red-900">Failed to load piece.</p>
-        <p className="mt-1 text-sm text-red-800">
+      <div className="border border-red-300 bg-red-50 p-4 dark:bg-red-950/30">
+        <p className="text-sm font-medium text-red-900 dark:text-red-100">Failed to load piece.</p>
+        <p className="mt-1 text-sm text-red-800 dark:text-red-200">
           The detail route reads from the local OK Folio API. Check the API service, then retry.
         </p>
       </div>
@@ -72,12 +72,12 @@ export default function PieceDetail() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-3 border-b border-gray-200 pb-5 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-3 border-b border-[color:var(--folio-line)] pb-5 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
-          <Link to="/" className="text-sm font-medium text-gray-600 hover:text-gray-950">
+          <Link to="/" className="text-sm font-medium text-[color:var(--folio-graphite)] hover:text-[color:var(--folio-ink)]">
             Back to gallery
           </Link>
-          <h2 className="mt-2 truncate text-2xl font-semibold text-gray-950">
+          <h2 className="mt-2 truncate font-serif text-2xl text-[color:var(--folio-ink)]">
             {title}
           </h2>
         </div>
@@ -85,8 +85,8 @@ export default function PieceDetail() {
           type="button"
           className={`w-fit rounded border px-4 py-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50 ${
             piece.favorite
-              ? "border-gray-950 bg-gray-950 text-white hover:bg-gray-800"
-              : "border-gray-300 bg-white text-gray-900 hover:bg-gray-50"
+              ? "border-[color:var(--folio-accent)] bg-[color:var(--folio-accent)] text-white hover:bg-[color:var(--folio-accent-strong)]"
+              : "border-[color:var(--folio-line)] bg-[color:var(--folio-surface)] text-[color:var(--folio-ink)] hover:bg-[color:var(--folio-surface-muted)]"
           }`}
           disabled={isUpdatingFavorite}
           onClick={() => favoriteMutation.mutate(!piece.favorite)}
@@ -103,21 +103,21 @@ export default function PieceDetail() {
         />
       </section>
 
-      <section className="grid gap-6 border-t border-gray-200 pt-6 lg:grid-cols-[2fr_1fr]">
+      <section className="grid gap-6 border-t border-[color:var(--folio-line)] pt-6 lg:grid-cols-[2fr_1fr]">
         <div className="min-w-0">
-          <h3 className="text-base font-semibold text-gray-950">Provenance</h3>
+          <h3 className="text-base font-semibold text-[color:var(--folio-ink)]">Provenance</h3>
           <dl className="mt-4 grid gap-4 sm:grid-cols-2">
             <div>
-              <dt className="text-xs font-medium uppercase text-gray-500">Source</dt>
-              <dd className="mt-1 break-words text-sm text-gray-950">{source}</dd>
+              <dt className="text-xs font-medium uppercase text-[color:var(--folio-graphite)]">Source</dt>
+              <dd className="mt-1 break-words text-sm text-[color:var(--folio-ink)]">{source}</dd>
             </div>
             <div>
-              <dt className="text-xs font-medium uppercase text-gray-500">Artist</dt>
-              <dd className="mt-1 text-sm text-gray-950">
+              <dt className="text-xs font-medium uppercase text-[color:var(--folio-graphite)]">Artist</dt>
+              <dd className="mt-1 text-sm text-[color:var(--folio-ink)]">
                 {piece.artist ? (
                   <Link
                     to={`/artists/${encodeURIComponent(piece.artist)}`}
-                    className="hover:text-gray-600"
+                    className="hover:text-[color:var(--folio-accent)]"
                   >
                     {artist}
                   </Link>
@@ -127,36 +127,36 @@ export default function PieceDetail() {
               </dd>
             </div>
             <div>
-              <dt className="text-xs font-medium uppercase text-gray-500">Date</dt>
-              <dd className="mt-1 text-sm text-gray-950">{formatDate(piece.upload_date)}</dd>
+              <dt className="text-xs font-medium uppercase text-[color:var(--folio-graphite)]">Date</dt>
+              <dd className="mt-1 text-sm text-[color:var(--folio-ink)]">{formatDate(piece.upload_date)}</dd>
             </div>
             <div>
-              <dt className="text-xs font-medium uppercase text-gray-500">Category</dt>
-              <dd className="mt-1 text-sm text-gray-950">{category}</dd>
+              <dt className="text-xs font-medium uppercase text-[color:var(--folio-graphite)]">Category</dt>
+              <dd className="mt-1 text-sm text-[color:var(--folio-ink)]">{category}</dd>
             </div>
           </dl>
         </div>
 
         <div>
-          <h3 className="text-base font-semibold text-gray-950">File</h3>
+          <h3 className="text-base font-semibold text-[color:var(--folio-ink)]">File</h3>
           <dl className="mt-4 space-y-4">
             <div>
-              <dt className="text-xs font-medium uppercase text-gray-500">Downloaded</dt>
-              <dd className="mt-1 text-sm text-gray-950">{formatDate(piece.downloaded_at)}</dd>
+              <dt className="text-xs font-medium uppercase text-[color:var(--folio-graphite)]">Downloaded</dt>
+              <dd className="mt-1 text-sm text-[color:var(--folio-ink)]">{formatDate(piece.downloaded_at)}</dd>
             </div>
             <div>
-              <dt className="text-xs font-medium uppercase text-gray-500">Size</dt>
-              <dd className="mt-1 text-sm text-gray-950">{formatBytes(piece.file_size)}</dd>
+              <dt className="text-xs font-medium uppercase text-[color:var(--folio-graphite)]">Size</dt>
+              <dd className="mt-1 text-sm text-[color:var(--folio-ink)]">{formatBytes(piece.file_size)}</dd>
             </div>
             <div>
-              <dt className="text-xs font-medium uppercase text-gray-500">Filename</dt>
-              <dd className="mt-1 break-all font-mono text-xs text-gray-950">{piece.file_name}</dd>
+              <dt className="text-xs font-medium uppercase text-[color:var(--folio-graphite)]">Filename</dt>
+              <dd className="mt-1 break-all font-mono text-xs text-[color:var(--folio-ink)]">{piece.file_name}</dd>
             </div>
             {piece.source_page && (
               <div>
-                <dt className="text-xs font-medium uppercase text-gray-500">Original page</dt>
-                <dd className="mt-1 break-all text-sm text-gray-950">
-                  <a href={piece.source_page} target="_blank" rel="noreferrer" className="hover:text-gray-600">
+                <dt className="text-xs font-medium uppercase text-[color:var(--folio-graphite)]">Original page</dt>
+                <dd className="mt-1 break-all text-sm text-[color:var(--folio-ink)]">
+                  <a href={piece.source_page} target="_blank" rel="noreferrer" className="hover:text-[color:var(--folio-accent)]">
                     {piece.source_page}
                   </a>
                 </dd>
@@ -167,7 +167,7 @@ export default function PieceDetail() {
       </section>
 
       {favoriteMutation.error && (
-        <div className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+        <div className="border border-red-300 bg-red-50 p-3 text-sm text-red-800 dark:bg-red-950/30 dark:text-red-200">
           Failed to save favorite.
         </div>
       )}
