@@ -458,7 +458,7 @@ func TestGetGalleryCatalog(t *testing.T) {
 	photos := []DownloadedPhoto{
 		{
 			URL:          "https://example.com/old.jpg",
-			SourcePage:   "https://webgallery/gallery/old",
+			SourcePage:   "https://webgallery/gallery/category/1/old",
 			Title:        "Old Download",
 			Artist:       "Artist A",
 			FilePath:     filepath.Join(t.TempDir(), "old.jpg"),
@@ -468,7 +468,7 @@ func TestGetGalleryCatalog(t *testing.T) {
 		},
 		{
 			URL:          "https://example.com/new.jpg",
-			SourcePage:   "https://webgallery/gallery/new",
+			SourcePage:   "https://webgallery/gallery/category/2/new",
 			Title:        "New Download",
 			Artist:       "Artist B",
 			FilePath:     filepath.Join(t.TempDir(), "new.jpg"),
@@ -519,7 +519,7 @@ func TestGetGalleryCatalog(t *testing.T) {
 		t.Fatalf("Expected second downloaded photo in paged result, got %#v", paged)
 	}
 
-	filtered, total, err := db.GetGalleryCatalog(10, 0, GalleryCatalogFilters{Provider: "webgallery", Source: "https://webgallery/gallery/new"})
+	filtered, total, err := db.GetGalleryCatalog(10, 0, GalleryCatalogFilters{Provider: "webgallery", Source: "https://webgallery/gallery/category/2/new"})
 	if err != nil {
 		t.Fatalf("Failed to get filtered gallery catalog: %v", err)
 	}
@@ -533,6 +533,204 @@ func TestGetGalleryCatalog(t *testing.T) {
 	}
 	if len(sources) != 2 {
 		t.Fatalf("Expected 2 downloaded source facets, got %#v", sources)
+	}
+
+	categories, err := db.GetGalleryCategoryStats()
+	if err != nil {
+		t.Fatalf("Failed to get gallery category stats: %v", err)
+	}
+	if len(categories) != 2 {
+		t.Fatalf("Expected 2 downloaded category facets, got %#v", categories)
+	}
+
+	artists, err := db.GetGalleryArtistStats()
+	if err != nil {
+		t.Fatalf("Failed to get gallery artist stats: %v", err)
+	}
+	if len(artists) != 2 {
+		t.Fatalf("Expected 2 downloaded artist facets, got %#v", artists)
+	}
+}
+
+func TestGetGalleryCatalogFiltersCategoryArtistAndFavorites(t *testing.T) {
+	db := setupTestDB(t)
+	baseTime := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+
+	if err := db.Exec("ALTER TABLE downloaded_photos ADD COLUMN favorite boolean DEFAULT false").Error; err != nil {
+		t.Fatalf("Failed to add legacy favorite fixture column: %v", err)
+	}
+
+	photos := []DownloadedPhoto{
+		{
+			URL:          "https://example.com/favorite.jpg",
+			SourcePage:   "https://webgallery/gallery/category/10/",
+			Title:        "Favorite Download",
+			Artist:       "Artist A",
+			FilePath:     filepath.Join(t.TempDir(), "favorite.jpg"),
+			FileName:     "favorite.jpg",
+			DownloadedAt: baseTime,
+			Status:       "downloaded",
+		},
+		{
+			URL:          "https://example.com/plain.jpg",
+			SourcePage:   "https://webgallery/gallery/category/10/",
+			Title:        "Plain Download",
+			Artist:       "Artist B",
+			FilePath:     filepath.Join(t.TempDir(), "plain.jpg"),
+			FileName:     "plain.jpg",
+			DownloadedAt: baseTime.Add(-time.Minute),
+			Status:       "downloaded",
+		},
+		{
+			URL:          "https://example.com/other.jpg",
+			SourcePage:   "https://webgallery/gallery/category/20/",
+			Title:        "Other Download",
+			Artist:       "Artist A",
+			FilePath:     filepath.Join(t.TempDir(), "other.jpg"),
+			FileName:     "other.jpg",
+			DownloadedAt: baseTime.Add(-2 * time.Minute),
+			Status:       "downloaded",
+		},
+	}
+
+	for i := range photos {
+		if err := db.Create(&photos[i]).Error; err != nil {
+			t.Fatalf("Failed to create photo: %v", err)
+		}
+	}
+	if err := db.Exec("UPDATE downloaded_photos SET favorite = ? WHERE url = ?", true, "https://example.com/favorite.jpg").Error; err != nil {
+		t.Fatalf("Failed to mark favorite fixture: %v", err)
+	}
+
+	favorite := true
+	filtered, total, err := db.GetGalleryCatalog(10, 0, GalleryCatalogFilters{
+		Category: "10",
+		Artist:   "Artist A",
+		Favorite: &favorite,
+	})
+	if err != nil {
+		t.Fatalf("Failed to get filtered gallery catalog: %v", err)
+	}
+	if total != 1 || len(filtered) != 1 || filtered[0].Title != "Favorite Download" {
+		t.Fatalf("Expected category, artist, and favorite filters to isolate favorite fixture, total=%d rows=%#v", total, filtered)
+	}
+
+	favorites, err := db.GetGalleryFavoriteStats()
+	if err != nil {
+		t.Fatalf("Failed to get gallery favorite stats: %v", err)
+	}
+	if len(favorites) != 2 || favorites[0].Count != 1 || favorites[1].Count != 2 {
+		t.Fatalf("Expected favorite facet counts true=1 false=2, got %#v", favorites)
+	}
+}
+
+func TestGetGalleryCatalogCategoryFilterMatchesFacetParser(t *testing.T) {
+	db := setupTestDB(t)
+	baseTime := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+
+	photos := []DownloadedPhoto{
+		{
+			URL:          "https://example.com/cat-one.jpg",
+			SourcePage:   "https://webgallery/gallery?cat=1",
+			Title:        "Cat One Download",
+			FilePath:     filepath.Join(t.TempDir(), "cat-one.jpg"),
+			FileName:     "cat-one.jpg",
+			DownloadedAt: baseTime,
+			Status:       "downloaded",
+		},
+		{
+			URL:          "https://example.com/category-ten.jpg",
+			SourcePage:   "https://webgallery/gallery?category=10",
+			Title:        "Category Ten Download",
+			FilePath:     filepath.Join(t.TempDir(), "category-ten.jpg"),
+			FileName:     "category-ten.jpg",
+			DownloadedAt: baseTime.Add(-time.Minute),
+			Status:       "downloaded",
+		},
+		{
+			URL:          "https://example.com/category-id-two.jpg",
+			SourcePage:   "https://webgallery/gallery?category_id=2",
+			Title:        "Category ID Two Download",
+			FilePath:     filepath.Join(t.TempDir(), "category-id-two.jpg"),
+			FileName:     "category-id-two.jpg",
+			DownloadedAt: baseTime.Add(-2 * time.Minute),
+			Status:       "downloaded",
+		},
+	}
+
+	for i := range photos {
+		if err := db.Create(&photos[i]).Error; err != nil {
+			t.Fatalf("Failed to create photo: %v", err)
+		}
+	}
+
+	categories, err := db.GetGalleryCategoryStats()
+	if err != nil {
+		t.Fatalf("Failed to get gallery category stats: %v", err)
+	}
+	categoryCounts := make(map[string]int64)
+	for _, category := range categories {
+		categoryCounts[category.ID] = category.Count
+	}
+	if categoryCounts["1"] != 1 || categoryCounts["10"] != 1 || categoryCounts["2"] != 1 {
+		t.Fatalf("Expected category facets from query parameters, got %#v", categories)
+	}
+
+	filtered, total, err := db.GetGalleryCatalog(10, 0, GalleryCatalogFilters{Category: "1"})
+	if err != nil {
+		t.Fatalf("Failed to get category-filtered gallery catalog: %v", err)
+	}
+	if total != 1 || len(filtered) != 1 || filtered[0].Title != "Cat One Download" {
+		t.Fatalf("Expected category=1 to match only cat=1 fixture, total=%d rows=%#v", total, filtered)
+	}
+
+	filtered, total, err = db.GetGalleryCatalog(10, 0, GalleryCatalogFilters{Category: "2"})
+	if err != nil {
+		t.Fatalf("Failed to get category_id-filtered gallery catalog: %v", err)
+	}
+	if total != 1 || len(filtered) != 1 || filtered[0].Title != "Category ID Two Download" {
+		t.Fatalf("Expected category=2 to match category_id=2 fixture, total=%d rows=%#v", total, filtered)
+	}
+}
+
+func TestGetGalleryCatalogFiltersEmptyArtistWhenSet(t *testing.T) {
+	db := setupTestDB(t)
+	baseTime := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+
+	photos := []DownloadedPhoto{
+		{
+			URL:          "https://example.com/unknown-artist.jpg",
+			SourcePage:   "https://webgallery/gallery/category/1/",
+			Title:        "Unknown Artist Download",
+			FilePath:     filepath.Join(t.TempDir(), "unknown-artist.jpg"),
+			FileName:     "unknown-artist.jpg",
+			DownloadedAt: baseTime,
+			Status:       "downloaded",
+		},
+		{
+			URL:          "https://example.com/known-artist.jpg",
+			SourcePage:   "https://webgallery/gallery/category/1/",
+			Title:        "Known Artist Download",
+			Artist:       "Artist A",
+			FilePath:     filepath.Join(t.TempDir(), "known-artist.jpg"),
+			FileName:     "known-artist.jpg",
+			DownloadedAt: baseTime.Add(-time.Minute),
+			Status:       "downloaded",
+		},
+	}
+
+	for i := range photos {
+		if err := db.Create(&photos[i]).Error; err != nil {
+			t.Fatalf("Failed to create photo: %v", err)
+		}
+	}
+
+	filtered, total, err := db.GetGalleryCatalog(10, 0, GalleryCatalogFilters{ArtistSet: true})
+	if err != nil {
+		t.Fatalf("Failed to get empty-artist gallery catalog: %v", err)
+	}
+	if total != 1 || len(filtered) != 1 || filtered[0].Title != "Unknown Artist Download" {
+		t.Fatalf("Expected empty artist filter to isolate unknown artist fixture, total=%d rows=%#v", total, filtered)
 	}
 }
 
