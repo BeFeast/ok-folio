@@ -1,0 +1,167 @@
+name: Release image
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_NAME: ok-folio
+
+jobs:
+  build-smoke-push:
+    name: Build, smoke, and push image
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mariadb:11
+        env:
+          MYSQL_ROOT_PASSWORD: root-password
+          MYSQL_DATABASE: ok_folio_smoke
+          MYSQL_USER: ok_folio
+          MYSQL_PASSWORD: ok-folio-password
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "healthcheck.sh --connect --innodb_initialized"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Prepare image metadata
+        id: image
+        env:
+          REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
+        run: |
+          set -euo pipefail
+          registry="${REGISTRY_URL#http://}"
+          registry="${registry#https://}"
+          registry="${registry%/}"
+          if [ -z "$registry" ]; then
+            echo "REGISTRY_URL secret must contain the registry host" >&2
+            exit 1
+          fi
+          image="$registry/${IMAGE_NAME}"
+          sha_tag="${GITHUB_SHA}"
+          smoke_tag="smoke-${GITHUB_SHA}"
+          {
+            echo "registry=$registry"
+            echo "image=$image"
+            echo "sha_tag=$sha_tag"
+            echo "smoke_tag=$smoke_tag"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build smoke image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          load: true
+          tags: ${{ steps.image.outputs.image }}:${{ steps.image.outputs.smoke_tag }}
+
+      - name: Smoke test image
+        env:
+          IMAGE_REF: ${{ steps.image.outputs.image }}:${{ steps.image.outputs.smoke_tag }}
+        run: |
+          set -euo pipefail
+          config_dir="$(mktemp -d)"
+          container_name="ok-folio-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cleanup() {
+            docker rm -f "$container_name" >/dev/null 2>&1 || true
+            rm -rf "$config_dir"
+          }
+          trap cleanup EXIT
+
+          cat > "$config_dir/config.yaml" <<'YAML'
+          source:
+            base_url: "https://example.com/gallery/category/1/"
+            category_id: 1
+          storage:
+            base_directory: "/tmp/ok-folio/originals"
+            daily_directory: "/tmp/ok-folio/_daily"
+          database:
+            host: "127.0.0.1"
+            port: 3306
+            user: "ok_folio"
+            password: "ok-folio-password"
+            database: "ok_folio_smoke"
+            max_open_conns: 2
+            max_idle_conns: 1
+            conn_max_lifetime: 10m
+          api:
+            enabled: true
+            port: 18080
+            host: "0.0.0.0"
+          scheduler:
+            enabled: false
+            schedule: "0 0 */6 * * *"
+            pages: [1]
+          retry:
+            max_attempts: 1
+            initial_delay: 1s
+            max_delay: 1s
+            multiplier: 1.0
+          exif:
+            set_artist: false
+            set_date: false
+            set_title: false
+          photoprism:
+            enabled: false
+            service_url: "http://localhost:2342"
+            auto_index: false
+            username: "ci"
+            password: "ci"
+          logging:
+            level: "info"
+            format: "json"
+            output: "stdout"
+          download:
+            concurrent_limit: 1
+            timeout: 5s
+            user_agent: "OK-Folio-CI/1.0"
+            delay_between: 1s
+            rate_limit_backoff: 1s
+          YAML
+
+          docker run -d \
+            --name "$container_name" \
+            --network host \
+            -v "$config_dir/config.yaml:/config/config.yaml:ro" \
+            "$IMAGE_REF"
+
+          for _ in $(seq 1 30); do
+            if curl -fsS "http://127.0.0.1:18080/health" >/tmp/ok-folio-health.json; then
+              cat /tmp/ok-folio-health.json
+              exit 0
+            fi
+            sleep 2
+          done
+
+          docker logs "$container_name"
+          exit 1
+
+      - name: Log in to registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ steps.image.outputs.registry }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+
+      - name: Push immutable and dev tags
+        env:
+          IMAGE: ${{ steps.image.outputs.image }}
+          SMOKE_TAG: ${{ steps.image.outputs.smoke_tag }}
+          SHA_TAG: ${{ steps.image.outputs.sha_tag }}
+        run: |
+          set -euo pipefail
+          docker tag "$IMAGE:$SMOKE_TAG" "$IMAGE:$SHA_TAG"
+          docker tag "$IMAGE:$SMOKE_TAG" "$IMAGE:dev"
+          docker push "$IMAGE:$SHA_TAG"
+          docker push "$IMAGE:dev"
