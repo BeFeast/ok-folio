@@ -143,6 +143,7 @@ func (s *Server) setupRoutes() {
 		r.Get("/gallery/catalog", s.handleGalleryCatalog)
 		r.Get("/gallery/decision", s.handleGalleryDecision)
 		r.Get("/inbox", s.handleInbox)
+		r.Get("/streams/connectors/status", s.handleConnectorStatus)
 
 		// PhotoPrism integration
 		r.Post("/photoprism/index", s.handleTriggerIndex)

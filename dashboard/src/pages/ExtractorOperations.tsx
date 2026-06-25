@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import {
-  fetchFailedPhotos,
+  fetchConnectorStatus,
   fetchRuns,
   fetchTodayPhotos,
   fetchWeekPhotos,
@@ -14,8 +14,8 @@ import ImageThumbnail from "../components/ImageThumbnail";
 import RunHistory from "../components/RunHistory";
 import StatsCards from "../components/StatsCards";
 import WorkerStatus from "../components/WorkerStatus";
-import { formatDate, formatDuration } from "../utils";
-import type { ExtractionRun, Photo } from "../types";
+import { formatDate, formatDuration, formatNumber } from "../utils";
+import type { ConnectorStatus, Photo } from "../types";
 
 function statusClass(status: string) {
   switch (status) {
@@ -30,13 +30,23 @@ function statusClass(status: string) {
   }
 }
 
+function connectorTone(connector?: ConnectorStatus) {
+  return connector?.health === "syncing"
+    ? "border-amber-200 bg-amber-50 text-amber-900"
+    : connector?.health === "error" || connector?.health === "degraded"
+      ? "border-red-200 bg-red-50 text-red-900"
+      : connector?.health === "healthy"
+        ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+        : "border-gray-200 bg-gray-50 text-gray-700";
+}
+
 function ProviderStatus() {
-  const { data: runsData } = useQuery({
-    queryKey: ["runs"],
-    queryFn: () => fetchRuns(20),
+  const { data: statusData } = useQuery({
+    queryKey: ["connector-status"],
+    queryFn: fetchConnectorStatus,
     refetchInterval: (query) => {
-      const runs = query.state.data?.runs || [];
-      return runs.some((run: ExtractionRun) => run.Status === "running")
+      const connectors = query.state.data?.connectors || [];
+      return connectors.some((connector: ConnectorStatus) => connector.health === "syncing")
         ? 3000
         : 30000;
     },
@@ -46,25 +56,11 @@ function ProviderStatus() {
     queryFn: fetchWorkerStatus,
     refetchInterval: 5000,
   });
-  const { data: failedData } = useQuery({
-    queryKey: ["failed-photos"],
-    queryFn: () => fetchFailedPhotos(50),
-    refetchInterval: 30000,
-  });
 
-  const runs = runsData?.runs || [];
-  const activeRun = runs.find((run) => run.Status === "running");
-  const latestRun = runs[0];
-  const providerState = activeRun
-    ? "Running"
-    : latestRun?.Status === "failed"
-      ? "Needs review"
-      : "Idle";
-  const providerTone = activeRun
-    ? "border-amber-200 bg-amber-50 text-amber-900"
-    : latestRun?.Status === "failed"
-      ? "border-red-200 bg-red-50 text-red-900"
-      : "border-emerald-200 bg-emerald-50 text-emerald-900";
+  const connectors = statusData?.connectors || [];
+  const connector = connectors[0];
+  const latestRun = connector?.recent_runs?.[0];
+  const primarySource = connector?.sources?.[0];
   const queuePercent = workerStatus
     ? Math.min(workerStatus.queue_utilization, 100)
     : 0;
@@ -79,21 +75,21 @@ function ProviderStatus() {
             </p>
             <div className="mt-2 flex flex-wrap items-center gap-3">
               <h2 className="text-2xl font-semibold text-gray-950">
-                Web Gallery
+                {connector?.display_name ?? "Web Gallery"}
               </h2>
               <span
-                className={`rounded-full border px-3 py-1 text-sm font-medium ${providerTone}`}
+                className={`rounded-full border px-3 py-1 text-sm font-medium ${connectorTone(connector)}`}
               >
-                {providerState}
+                {connector?.state ?? "Unavailable"}
               </span>
             </div>
             <p className="mt-2 max-w-2xl text-sm text-gray-600">
-              Operator surface for provider extraction runs, queue pressure,
-              failures, retries, and verification from live service telemetry.
+              Connector status from persisted source counts, last sync telemetry,
+              health, and recent extraction errors.
             </p>
           </div>
           <Link
-            to={latestRun ? `/runs/${latestRun.ID}` : "/"}
+            to={latestRun ? `/runs/${latestRun.id}` : "/"}
             className="inline-flex items-center justify-center rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
           >
             Latest run
@@ -103,42 +99,121 @@ function ProviderStatus() {
         <div className="mt-6 grid gap-3 sm:grid-cols-3">
           <div className="rounded-md border border-gray-200 p-4">
             <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
-              Current run
+              Cataloged
             </p>
             <p className="mt-2 text-xl font-semibold text-gray-950">
-              {activeRun ? `#${activeRun.ID}` : "None"}
+              {formatNumber(connector?.counts.downloaded ?? 0)}
             </p>
             <p className="mt-1 text-sm text-gray-600">
-              {activeRun
-                ? `${activeRun.PagesProcessed} pages processed`
-                : "No run is active"}
+              {primarySource
+                ? `${primarySource.display_name}`
+                : "No source media recorded"}
             </p>
           </div>
           <div className="rounded-md border border-gray-200 p-4">
             <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
-              Last result
+              Last sync
             </p>
             <p className="mt-2 text-xl font-semibold text-gray-950">
-              {latestRun ? latestRun.Status : "No runs"}
+              {connector?.last_sync ? formatDate(connector.last_sync) : "Never"}
             </p>
             <p className="mt-1 text-sm text-gray-600">
               {latestRun
-                ? `${formatDate(latestRun.StartTime)}`
+                ? `Run #${latestRun.id} ${latestRun.status}`
                 : "Trigger a run to create history"}
             </p>
           </div>
           <div className="rounded-md border border-gray-200 p-4">
             <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
-              Failed media
+              Recent errors
             </p>
             <p className="mt-2 text-xl font-semibold text-gray-950">
-              {failedData?.count ?? 0}
+              {connector?.recent_errors.length ?? 0}
             </p>
             <p className="mt-1 text-sm text-gray-600">
-              {failedData?.count ? "Retry queue needs attention" : "No failed downloads"}
+              {(connector?.counts.failed ?? 0) > 0
+                ? `${formatNumber(connector?.counts.failed ?? 0)} failed items need review`
+                : "No failed downloads"}
             </p>
           </div>
         </div>
+
+        {connectors.length > 1 ? (
+          <div className="mt-6 grid gap-3 md:grid-cols-2">
+            {connectors.map((item) => (
+              <div key={item.id} className="rounded-md border border-gray-200 p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-gray-950">
+                      {item.display_name}
+                    </p>
+                    <p className="mt-1 truncate text-xs text-gray-500">
+                      {item.sources[0]?.display_name ?? "No source media recorded"}
+                    </p>
+                  </div>
+                  <span
+                    className={`shrink-0 rounded-full border px-2 py-1 text-xs font-medium ${connectorTone(item)}`}
+                  >
+                    {item.state}
+                  </span>
+                </div>
+                <div className="mt-4 grid grid-cols-3 gap-2 text-sm">
+                  <div>
+                    <p className="text-xs text-gray-500">Kept</p>
+                    <p className="font-semibold text-gray-950">
+                      {formatNumber(item.counts.downloaded)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-gray-500">Failed</p>
+                    <p className="font-semibold text-gray-950">
+                      {formatNumber(item.counts.failed)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-gray-500">Errors</p>
+                    <p className="font-semibold text-gray-950">
+                      {formatNumber(item.recent_errors.length)}
+                    </p>
+                  </div>
+                </div>
+                <p className="mt-3 truncate text-xs text-gray-500">
+                  Last sync: {item.last_sync ? formatDate(item.last_sync) : "Never"}
+                </p>
+              </div>
+            ))}
+          </div>
+        ) : null}
+
+        {connector?.sources?.length ? (
+          <div className="mt-6 overflow-hidden rounded-md border border-gray-200">
+            <div className="grid grid-cols-[minmax(0,1fr)_auto_auto_auto] gap-3 bg-gray-50 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
+              <span>Source</span>
+              <span className="text-right">Kept</span>
+              <span className="text-right">Failed</span>
+              <span className="text-right">Last sync</span>
+            </div>
+            {connector.sources.slice(0, 4).map((source) => (
+              <div
+                key={source.id || source.display_name}
+                className="grid grid-cols-[minmax(0,1fr)_auto_auto_auto] gap-3 border-t border-gray-200 px-4 py-3 text-sm"
+              >
+                <span className="min-w-0 truncate font-medium text-gray-900">
+                  {source.display_name}
+                </span>
+                <span className="text-right text-gray-700">
+                  {formatNumber(source.counts.downloaded)}
+                </span>
+                <span className="text-right text-gray-700">
+                  {formatNumber(source.counts.failed)}
+                </span>
+                <span className="text-right text-gray-600">
+                  {source.last_sync ? formatDate(source.last_sync) : "Never"}
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : null}
       </div>
 
       <div className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
