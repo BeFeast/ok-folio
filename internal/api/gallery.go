@@ -46,11 +46,12 @@ type galleryCatalogFacets struct {
 func (s *Server) handleGalleryCatalog(w http.ResponseWriter, r *http.Request) {
 	limit, offset := s.parsePagination(r)
 	filters := database.GalleryCatalogFilters{
-		Provider: strings.TrimSpace(r.URL.Query().Get("provider")),
-		Source:   strings.TrimSpace(r.URL.Query().Get("source")),
-		Category: strings.TrimSpace(r.URL.Query().Get("category")),
-		Artist:   strings.TrimSpace(r.URL.Query().Get("artist")),
-		Favorite: parseOptionalBool(r.URL.Query().Get("favorite")),
+		Provider:  strings.TrimSpace(r.URL.Query().Get("provider")),
+		Source:    strings.TrimSpace(r.URL.Query().Get("source")),
+		Category:  strings.TrimSpace(r.URL.Query().Get("category")),
+		Artist:    strings.TrimSpace(r.URL.Query().Get("artist")),
+		ArtistSet: queryHasKey(r.URL.Query(), "artist"),
+		Favorite:  parseOptionalBool(r.URL.Query().Get("favorite")),
 	}
 
 	photos, total, err := s.db.GetGalleryCatalog(limit, offset, filters)
@@ -287,4 +288,9 @@ func parseOptionalBool(value string) *bool {
 	default:
 		return nil
 	}
+}
+
+func queryHasKey(values url.Values, key string) bool {
+	_, ok := values[key]
+	return ok
 }

@@ -331,6 +331,63 @@ func TestHandleGalleryCatalog(t *testing.T) {
 	}
 }
 
+func TestHandleGalleryCatalogFiltersEmptyArtist(t *testing.T) {
+	server, db := setupTestServer(t)
+	defer safeShutdown(server)
+
+	photos := []database.DownloadedPhoto{
+		{
+			URL:          "https://example.com/unknown-artist.jpg",
+			SourcePage:   "https://webgallery/gallery/category/1/",
+			Title:        "Unknown Artist",
+			FilePath:     filepath.Join(server.cfg.Storage.BaseDirectory, "unknown-artist.jpg"),
+			FileName:     "unknown-artist.jpg",
+			DownloadedAt: time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC),
+			Status:       "downloaded",
+		},
+		{
+			URL:          "https://example.com/known-artist.jpg",
+			SourcePage:   "https://webgallery/gallery/category/1/",
+			Title:        "Known Artist",
+			Artist:       "Artist A",
+			FilePath:     filepath.Join(server.cfg.Storage.BaseDirectory, "known-artist.jpg"),
+			FileName:     "known-artist.jpg",
+			DownloadedAt: time.Date(2026, 6, 25, 11, 0, 0, 0, time.UTC),
+			Status:       "downloaded",
+		},
+	}
+
+	for _, photo := range photos {
+		if err := db.Create(&photo).Error; err != nil {
+			t.Fatalf("Failed to create photo: %v", err)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/gallery/catalog?artist=", nil)
+	w := httptest.NewRecorder()
+
+	server.handleGalleryCatalog(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d", w.Code)
+	}
+
+	var response struct {
+		Photos []database.DownloadedPhoto `json:"photos"`
+		Total  int64                      `json:"total"`
+		Artist string                     `json:"artist"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode gallery catalog: %v", err)
+	}
+	if response.Total != 1 || len(response.Photos) != 1 || response.Photos[0].Title != "Unknown Artist" {
+		t.Fatalf("Expected empty artist filter to return unknown artist photo, total=%d photos=%#v", response.Total, response.Photos)
+	}
+	if response.Artist != "" {
+		t.Fatalf("Expected empty artist filter echo, got %q", response.Artist)
+	}
+}
+
 func TestHandleGetRuns_Empty(t *testing.T) {
 	server, _ := setupTestServer(t)
 	defer safeShutdown(server)

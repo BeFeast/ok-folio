@@ -50,11 +50,12 @@ type DB struct {
 // GalleryCatalogFilters narrows the OK Folio gallery catalog without
 // coupling the gallery API to a specific provider storage implementation.
 type GalleryCatalogFilters struct {
-	Provider string
-	Source   string
-	Category string
-	Artist   string
-	Favorite *bool
+	Provider  string
+	Source    string
+	Category  string
+	Artist    string
+	ArtistSet bool
+	Favorite  *bool
 }
 
 // GallerySourceStats summarizes downloaded media by provider source page.
@@ -537,9 +538,13 @@ func (db *DB) applyGalleryCatalogFilters(query *gorm.DB, filters GalleryCatalogF
 		query = query.Where("source_page = ?", filters.Source)
 	}
 	if filters.Category != "" {
-		query = applyGalleryCategoryFilter(query, filters.Category)
+		var err error
+		query, err = db.applyGalleryCategoryFilter(query, filters.Category)
+		if err != nil {
+			return nil, err
+		}
 	}
-	if filters.Artist != "" {
+	if filters.ArtistSet || filters.Artist != "" {
 		query = query.Where("artist = ?", filters.Artist)
 	}
 	if filters.Favorite != nil {
@@ -560,27 +565,26 @@ func escapeSQLLike(value string) string {
 	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(value)
 }
 
-func applyGalleryCategoryFilter(query *gorm.DB, category string) *gorm.DB {
-	if category == "unknown" {
-		return query.Where(
-			"source_page = ? OR source_page IS NULL OR (source_page NOT LIKE ? ESCAPE '\\' AND source_page NOT LIKE ? ESCAPE '\\' AND source_page NOT LIKE ? ESCAPE '\\' AND source_page NOT LIKE ? ESCAPE '\\')",
-			"",
-			"%/category/%",
-			"%?category=%",
-			"%&category=%",
-			"%category_id=%",
-		)
+func (db *DB) applyGalleryCategoryFilter(query *gorm.DB, category string) (*gorm.DB, error) {
+	var candidates []DownloadedPhoto
+	err := db.DB.Model(&DownloadedPhoto{}).
+		Select("id, source_page").
+		Where("status = ?", "downloaded").
+		Find(&candidates).Error
+	if err != nil {
+		return nil, err
 	}
 
-	escapedCategory := escapeSQLLike(category)
-	return query.Where(
-		"source_page LIKE ? ESCAPE '\\' OR source_page LIKE ? ESCAPE '\\' OR source_page LIKE ? ESCAPE '\\' OR source_page LIKE ? ESCAPE '\\' OR source_page LIKE ? ESCAPE '\\'",
-		"%/category/"+escapedCategory,
-		"%/category/"+escapedCategory+"/%",
-		"%?category="+escapedCategory+"%",
-		"%&category="+escapedCategory+"%",
-		"%category_id="+escapedCategory+"%",
-	)
+	ids := make([]uint, 0)
+	for _, candidate := range candidates {
+		if categoryIDFromSourcePage(candidate.SourcePage) == category {
+			ids = append(ids, candidate.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return query.Where("1 = 0"), nil
+	}
+	return query.Where("id IN ?", ids), nil
 }
 
 func categoryIDFromSourcePage(sourcePage string) string {
