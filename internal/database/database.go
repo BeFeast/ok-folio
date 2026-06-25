@@ -2,6 +2,7 @@ package database
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -51,12 +52,27 @@ type DB struct {
 type GalleryCatalogFilters struct {
 	Provider string
 	Source   string
+	Category string
+	Artist   string
+	Favorite *bool
 }
 
 // GallerySourceStats summarizes downloaded media by provider source page.
 type GallerySourceStats struct {
 	SourcePage string `json:"source_page"`
 	Count      int64  `json:"count"`
+}
+
+// GalleryFacetStats summarizes a catalog facet value.
+type GalleryFacetStats struct {
+	ID    string `json:"id"`
+	Count int64  `json:"count"`
+}
+
+// GalleryFavoriteStats summarizes favorite and non-favorite catalog counts.
+type GalleryFavoriteStats struct {
+	Favorite bool  `json:"favorite"`
+	Count    int64 `json:"count"`
 }
 
 // New creates a new database connection
@@ -392,13 +408,16 @@ func (db *DB) GetGalleryCatalog(limit int, offset int, filters GalleryCatalogFil
 
 	query := db.DB.Model(&DownloadedPhoto{}).
 		Where("status = ?", "downloaded")
-	query = applyGalleryCatalogFilters(query, filters)
+	query, err := db.applyGalleryCatalogFilters(query, filters)
+	if err != nil {
+		return nil, 0, err
+	}
 
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 
-	err := query.
+	err = query.
 		Limit(limit).
 		Offset(offset).
 		Order("downloaded_at DESC, id DESC").
@@ -427,7 +446,77 @@ func (db *DB) GetGallerySourceStats() ([]GallerySourceStats, error) {
 	return sources, nil
 }
 
-func applyGalleryCatalogFilters(query *gorm.DB, filters GalleryCatalogFilters) *gorm.DB {
+// GetGalleryCategoryStats returns category facets inferred from source URLs.
+func (db *DB) GetGalleryCategoryStats() ([]GalleryFacetStats, error) {
+	sources, err := db.GetGallerySourceStats()
+	if err != nil {
+		return nil, err
+	}
+
+	byCategory := make(map[string]int64)
+	for _, source := range sources {
+		byCategory[categoryIDFromSourcePage(source.SourcePage)] += source.Count
+	}
+
+	categories := make([]GalleryFacetStats, 0, len(byCategory))
+	for id, count := range byCategory {
+		categories = append(categories, GalleryFacetStats{ID: id, Count: count})
+	}
+
+	return categories, nil
+}
+
+// GetGalleryArtistStats returns artist facets for downloaded media.
+func (db *DB) GetGalleryArtistStats() ([]GalleryFacetStats, error) {
+	var artists []GalleryFacetStats
+
+	err := db.DB.Model(&DownloadedPhoto{}).
+		Select("artist as id, COUNT(*) as count").
+		Where("status = ?", "downloaded").
+		Group("artist").
+		Order("count DESC, artist ASC").
+		Scan(&artists).Error
+	if err != nil {
+		return nil, err
+	}
+
+	return artists, nil
+}
+
+// GetGalleryFavoriteStats returns favorite facets when the adopted DB exposes
+// a legacy favorite column. Without one, every downloaded row is non-favorite.
+func (db *DB) GetGalleryFavoriteStats() ([]GalleryFavoriteStats, error) {
+	var total int64
+	if err := db.DB.Model(&DownloadedPhoto{}).Where("status = ?", "downloaded").Count(&total).Error; err != nil {
+		return nil, err
+	}
+
+	column, ok, err := db.galleryFavoriteColumn()
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return []GalleryFavoriteStats{
+			{Favorite: true, Count: 0},
+			{Favorite: false, Count: total},
+		}, nil
+	}
+
+	var favoriteCount int64
+	if err := db.DB.Model(&DownloadedPhoto{}).
+		Where("status = ?", "downloaded").
+		Where(column+" = ?", true).
+		Count(&favoriteCount).Error; err != nil {
+		return nil, err
+	}
+
+	return []GalleryFavoriteStats{
+		{Favorite: true, Count: favoriteCount},
+		{Favorite: false, Count: total - favoriteCount},
+	}, nil
+}
+
+func (db *DB) applyGalleryCatalogFilters(query *gorm.DB, filters GalleryCatalogFilters) (*gorm.DB, error) {
 	if filters.Provider != "" {
 		provider := filters.Provider
 		if provider == "unknown" {
@@ -447,11 +536,98 @@ func applyGalleryCatalogFilters(query *gorm.DB, filters GalleryCatalogFilters) *
 	if filters.Source != "" {
 		query = query.Where("source_page = ?", filters.Source)
 	}
-	return query
+	if filters.Category != "" {
+		query = applyGalleryCategoryFilter(query, filters.Category)
+	}
+	if filters.Artist != "" {
+		query = query.Where("artist = ?", filters.Artist)
+	}
+	if filters.Favorite != nil {
+		column, ok, err := db.galleryFavoriteColumn()
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			query = query.Where(column+" = ?", *filters.Favorite)
+		} else if *filters.Favorite {
+			query = query.Where("1 = 0")
+		}
+	}
+	return query, nil
 }
 
 func escapeSQLLike(value string) string {
 	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(value)
+}
+
+func applyGalleryCategoryFilter(query *gorm.DB, category string) *gorm.DB {
+	if category == "unknown" {
+		return query.Where(
+			"source_page = ? OR source_page IS NULL OR (source_page NOT LIKE ? ESCAPE '\\' AND source_page NOT LIKE ? ESCAPE '\\' AND source_page NOT LIKE ? ESCAPE '\\' AND source_page NOT LIKE ? ESCAPE '\\')",
+			"",
+			"%/category/%",
+			"%?category=%",
+			"%&category=%",
+			"%category_id=%",
+		)
+	}
+
+	escapedCategory := escapeSQLLike(category)
+	return query.Where(
+		"source_page LIKE ? ESCAPE '\\' OR source_page LIKE ? ESCAPE '\\' OR source_page LIKE ? ESCAPE '\\' OR source_page LIKE ? ESCAPE '\\' OR source_page LIKE ? ESCAPE '\\'",
+		"%/category/"+escapedCategory,
+		"%/category/"+escapedCategory+"/%",
+		"%?category="+escapedCategory+"%",
+		"%&category="+escapedCategory+"%",
+		"%category_id="+escapedCategory+"%",
+	)
+}
+
+func categoryIDFromSourcePage(sourcePage string) string {
+	if sourcePage == "" {
+		return "unknown"
+	}
+	parsed, err := url.Parse(sourcePage)
+	if err != nil {
+		return "unknown"
+	}
+
+	parts := strings.Split(strings.Trim(parsed.EscapedPath(), "/"), "/")
+	for i := 0; i < len(parts)-1; i++ {
+		if strings.EqualFold(parts[i], "category") && parts[i+1] != "" {
+			return parts[i+1]
+		}
+	}
+
+	query := parsed.Query()
+	for _, key := range []string{"category", "category_id", "cat"} {
+		if value := strings.TrimSpace(query.Get(key)); value != "" {
+			return value
+		}
+	}
+
+	return "unknown"
+}
+
+func (db *DB) galleryFavoriteColumn() (string, bool, error) {
+	columnTypes, err := db.DB.Migrator().ColumnTypes(&DownloadedPhoto{})
+	if err != nil {
+		return "", false, err
+	}
+
+	candidates := map[string]bool{
+		"favorite":     true,
+		"favorites":    true,
+		"is_favorite":  true,
+		"is_favourite": true,
+	}
+	for _, columnType := range columnTypes {
+		name := strings.ToLower(columnType.Name())
+		if candidates[name] {
+			return columnType.Name(), true, nil
+		}
+	}
+	return "", false, nil
 }
 
 // GetPhotosByRunID returns photos downloaded during a specific extraction run

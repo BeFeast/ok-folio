@@ -23,11 +23,34 @@ type gallerySourceFacet struct {
 	Count       int64  `json:"count"`
 }
 
+type galleryFacet struct {
+	ID          string `json:"id"`
+	DisplayName string `json:"display_name"`
+	Count       int64  `json:"count"`
+}
+
+type galleryFavoriteFacet struct {
+	ID          string `json:"id"`
+	DisplayName string `json:"display_name"`
+	Favorite    bool   `json:"favorite"`
+	Count       int64  `json:"count"`
+}
+
+type galleryCatalogFacets struct {
+	Sources    []gallerySourceFacet   `json:"sources"`
+	Categories []galleryFacet         `json:"categories"`
+	Artists    []galleryFacet         `json:"artists"`
+	Favorites  []galleryFavoriteFacet `json:"favorites"`
+}
+
 func (s *Server) handleGalleryCatalog(w http.ResponseWriter, r *http.Request) {
 	limit, offset := s.parsePagination(r)
 	filters := database.GalleryCatalogFilters{
 		Provider: strings.TrimSpace(r.URL.Query().Get("provider")),
 		Source:   strings.TrimSpace(r.URL.Query().Get("source")),
+		Category: strings.TrimSpace(r.URL.Query().Get("category")),
+		Artist:   strings.TrimSpace(r.URL.Query().Get("artist")),
+		Favorite: parseOptionalBool(r.URL.Query().Get("favorite")),
 	}
 
 	photos, total, err := s.db.GetGalleryCatalog(limit, offset, filters)
@@ -43,6 +66,26 @@ func (s *Server) handleGalleryCatalog(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusInternalServerError, "Failed to fetch gallery sources")
 		return
 	}
+	categoryStats, err := s.db.GetGalleryCategoryStats()
+	if err != nil {
+		s.logger.Error().Err(err).Msg("Failed to fetch gallery category facets")
+		s.writeError(w, http.StatusInternalServerError, "Failed to fetch gallery categories")
+		return
+	}
+	artistStats, err := s.db.GetGalleryArtistStats()
+	if err != nil {
+		s.logger.Error().Err(err).Msg("Failed to fetch gallery artist facets")
+		s.writeError(w, http.StatusInternalServerError, "Failed to fetch gallery artists")
+		return
+	}
+	favoriteStats, err := s.db.GetGalleryFavoriteStats()
+	if err != nil {
+		s.logger.Error().Err(err).Msg("Failed to fetch gallery favorite facets")
+		s.writeError(w, http.StatusInternalServerError, "Failed to fetch gallery favorites")
+		return
+	}
+
+	providerFacets := galleryProviderFacets(sourceStats)
 
 	s.writeJSON(w, http.StatusOK, map[string]interface{}{
 		"photos":    photos,
@@ -51,7 +94,16 @@ func (s *Server) handleGalleryCatalog(w http.ResponseWriter, r *http.Request) {
 		"offset":    offset,
 		"provider":  filters.Provider,
 		"source":    filters.Source,
-		"providers": galleryProviderFacets(sourceStats),
+		"category":  filters.Category,
+		"artist":    filters.Artist,
+		"favorite":  filters.Favorite,
+		"providers": providerFacets,
+		"facets": galleryCatalogFacets{
+			Sources:    flattenGallerySourceFacets(providerFacets),
+			Categories: galleryCategoryFacets(categoryStats),
+			Artists:    galleryFacets(artistStats),
+			Favorites:  galleryFavoriteFacets(favoriteStats),
+		},
 	})
 }
 
@@ -109,6 +161,81 @@ func galleryProviderFacets(sourceStats []database.GallerySourceStats) []galleryP
 	return providers
 }
 
+func flattenGallerySourceFacets(providers []galleryProviderFacet) []gallerySourceFacet {
+	sources := make([]gallerySourceFacet, 0)
+	for _, provider := range providers {
+		sources = append(sources, provider.Sources...)
+	}
+	sort.Slice(sources, func(i, j int) bool {
+		if sources[i].Count == sources[j].Count {
+			return sources[i].DisplayName < sources[j].DisplayName
+		}
+		return sources[i].Count > sources[j].Count
+	})
+	return sources
+}
+
+func galleryCategoryFacets(stats []database.GalleryFacetStats) []galleryFacet {
+	facets := make([]galleryFacet, 0, len(stats))
+	for _, stat := range stats {
+		facets = append(facets, galleryFacet{
+			ID:          stat.ID,
+			DisplayName: categoryDisplayName(stat.ID),
+			Count:       stat.Count,
+		})
+	}
+	sortGalleryFacets(facets)
+	return facets
+}
+
+func galleryFacets(stats []database.GalleryFacetStats) []galleryFacet {
+	facets := make([]galleryFacet, 0, len(stats))
+	for _, stat := range stats {
+		displayName := stat.ID
+		if displayName == "" {
+			displayName = "Unknown artist"
+		}
+		facets = append(facets, galleryFacet{
+			ID:          stat.ID,
+			DisplayName: displayName,
+			Count:       stat.Count,
+		})
+	}
+	sortGalleryFacets(facets)
+	return facets
+}
+
+func galleryFavoriteFacets(stats []database.GalleryFavoriteStats) []galleryFavoriteFacet {
+	facets := make([]galleryFavoriteFacet, 0, len(stats))
+	for _, stat := range stats {
+		id := "false"
+		displayName := "Not favorites"
+		if stat.Favorite {
+			id = "true"
+			displayName = "Favorites"
+		}
+		facets = append(facets, galleryFavoriteFacet{
+			ID:          id,
+			DisplayName: displayName,
+			Favorite:    stat.Favorite,
+			Count:       stat.Count,
+		})
+	}
+	sort.Slice(facets, func(i, j int) bool {
+		return facets[i].ID > facets[j].ID
+	})
+	return facets
+}
+
+func sortGalleryFacets(facets []galleryFacet) {
+	sort.Slice(facets, func(i, j int) bool {
+		if facets[i].Count == facets[j].Count {
+			return facets[i].DisplayName < facets[j].DisplayName
+		}
+		return facets[i].Count > facets[j].Count
+	})
+}
+
 func providerIDFromSourcePage(sourcePage string) string {
 	if sourcePage == "" {
 		return "unknown"
@@ -140,4 +267,24 @@ func sourceDisplayName(sourcePage string) string {
 		return strings.TrimPrefix(parsed.Hostname(), "www.")
 	}
 	return strings.TrimPrefix(parsed.Hostname(), "www.") + "/" + path
+}
+
+func categoryDisplayName(category string) string {
+	if category == "" || category == "unknown" {
+		return "Unknown category"
+	}
+	return "Category " + category
+}
+
+func parseOptionalBool(value string) *bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "true", "1", "yes":
+		parsed := true
+		return &parsed
+	case "false", "0", "no":
+		parsed := false
+		return &parsed
+	default:
+		return nil
+	}
 }

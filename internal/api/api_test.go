@@ -182,7 +182,7 @@ func TestHandleGalleryCatalog(t *testing.T) {
 
 	newPhoto := database.DownloadedPhoto{
 		URL:          "https://example.com/new.jpg",
-		SourcePage:   "https://webgallery/gallery/new",
+		SourcePage:   "https://webgallery/gallery/category/2/new",
 		Title:        "Newest",
 		Artist:       "Artist B",
 		FilePath:     filepath.Join(server.cfg.Storage.BaseDirectory, "new.jpg"),
@@ -193,7 +193,7 @@ func TestHandleGalleryCatalog(t *testing.T) {
 	}
 	oldPhoto := database.DownloadedPhoto{
 		URL:          "https://example.com/old.jpg",
-		SourcePage:   "https://webgallery/gallery/old",
+		SourcePage:   "https://webgallery/gallery/category/1/old",
 		Title:        "Oldest",
 		Artist:       "Artist A",
 		FilePath:     filepath.Join(server.cfg.Storage.BaseDirectory, "old.jpg"),
@@ -232,6 +232,8 @@ func TestHandleGalleryCatalog(t *testing.T) {
 		Offset    int                        `json:"offset"`
 		Provider  string                     `json:"provider"`
 		Source    string                     `json:"source"`
+		Category  string                     `json:"category"`
+		Artist    string                     `json:"artist"`
 		Providers []struct {
 			ID          string `json:"id"`
 			DisplayName string `json:"display_name"`
@@ -242,6 +244,29 @@ func TestHandleGalleryCatalog(t *testing.T) {
 				Count       int64  `json:"count"`
 			} `json:"sources"`
 		} `json:"providers"`
+		Facets struct {
+			Sources []struct {
+				ID          string `json:"id"`
+				DisplayName string `json:"display_name"`
+				Count       int64  `json:"count"`
+			} `json:"sources"`
+			Categories []struct {
+				ID          string `json:"id"`
+				DisplayName string `json:"display_name"`
+				Count       int64  `json:"count"`
+			} `json:"categories"`
+			Artists []struct {
+				ID          string `json:"id"`
+				DisplayName string `json:"display_name"`
+				Count       int64  `json:"count"`
+			} `json:"artists"`
+			Favorites []struct {
+				ID          string `json:"id"`
+				DisplayName string `json:"display_name"`
+				Favorite    bool   `json:"favorite"`
+				Count       int64  `json:"count"`
+			} `json:"favorites"`
+		} `json:"facets"`
 	}
 	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
 		t.Fatalf("Failed to decode gallery catalog: %v", err)
@@ -265,8 +290,11 @@ func TestHandleGalleryCatalog(t *testing.T) {
 	if response.Providers[0].Count != 2 || len(response.Providers[0].Sources) != 2 {
 		t.Fatalf("Expected provider facet counts from downloaded media only, got %#v", response.Providers[0])
 	}
+	if len(response.Facets.Categories) != 2 || len(response.Facets.Artists) != 2 || len(response.Facets.Favorites) != 2 {
+		t.Fatalf("Expected category, artist, and favorite facets, got %#v", response.Facets)
+	}
 
-	req = httptest.NewRequest(http.MethodGet, "/api/v1/gallery/catalog?provider=webgallery&source=https%3A%2F%2Fwebgallery%2Fgallery%2Fold", nil)
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/gallery/catalog?provider=webgallery&source=https%3A%2F%2Fwebgallery%2Fgallery%2Fcategory%2F1%2Fold", nil)
 	w = httptest.NewRecorder()
 
 	server.handleGalleryCatalog(w, req)
@@ -280,8 +308,26 @@ func TestHandleGalleryCatalog(t *testing.T) {
 	if response.Total != 1 || len(response.Photos) != 1 || response.Photos[0].Title != "Oldest" {
 		t.Fatalf("Expected source-filtered oldest photo, total=%d photos=%#v", response.Total, response.Photos)
 	}
-	if response.Provider != "webgallery" || response.Source != "https://webgallery/gallery/old" {
+	if response.Provider != "webgallery" || response.Source != "https://webgallery/gallery/category/1/old" {
 		t.Fatalf("Expected filter echo, got provider=%q source=%q", response.Provider, response.Source)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/gallery/catalog?category=2&artist=Artist+B", nil)
+	w = httptest.NewRecorder()
+
+	server.handleGalleryCatalog(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected category/artist filtered status 200, got %d", w.Code)
+	}
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode category/artist filtered gallery catalog: %v", err)
+	}
+	if response.Total != 1 || len(response.Photos) != 1 || response.Photos[0].Title != "Newest" {
+		t.Fatalf("Expected category and artist filters to return newest photo, total=%d photos=%#v", response.Total, response.Photos)
+	}
+	if response.Category != "2" || response.Artist != "Artist B" {
+		t.Fatalf("Expected category/artist filter echo, got category=%q artist=%q", response.Category, response.Artist)
 	}
 }
 

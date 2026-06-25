@@ -141,7 +141,11 @@ export interface GalleryCatalogResponse {
   offset: number;
   provider: string;
   source: string;
+  category: string;
+  artist: string;
+  favorite: boolean | null;
   providers: GalleryProviderFacet[];
+  facets: GalleryCatalogFacets;
 }
 
 export interface GalleryProviderFacet {
@@ -155,6 +159,26 @@ export interface GallerySourceFacet {
   id: string;
   display_name: string;
   count: number;
+}
+
+export interface GalleryFacet {
+  id: string;
+  display_name: string;
+  count: number;
+}
+
+export interface GalleryFavoriteFacet {
+  id: string;
+  display_name: string;
+  favorite: boolean;
+  count: number;
+}
+
+export interface GalleryCatalogFacets {
+  sources: GallerySourceFacet[];
+  categories: GalleryFacet[];
+  artists: GalleryFacet[];
+  favorites: GalleryFavoriteFacet[];
 }
 
 export interface PhotoDetailResponse {

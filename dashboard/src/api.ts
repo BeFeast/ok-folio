@@ -209,7 +209,7 @@ export async function fetchWeekPhotos(
 export async function fetchGalleryCatalog(
   limit: number = 100,
   offset: number = 0,
-  filters: { provider?: string; source?: string } = {},
+  filters: { provider?: string; source?: string; category?: string; artist?: string; favorite?: boolean } = {},
 ): Promise<GalleryCatalogResponse> {
   const params = new URLSearchParams({
     limit: limit.toString(),
@@ -220,6 +220,15 @@ export async function fetchGalleryCatalog(
   }
   if (filters.source) {
     params.set("source", filters.source);
+  }
+  if (filters.category) {
+    params.set("category", filters.category);
+  }
+  if (filters.artist) {
+    params.set("artist", filters.artist);
+  }
+  if (filters.favorite !== undefined) {
+    params.set("favorite", String(filters.favorite));
   }
   const response = await fetch(`${API_BASE}/gallery/catalog?${params}`);
   if (!response.ok) {
