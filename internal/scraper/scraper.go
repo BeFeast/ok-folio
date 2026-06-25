@@ -108,7 +108,17 @@ func (s *Scraper) ScrapePage(ctx context.Context, page int) (int, int, int, erro
 		mu         sync.Mutex
 		wg         sync.WaitGroup
 		semaphore  = make(chan struct{}, s.cfg.Download.ConcurrentLimit)
+		keyLocks   = make(map[string]*sync.Mutex)
+		keyLocksMu sync.Mutex
 	)
+	getKeyLock := func(key string) *sync.Mutex {
+		keyLocksMu.Lock()
+		defer keyLocksMu.Unlock()
+		if keyLocks[key] == nil {
+			keyLocks[key] = &sync.Mutex{}
+		}
+		return keyLocks[key]
+	}
 
 	for _, item := range result.Items {
 		select {
@@ -138,6 +148,10 @@ func (s *Scraper) ScrapePage(ctx context.Context, page int) (int, int, int, erro
 				mu.Unlock()
 				return
 			}
+
+			keyLock := getKeyLock(dedupeKey)
+			keyLock.Lock()
+			defer keyLock.Unlock()
 
 			// Check if already downloaded
 			exists, err := s.isMediaAlreadyKept(mediaItem)

@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -132,6 +133,59 @@ func TestScrapePageRecordsDuplicateAndAmbiguousInboxExceptions(t *testing.T) {
 	}
 	if !statuses["duplicate"] || !statuses["ambiguous"] {
 		t.Fatalf("Expected duplicate and ambiguous statuses, got %#v", statuses)
+	}
+}
+
+func TestScrapePageSerializesSamePageDedupeKeyDuplicates(t *testing.T) {
+	var imageRequests int32
+	imageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&imageRequests, 1)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("fixture image bytes"))
+	}))
+	defer imageServer.Close()
+
+	db := setupScraperTestDB(t)
+	cfg := setupScraperTestConfig(t)
+	cfg.Download.ConcurrentLimit = 2
+	connector := &fakeConnector{
+		items: []provider.DiscoveredMedia{
+			{
+				ProviderID: "fixture",
+				DedupeKey:  provider.DedupeKey{ProviderID: "fixture", Value: "source-1:media-1"},
+				Source:     provider.SourceMetadata{URL: "https://fixture.test/source/1", ExternalID: "source-1"},
+				Media:      provider.MediaMetadata{ExternalID: "media-1", FileName: "media-1.jpg"},
+				Title:      "First Fixture",
+			},
+			{
+				ProviderID: "fixture",
+				DedupeKey:  provider.DedupeKey{ProviderID: "fixture", Value: "source-1:media-1"},
+				Source:     provider.SourceMetadata{URL: "https://fixture.test/source/1-copy", ExternalID: "source-1-copy"},
+				Media:      provider.MediaMetadata{ExternalID: "media-1", FileName: "media-1-copy.jpg"},
+				Title:      "Duplicate Fixture",
+			},
+		},
+		mediaURL: imageServer.URL + "/media-1.jpg",
+	}
+	s := NewWithProvider(cfg, db, zerolog.New(os.Stderr).Level(zerolog.Disabled), connector)
+
+	downloaded, skipped, failed, err := s.ScrapePage(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("ScrapePage returned error: %v", err)
+	}
+	if downloaded != 1 || skipped != 1 || failed != 0 {
+		t.Fatalf("Expected one kept item and one duplicate exception, got downloaded=%d skipped=%d failed=%d", downloaded, skipped, failed)
+	}
+	if got := atomic.LoadInt32(&imageRequests); got != 1 {
+		t.Fatalf("Expected duplicate media to download only once, got %d requests", got)
+	}
+
+	inbox, total, err := db.GetInboxExceptions(10, 0)
+	if err != nil {
+		t.Fatalf("Failed to query inbox: %v", err)
+	}
+	if total != 1 || len(inbox) != 1 || inbox[0].Status != "duplicate" {
+		t.Fatalf("Expected one duplicate inbox exception, total=%d inbox=%#v", total, inbox)
 	}
 }
 
