@@ -36,14 +36,20 @@ func (u Update) ProviderMessage() *Message {
 }
 
 type Message struct {
-	MessageID int         `json:"message_id"`
-	Date      int64       `json:"date"`
-	Chat      Chat        `json:"chat"`
-	Caption   string      `json:"caption"`
-	Photo     []PhotoSize `json:"photo"`
-	Document  *Document   `json:"document"`
-	Video     *Video      `json:"video"`
-	Animation *Document   `json:"animation"`
+	MessageID            int            `json:"message_id"`
+	Date                 int64          `json:"date"`
+	Chat                 Chat           `json:"chat"`
+	Caption              string         `json:"caption"`
+	ForwardOrigin        *ForwardOrigin `json:"forward_origin"`
+	ForwardFromChat      *Chat          `json:"forward_from_chat"`
+	ForwardFromMessageID int            `json:"forward_from_message_id"`
+	ForwardSenderName    string         `json:"forward_sender_name"`
+	ForwardSignature     string         `json:"forward_signature"`
+	ForwardDate          int64          `json:"forward_date"`
+	Photo                []PhotoSize    `json:"photo"`
+	Document             *Document      `json:"document"`
+	Video                *Video         `json:"video"`
+	Animation            *Document      `json:"animation"`
 }
 
 func (m Message) MediaRef() (MediaRef, bool) {
@@ -95,6 +101,43 @@ func (m Message) URL() string {
 	return fmt.Sprintf("https://t.me/%s/%d", m.Chat.Username, m.MessageID)
 }
 
+func (m Message) SourceRef() SourceRef {
+	if m.ForwardOrigin != nil {
+		if ref, ok := m.ForwardOrigin.SourceRef(); ok {
+			return ref
+		}
+	}
+	if m.ForwardFromChat != nil {
+		ref := SourceRef{
+			ChatID:    m.ForwardFromChat.IDString(),
+			ChatName:  m.ForwardFromChat.DisplayName(),
+			MessageID: m.ForwardFromMessageID,
+			URL:       messageURL(*m.ForwardFromChat, m.ForwardFromMessageID),
+		}
+		if ref.MessageID > 0 {
+			return ref
+		}
+		if m.ForwardSenderName != "" {
+			ref.ChatName = m.ForwardSenderName
+		}
+		if m.ForwardSignature != "" {
+			ref.ChatName = m.ForwardSignature
+		}
+	}
+	if m.ForwardSenderName != "" {
+		return SourceRef{
+			ChatID:   m.Chat.IDString(),
+			ChatName: m.ForwardSenderName,
+		}
+	}
+	return SourceRef{
+		ChatID:    m.Chat.IDString(),
+		ChatName:  m.Chat.DisplayName(),
+		MessageID: m.MessageID,
+		URL:       m.URL(),
+	}
+}
+
 type Chat struct {
 	ID        int64  `json:"id"`
 	Type      string `json:"type"`
@@ -125,6 +168,83 @@ func (c Chat) DisplayName() string {
 		return c.Username
 	}
 	return c.IDString()
+}
+
+type User struct {
+	ID        int64  `json:"id"`
+	Username  string `json:"username"`
+	FirstName string `json:"first_name"`
+	LastName  string `json:"last_name"`
+}
+
+func (u User) IDString() string {
+	return strconv.FormatInt(u.ID, 10)
+}
+
+func (u User) DisplayName() string {
+	if u.FirstName != "" || u.LastName != "" {
+		if u.LastName == "" {
+			return u.FirstName
+		}
+		if u.FirstName == "" {
+			return u.LastName
+		}
+		return u.FirstName + " " + u.LastName
+	}
+	if u.Username != "" {
+		return u.Username
+	}
+	return u.IDString()
+}
+
+type ForwardOrigin struct {
+	Type            string `json:"type"`
+	SenderUser      *User  `json:"sender_user"`
+	SenderUserName  string `json:"sender_user_name"`
+	Chat            *Chat  `json:"chat"`
+	MessageID       int    `json:"message_id"`
+	Date            int64  `json:"date"`
+	AuthorSignature string `json:"author_signature"`
+}
+
+func (o ForwardOrigin) SourceRef() (SourceRef, bool) {
+	if o.Chat != nil {
+		ref := SourceRef{
+			ChatID:    o.Chat.IDString(),
+			ChatName:  o.Chat.DisplayName(),
+			MessageID: o.MessageID,
+			URL:       messageURL(*o.Chat, o.MessageID),
+		}
+		if o.AuthorSignature != "" {
+			ref.Author = o.AuthorSignature
+		}
+		return ref, ref.ChatID != ""
+	}
+	if o.SenderUser != nil {
+		return SourceRef{
+			ChatID:   o.SenderUser.IDString(),
+			ChatName: o.SenderUser.DisplayName(),
+		}, true
+	}
+	if o.SenderUserName != "" {
+		return SourceRef{ChatName: o.SenderUserName}, true
+	}
+	return SourceRef{}, false
+}
+
+type SourceRef struct {
+	ChatID    string
+	ChatName  string
+	MessageID int
+	URL       string
+	Author    string
+}
+
+func messageURL(chat Chat, messageID int) string {
+	if chat.Username == "" || messageID <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("https://t.me/%s/%d", chat.Username, messageID)
 }
 
 type PhotoSize struct {
