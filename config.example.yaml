@@ -1,0 +1,61 @@
+# OK Folio extractor configuration example.
+# Copy to config.yaml for local development and provide real secrets through
+# the deployment secret store for runtime environments.
+
+source:
+  base_url: "https://example.com/gallery/category/1/"
+  category_id: 1
+
+storage:
+  base_directory: "./data/originals"
+  daily_directory: "./data/_daily"
+
+database:
+  host: "localhost"
+  port: 3306
+  user: "ok_sight_ex"
+  password: "change-me"
+  database: "ok_sight_ex"
+  max_open_conns: 10
+  max_idle_conns: 5
+  conn_max_lifetime: 10m
+
+api:
+  enabled: true
+  port: 8080
+  host: "0.0.0.0"
+
+scheduler:
+  enabled: false
+  schedule: "0 0 */6 * * *"
+  pages: [1, 2, 3]
+
+retry:
+  max_attempts: 3
+  initial_delay: 1s
+  max_delay: 30s
+  multiplier: 2.0
+
+exif:
+  set_artist: true
+  set_date: true
+  set_title: true
+
+photoprism:
+  enabled: false
+  service_url: "http://localhost:2342"
+  auto_index: false
+  username: "admin"
+  password: "change-me"
+
+logging:
+  level: "info"
+  format: "json"
+  output: "stdout"
+
+download:
+  concurrent_limit: 2
+  timeout: 30s
+  user_agent: "OK-Folio/0.1"
+  delay_between: 2s
+  rate_limit_backoff: 60s

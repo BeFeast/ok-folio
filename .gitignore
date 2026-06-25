@@ -1,0 +1,70 @@
+# Secrets and local runtime config
+.env
+.env.*
+!.env.example
+config.yaml
+config.*.yaml
+!config.example.yaml
+*.pem
+*.key
+*.crt
+
+# Live data and generated media
+/Pictures/
+/originals/
+/storage/
+/database/
+/_daily/
+/downloads/
+/uploads/
+/thumbs/
+/thumbnails/
+*.jpg
+*.jpeg
+*.png
+*.webp
+*.gif
+*.mp4
+*.mov
+*.heic
+*.sql
+*.sql.zst
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs and generated artifacts
+*.log
+coverage/
+*.out
+*.test
+dist/
+build/
+tmp/
+temp/
+*.tar
+*.tar.gz
+*.zip
+
+# Go build artifacts
+/extractor
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Frontend dependencies/build output
+node_modules/
+dashboard/node_modules/
+dashboard/dist/
+dashboard/.vite/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+._*
+.vscode/
+.idea/
+*.tmp
+*.swp
+*~

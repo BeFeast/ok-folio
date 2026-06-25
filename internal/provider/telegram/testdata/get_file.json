@@ -1,0 +1,9 @@
+{
+  "ok": true,
+  "result": {
+    "file_id": "photo-large-file-id",
+    "file_unique_id": "photo-large-unique-id",
+    "file_size": 9000,
+    "file_path": "photos/file_42.jpg"
+  }
+}

@@ -1,0 +1,560 @@
+package database
+
+import (
+	"fmt"
+	"strings"
+	"time"
+
+	"ok-folio/internal/config"
+
+	"gorm.io/driver/mysql"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
+)
+
+// DownloadedPhoto represents a photo that has been downloaded
+type DownloadedPhoto struct {
+	ID           uint      `gorm:"primarykey"`
+	URL          string    `gorm:"uniqueIndex;not null"`
+	SourcePage   string    `gorm:"index"`
+	Title        string    `gorm:"index"`
+	Artist       string    `gorm:"index"`
+	UploadDate   time.Time `gorm:"index"`
+	FilePath     string    `gorm:"default:''"`
+	FileName     string    `gorm:"index"`
+	DownloadedAt time.Time `gorm:"autoCreateTime"`
+	FileSize     int64
+	Status       string `gorm:"index;default:'downloaded'"` // downloaded, failed, deleted
+	ErrorMessage string `gorm:"type:text"`                  // Error message if status is 'failed'
+}
+
+// ExtractionRun tracks extraction job runs
+type ExtractionRun struct {
+	ID               uint      `gorm:"primarykey"`
+	StartTime        time.Time `gorm:"autoCreateTime"`
+	EndTime          *time.Time
+	Status           string `gorm:"index;default:'running'"` // running, completed, failed
+	PagesProcessed   int
+	PhotosFound      int
+	PhotosDownloaded int
+	PhotosSkipped    int
+	PhotosFailed     int
+	ErrorMessage     string `gorm:"type:text"`
+}
+
+type DB struct {
+	*gorm.DB
+}
+
+// GalleryCatalogFilters narrows the OK Folio gallery catalog without
+// coupling the gallery API to a specific provider storage implementation.
+type GalleryCatalogFilters struct {
+	Provider string
+	Source   string
+}
+
+// GallerySourceStats summarizes downloaded media by provider source page.
+type GallerySourceStats struct {
+	SourcePage string `json:"source_page"`
+	Count      int64  `json:"count"`
+}
+
+// New creates a new database connection
+func New(cfg *config.DatabaseConfig) (*DB, error) {
+	gormConfig := &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	}
+
+	db, err := gorm.Open(mysql.Open(cfg.DSN()), gormConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to database: %w", err)
+	}
+
+	sqlDB, err := db.DB()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get database instance: %w", err)
+	}
+
+	// Set connection pool settings
+	sqlDB.SetMaxOpenConns(cfg.MaxOpenConns)
+	sqlDB.SetMaxIdleConns(cfg.MaxIdleConns)
+	sqlDB.SetConnMaxLifetime(cfg.ConnMaxLifetime)
+
+	// Auto-migrate schemas
+	if err := db.AutoMigrate(&DownloadedPhoto{}, &ExtractionRun{}); err != nil {
+		return nil, fmt.Errorf("failed to migrate database: %w", err)
+	}
+
+	return &DB{db}, nil
+}
+
+// IsPhotoDownloaded checks if a photo URL has already been downloaded
+func (db *DB) IsPhotoDownloaded(url string) (bool, error) {
+	var count int64
+	err := db.Model(&DownloadedPhoto{}).Where("url = ? AND status = ?", url, "downloaded").Count(&count).Error
+	return count > 0, err
+}
+
+// RecordDownload records a successful photo download (create or update)
+func (db *DB) RecordDownload(photo *DownloadedPhoto) error {
+	var existing DownloadedPhoto
+	result := db.DB.Where("url = ?", photo.URL).First(&existing)
+
+	if result.Error == gorm.ErrRecordNotFound {
+		// Create new record
+		return db.Create(photo).Error
+	} else if result.Error != nil {
+		return result.Error
+	}
+
+	if existing.Status == "downloaded" {
+		return fmt.Errorf("photo already downloaded: %s", photo.URL)
+	}
+
+	// Update existing record (handles retry of previously failed photos)
+	return db.Model(&existing).Updates(map[string]interface{}{
+		"source_page":   photo.SourcePage,
+		"title":         photo.Title,
+		"artist":        photo.Artist,
+		"upload_date":   photo.UploadDate,
+		"file_path":     photo.FilePath,
+		"file_name":     photo.FileName,
+		"file_size":     photo.FileSize,
+		"status":        photo.Status,
+		"error_message": "",
+	}).Error
+}
+
+// MarkPhotoFailed marks a photo download as failed
+func (db *DB) MarkPhotoFailed(url, errorMsg string) error {
+	return db.Model(&DownloadedPhoto{}).
+		Where("url = ?", url).
+		Updates(map[string]interface{}{
+			"status":        "failed",
+			"error_message": errorMsg,
+		}).Error
+}
+
+// RecordFailedDownload records a failed download attempt (create or update)
+func (db *DB) RecordFailedDownload(url, errorMsg string) error {
+	var existing DownloadedPhoto
+	result := db.DB.Where("url = ?", url).First(&existing)
+
+	if result.Error == gorm.ErrRecordNotFound {
+		// Create new record for failed download
+		photo := &DownloadedPhoto{
+			URL:          url,
+			Status:       "failed",
+			ErrorMessage: errorMsg,
+		}
+		return db.Create(photo).Error
+	} else if result.Error != nil {
+		return result.Error
+	}
+
+	// Update existing record to failed status
+	return db.Model(&existing).Updates(map[string]interface{}{
+		"status":        "failed",
+		"error_message": errorMsg,
+	}).Error
+}
+
+// StartExtractionRun creates a new extraction run record
+func (db *DB) StartExtractionRun() (*ExtractionRun, error) {
+	run := &ExtractionRun{
+		Status: "running",
+	}
+	err := db.Create(run).Error
+	return run, err
+}
+
+// UpdateExtractionRun updates an extraction run
+func (db *DB) UpdateExtractionRun(run *ExtractionRun) error {
+	return db.Save(run).Error
+}
+
+// FinishExtractionRun marks an extraction run as completed
+func (db *DB) FinishExtractionRun(runID uint, status string, errorMsg string) error {
+	now := time.Now()
+	updates := map[string]interface{}{
+		"end_time": now,
+		"status":   status,
+	}
+	if errorMsg != "" {
+		updates["error_message"] = errorMsg
+	}
+	return db.Model(&ExtractionRun{}).Where("id = ?", runID).Updates(updates).Error
+}
+
+// GetRecentRuns returns the most recent extraction runs
+func (db *DB) GetRecentRuns(limit int) ([]ExtractionRun, error) {
+	var runs []ExtractionRun
+	err := db.Order("start_time DESC").Limit(limit).Find(&runs).Error
+	return runs, err
+}
+
+// GetDownloadStats returns download statistics using a single optimized query
+func (db *DB) GetDownloadStats() (map[string]interface{}, error) {
+	type StatsResult struct {
+		TotalPhotos   int64 `gorm:"column:total_photos"`
+		TotalSize     int64 `gorm:"column:total_size"`
+		UniqueArtists int64 `gorm:"column:unique_artists"`
+	}
+
+	var result StatsResult
+	err := db.Model(&DownloadedPhoto{}).
+		Select(`
+			COUNT(*) as total_photos,
+			COALESCE(SUM(file_size), 0) as total_size,
+			COUNT(DISTINCT artist) as unique_artists
+		`).
+		Where("status = ?", "downloaded").
+		Scan(&result).Error
+
+	if err != nil {
+		return nil, err
+	}
+
+	stats := make(map[string]interface{})
+	stats["total_photos"] = result.TotalPhotos
+	stats["total_size_bytes"] = result.TotalSize
+	stats["unique_artists"] = result.UniqueArtists
+
+	if result.TotalPhotos > 0 {
+		var latest DownloadedPhoto
+		if err := db.Where("status = ?", "downloaded").
+			Order("downloaded_at DESC").
+			First(&latest).Error; err != nil {
+			return nil, err
+		}
+		if !latest.DownloadedAt.IsZero() {
+			stats["last_download"] = latest.DownloadedAt
+		}
+	}
+
+	return stats, nil
+}
+
+// ArtistStats represents photo count per artist
+type ArtistStats struct {
+	Artist     string `json:"artist"`
+	PhotoCount int    `json:"photo_count"`
+	TotalSize  int64  `json:"total_size"`
+}
+
+// GetTopArtists returns artists with the most photos
+func (db *DB) GetTopArtists(limit int) ([]ArtistStats, error) {
+	var artists []ArtistStats
+
+	err := db.DB.Model(&DownloadedPhoto{}).
+		Select("artist, COUNT(*) as photo_count, SUM(file_size) as total_size").
+		Where("status = ?", "downloaded").
+		Group("artist").
+		Order("photo_count DESC").
+		Limit(limit).
+		Scan(&artists).Error
+
+	if err != nil {
+		return nil, err
+	}
+
+	return artists, nil
+}
+
+// GetFailedPhotos returns photos that failed to download
+func (db *DB) GetFailedPhotos(limit int) ([]DownloadedPhoto, error) {
+	var photos []DownloadedPhoto
+
+	err := db.DB.Where("status = ?", "failed").
+		Order("downloaded_at DESC").
+		Limit(limit).
+		Find(&photos).Error
+
+	if err != nil {
+		return nil, err
+	}
+
+	return photos, nil
+}
+
+// ResetPhotoStatus resets a photo's status to allow retry
+func (db *DB) ResetPhotoStatus(photoID uint) error {
+	return db.DB.Model(&DownloadedPhoto{}).
+		Where("id = ?", photoID).
+		Update("status", "pending").Error
+}
+
+// SearchPhotos searches photos by title, artist, or filename
+func (db *DB) SearchPhotos(query string, limit int, offset int) ([]DownloadedPhoto, int64, error) {
+	var photos []DownloadedPhoto
+	var total int64
+
+	searchPattern := "%" + query + "%"
+
+	// Get total count
+	countQuery := db.DB.Model(&DownloadedPhoto{}).
+		Where("status = ?", "downloaded").
+		Where("title LIKE ? OR artist LIKE ? OR file_name LIKE ?", searchPattern, searchPattern, searchPattern)
+
+	if err := countQuery.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	// Get paginated results
+	err := countQuery.
+		Limit(limit).
+		Offset(offset).
+		Order("downloaded_at DESC").
+		Find(&photos).Error
+
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return photos, total, nil
+}
+
+// GetPhotoByID returns a single photo by ID
+func (db *DB) GetPhotoByID(id uint) (*DownloadedPhoto, error) {
+	var photo DownloadedPhoto
+	err := db.DB.Where("id = ?", id).First(&photo).Error
+	if err != nil {
+		return nil, err
+	}
+	return &photo, nil
+}
+
+// GetPhotosToday returns photos downloaded today
+func (db *DB) GetPhotosToday(limit int, offset int) ([]DownloadedPhoto, int64, error) {
+	var photos []DownloadedPhoto
+	var total int64
+
+	// Get start of today (midnight)
+	now := time.Now()
+	startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+
+	// Get total count
+	countQuery := db.DB.Model(&DownloadedPhoto{}).
+		Where("status = ? AND downloaded_at >= ?", "downloaded", startOfDay)
+
+	if err := countQuery.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	// Get paginated results
+	err := countQuery.
+		Limit(limit).
+		Offset(offset).
+		Order("downloaded_at DESC").
+		Find(&photos).Error
+
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return photos, total, nil
+}
+
+// GetPhotosLastWeek returns photos downloaded in the last 7 days
+func (db *DB) GetPhotosLastWeek(limit int, offset int) ([]DownloadedPhoto, int64, error) {
+	var photos []DownloadedPhoto
+	var total int64
+
+	// Get 7 days ago
+	weekAgo := time.Now().AddDate(0, 0, -7)
+
+	// Get total count
+	countQuery := db.DB.Model(&DownloadedPhoto{}).
+		Where("status = ? AND downloaded_at >= ?", "downloaded", weekAgo)
+
+	if err := countQuery.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	// Get paginated results
+	err := countQuery.
+		Limit(limit).
+		Offset(offset).
+		Order("downloaded_at DESC").
+		Find(&photos).Error
+
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return photos, total, nil
+}
+
+// GetGalleryCatalog returns downloaded photos for the OK Folio gallery.
+func (db *DB) GetGalleryCatalog(limit int, offset int, filters GalleryCatalogFilters) ([]DownloadedPhoto, int64, error) {
+	var photos []DownloadedPhoto
+	var total int64
+
+	query := db.DB.Model(&DownloadedPhoto{}).
+		Where("status = ?", "downloaded")
+	query = applyGalleryCatalogFilters(query, filters)
+
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	err := query.
+		Limit(limit).
+		Offset(offset).
+		Order("downloaded_at DESC, id DESC").
+		Find(&photos).Error
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return photos, total, nil
+}
+
+// GetGallerySourceStats returns provider source facets for downloaded media.
+func (db *DB) GetGallerySourceStats() ([]GallerySourceStats, error) {
+	var sources []GallerySourceStats
+
+	err := db.DB.Model(&DownloadedPhoto{}).
+		Select("source_page, COUNT(*) as count").
+		Where("status = ?", "downloaded").
+		Group("source_page").
+		Order("count DESC, source_page ASC").
+		Scan(&sources).Error
+	if err != nil {
+		return nil, err
+	}
+
+	return sources, nil
+}
+
+func applyGalleryCatalogFilters(query *gorm.DB, filters GalleryCatalogFilters) *gorm.DB {
+	if filters.Provider != "" {
+		provider := filters.Provider
+		if provider == "unknown" {
+			query = query.Where("source_page = ? OR source_page IS NULL", "")
+		} else {
+			escapedProvider := escapeSQLLike(provider)
+			query = query.Where(
+				"source_page = ? OR source_page LIKE ? ESCAPE '\\' OR source_page LIKE ? ESCAPE '\\' OR source_page LIKE ? ESCAPE '\\' OR source_page LIKE ? ESCAPE '\\'",
+				provider,
+				"https://"+escapedProvider+"/%",
+				"http://"+escapedProvider+"/%",
+				"https://www."+escapedProvider+"/%",
+				"http://www."+escapedProvider+"/%",
+			)
+		}
+	}
+	if filters.Source != "" {
+		query = query.Where("source_page = ?", filters.Source)
+	}
+	return query
+}
+
+func escapeSQLLike(value string) string {
+	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(value)
+}
+
+// GetPhotosByRunID returns photos downloaded during a specific extraction run
+func (db *DB) GetPhotosByRunID(runID uint, limit int, offset int) ([]DownloadedPhoto, int64, error) {
+	var photos []DownloadedPhoto
+	var total int64
+
+	// Get the extraction run to find the time window
+	var run ExtractionRun
+	if err := db.DB.First(&run, runID).Error; err != nil {
+		return nil, 0, err
+	}
+
+	// If run hasn't ended yet, use current time
+	endTime := time.Now()
+	if run.EndTime != nil {
+		endTime = *run.EndTime
+	}
+
+	// Get total count
+	countQuery := db.DB.Model(&DownloadedPhoto{}).
+		Where("status = ? AND downloaded_at >= ? AND downloaded_at <= ?", "downloaded", run.StartTime, endTime)
+
+	if err := countQuery.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	// Get paginated results
+	err := countQuery.
+		Limit(limit).
+		Offset(offset).
+		Order("downloaded_at DESC").
+		Find(&photos).Error
+
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return photos, total, nil
+}
+
+// GetAllArtists returns all artists with pagination
+func (db *DB) GetAllArtists(limit int, offset int, sortBy string) ([]ArtistStats, int64, error) {
+	var artists []ArtistStats
+	var total int64
+
+	// Get total count of unique artists
+	if err := db.DB.Model(&DownloadedPhoto{}).
+		Where("status = ?", "downloaded").
+		Distinct("artist").
+		Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	// Determine sort order
+	orderClause := "photo_count DESC"
+	switch sortBy {
+	case "name":
+		orderClause = "artist ASC"
+	case "size":
+		orderClause = "total_size DESC"
+	}
+
+	// Get paginated artists
+	err := db.DB.Model(&DownloadedPhoto{}).
+		Select("artist, COUNT(*) as photo_count, SUM(file_size) as total_size").
+		Where("status = ?", "downloaded").
+		Group("artist").
+		Order(orderClause).
+		Limit(limit).
+		Offset(offset).
+		Scan(&artists).Error
+
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return artists, total, nil
+}
+
+// GetPhotosByArtist returns all photos by a specific artist
+func (db *DB) GetPhotosByArtist(artist string, limit int, offset int) ([]DownloadedPhoto, int64, error) {
+	var photos []DownloadedPhoto
+	var total int64
+
+	// Get total count for this artist
+	countQuery := db.DB.Model(&DownloadedPhoto{}).
+		Where("artist = ? AND status = ?", artist, "downloaded")
+
+	if err := countQuery.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	// Get paginated results
+	err := countQuery.
+		Limit(limit).
+		Offset(offset).
+		Order("downloaded_at DESC").
+		Find(&photos).Error
+
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return photos, total, nil
+}

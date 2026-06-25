@@ -1,0 +1,69 @@
+{
+  "ok": true,
+  "result": [
+    {
+      "update_id": 1000,
+      "channel_post": {
+        "message_id": 42,
+        "date": 1700000000,
+        "caption": "Fixture channel photo",
+        "chat": {
+          "id": -1001234567890,
+          "type": "channel",
+          "title": "Fixture Channel",
+          "username": "fixture_channel"
+        },
+        "photo": [
+          {
+            "file_id": "photo-small-file-id",
+            "file_unique_id": "photo-small-unique-id",
+            "width": 320,
+            "height": 240,
+            "file_size": 1000
+          },
+          {
+            "file_id": "photo-large-file-id",
+            "file_unique_id": "photo-large-unique-id",
+            "width": 1280,
+            "height": 960,
+            "file_size": 9000
+          }
+        ]
+      }
+    },
+    {
+      "update_id": 1001,
+      "message": {
+        "message_id": 9,
+        "date": 1700000300,
+        "caption": "Fixture document",
+        "chat": {
+          "id": 12345,
+          "type": "private",
+          "first_name": "Fixture",
+          "last_name": "User"
+        },
+        "document": {
+          "file_id": "document-file-id",
+          "file_unique_id": "document-unique-id",
+          "file_name": "fixture.png",
+          "mime_type": "image/png"
+        }
+      }
+    },
+    {
+      "update_id": 1002,
+      "message": {
+        "message_id": 10,
+        "date": 1700000600,
+        "text": "No media here",
+        "chat": {
+          "id": 12345,
+          "type": "private",
+          "first_name": "Fixture",
+          "last_name": "User"
+        }
+      }
+    }
+  ]
+}
