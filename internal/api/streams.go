@@ -43,7 +43,7 @@ type connectorSourceStatus struct {
 }
 
 type connectorRunStatus struct {
-	ID               uint       `json:"id"`
+	ID               uint64     `json:"id"`
 	StartTime        time.Time  `json:"start_time"`
 	EndTime          *time.Time `json:"end_time"`
 	Status           string     `json:"status"`
@@ -268,8 +268,8 @@ func maxTime(current *time.Time, candidate time.Time) *time.Time {
 	return current
 }
 
-func strconvUint(value uint) string {
-	return strconv.FormatUint(uint64(value), 10)
+func strconvUint(value uint64) string {
+	return strconv.FormatUint(value, 10)
 }
 
 func connectorProviderIDFromSource(sourcePage string, storedURL string) string {

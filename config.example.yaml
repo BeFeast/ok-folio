@@ -11,12 +11,20 @@ storage:
   daily_directory: "./data/_daily"
 
 database:
-  host: "localhost"
-  port: 3306
-  user: "ok_sight_ex"
+  # OK Folio owns its own dedicated Postgres. These DB_* settings must never
+  # point at the legacy MariaDB host; the app refuses to start if they do.
+  # Defaults when unset: host=postgres, port=5432, sslmode=disable.
+  host: "postgres"
+  port: 5432
+  user: "ok_folio"
   password: "change-me"
-  database: "ok_sight_ex"
-  max_open_conns: 10
+  database: "ok_folio"
+  sslmode: "disable"
+  # Optional: a full connection string (URL or key/value). When set it is used
+  # verbatim and overrides the discrete fields above. Also settable via
+  # DATABASE_URL.
+  url: ""
+  max_open_conns: 15
   max_idle_conns: 5
   conn_max_lifetime: 10m
 

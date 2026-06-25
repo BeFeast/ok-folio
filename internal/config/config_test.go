@@ -347,48 +347,37 @@ func TestDatabaseConfig_DSN(t *testing.T) {
 		expected string
 	}{
 		{
-			name: "standard config",
+			name: "key/value form with TimeZone=UTC",
 			config: DatabaseConfig{
-				Host:     "localhost",
-				Port:     3306,
-				User:     "testuser",
+				Host:     "postgres",
+				Port:     5432,
+				User:     "okfolio",
 				Password: "testpass",
-				Database: "testdb",
+				Database: "okfolio",
+				SSLMode:  "disable",
 			},
-			expected: "testuser:testpass@tcp(localhost:3306)/testdb?charset=utf8mb4&parseTime=True&loc=Local",
+			expected: "host=postgres port=5432 user=okfolio password=testpass dbname=okfolio sslmode=disable TimeZone=UTC",
 		},
 		{
-			name: "different host and port",
+			name: "missing sslmode defaults to disable",
 			config: DatabaseConfig{
 				Host:     "db.example.com",
-				Port:     3307,
+				Port:     5433,
 				User:     "admin",
 				Password: "secret",
 				Database: "production",
 			},
-			expected: "admin:secret@tcp(db.example.com:3307)/production?charset=utf8mb4&parseTime=True&loc=Local",
+			expected: "host=db.example.com port=5433 user=admin password=secret dbname=production sslmode=disable TimeZone=UTC",
 		},
 		{
-			name: "empty password",
+			name: "DATABASE_URL is returned verbatim",
 			config: DatabaseConfig{
-				Host:     "localhost",
-				Port:     3306,
-				User:     "root",
-				Password: "",
-				Database: "testdb",
+				// Other fields are ignored when URL is set.
+				Host: "postgres",
+				Port: 5432,
+				URL:  "postgres://okfolio:testpass@db.internal:6543/okfolio?sslmode=require",
 			},
-			expected: "root:@tcp(localhost:3306)/testdb?charset=utf8mb4&parseTime=True&loc=Local",
-		},
-		{
-			name: "special characters in password",
-			config: DatabaseConfig{
-				Host:     "localhost",
-				Port:     3306,
-				User:     "user",
-				Password: "p@ssw0rd!#$",
-				Database: "testdb",
-			},
-			expected: "user:p@ssw0rd!#$@tcp(localhost:3306)/testdb?charset=utf8mb4&parseTime=True&loc=Local",
+			expected: "postgres://okfolio:testpass@db.internal:6543/okfolio?sslmode=require",
 		},
 	}
 
@@ -399,6 +388,68 @@ func TestDatabaseConfig_DSN(t *testing.T) {
 				t.Errorf("Expected DSN '%s', got '%s'", tt.expected, result)
 			}
 		})
+	}
+}
+
+func TestLoad_DatabaseEnvOverridesAndDefaults(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+
+	// Minimal config without a database block exercises the applied defaults.
+	if err := os.WriteFile(configPath, []byte("source:\n  base_url: \"https://example.com\"\n"), 0644); err != nil {
+		t.Fatalf("Failed to write config: %v", err)
+	}
+
+	t.Setenv("DB_PORT", "6543")
+	t.Setenv("DB_SSLMODE", "require")
+	t.Setenv("DATABASE_URL", "postgres://okfolio@db.internal:6543/okfolio")
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Failed to load config: %v", err)
+	}
+
+	if cfg.Database.Host != DefaultDatabaseHost {
+		t.Errorf("Expected default host %q, got %q", DefaultDatabaseHost, cfg.Database.Host)
+	}
+	if cfg.Database.Port != 6543 {
+		t.Errorf("Expected DB_PORT override 6543, got %d", cfg.Database.Port)
+	}
+	if cfg.Database.SSLMode != "require" {
+		t.Errorf("Expected DB_SSLMODE override 'require', got %q", cfg.Database.SSLMode)
+	}
+	if cfg.Database.URL != "postgres://okfolio@db.internal:6543/okfolio" {
+		t.Errorf("Expected DATABASE_URL override, got %q", cfg.Database.URL)
+	}
+}
+
+func TestLoad_DefaultsPointAtPostgresService(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte("source:\n  base_url: \"https://example.com\"\n"), 0644); err != nil {
+		t.Fatalf("Failed to write config: %v", err)
+	}
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Failed to load config: %v", err)
+	}
+	if cfg.Database.Host != "postgres" || cfg.Database.Port != 5432 || cfg.Database.SSLMode != "disable" {
+		t.Fatalf("Expected defaults host=postgres port=5432 sslmode=disable, got host=%q port=%d sslmode=%q",
+			cfg.Database.Host, cfg.Database.Port, cfg.Database.SSLMode)
+	}
+}
+
+func TestLoad_InvalidDBPort(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte("source:\n  base_url: \"https://example.com\"\n"), 0644); err != nil {
+		t.Fatalf("Failed to write config: %v", err)
+	}
+
+	t.Setenv("DB_PORT", "not-a-number")
+	if _, err := Load(configPath); err == nil {
+		t.Fatal("Expected error for invalid DB_PORT, got nil")
 	}
 }
 

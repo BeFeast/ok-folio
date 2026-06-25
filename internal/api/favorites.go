@@ -37,7 +37,7 @@ func (s *Server) handleSetFavorite(w http.ResponseWriter, r *http.Request, favor
 	}
 
 	if err := s.db.SetPhotoFavorite(photo.ID, favorite); err != nil {
-		s.logger.Error().Err(err).Uint("id", photo.ID).Bool("favorite", favorite).Msg("Failed to update favorite")
+		s.logger.Error().Err(err).Uint64("id", photo.ID).Bool("favorite", favorite).Msg("Failed to update favorite")
 		s.writeError(w, http.StatusInternalServerError, "Failed to update favorite")
 		return
 	}
@@ -51,13 +51,13 @@ func (s *Server) handleSetFavorite(w http.ResponseWriter, r *http.Request, favor
 
 func (s *Server) photoFromRoute(w http.ResponseWriter, r *http.Request) (*database.DownloadedPhoto, bool) {
 	idStr := chi.URLParam(r, "id")
-	id, err := strconv.ParseUint(idStr, 10, 32)
+	id, err := strconv.ParseUint(idStr, 10, 64)
 	if err != nil {
 		s.writeError(w, http.StatusBadRequest, "Invalid photo ID")
 		return nil, false
 	}
 
-	photo, err := s.db.GetPhotoByID(uint(id))
+	photo, err := s.db.GetPhotoByID(id)
 	if err != nil {
 		s.writeError(w, http.StatusNotFound, "Photo not found")
 		return nil, false

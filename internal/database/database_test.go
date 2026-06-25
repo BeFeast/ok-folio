@@ -148,6 +148,65 @@ func TestRecordDownload_DuplicateURL(t *testing.T) {
 	}
 }
 
+func TestBeforeSaveHookPopulatesURLHash(t *testing.T) {
+	db := setupTestDB(t)
+
+	photo := &DownloadedPhoto{
+		URL:      "https://example.com/hash-me.jpg",
+		FileName: "hash-me.jpg",
+		Status:   "downloaded",
+	}
+	if err := db.Create(photo).Error; err != nil {
+		t.Fatalf("Failed to create photo: %v", err)
+	}
+
+	if len(photo.URLHash) != 32 {
+		t.Fatalf("Expected a 32-byte url_hash from the BeforeSave hook, got %d bytes", len(photo.URLHash))
+	}
+
+	var stored DownloadedPhoto
+	if err := db.Where("url_hash = ?", HashURL(photo.URL)).First(&stored).Error; err != nil {
+		t.Fatalf("Expected lookup by url_hash to find the row: %v", err)
+	}
+	if stored.ID != photo.ID {
+		t.Fatalf("Expected url_hash lookup to return the inserted row")
+	}
+}
+
+func TestRecordDownloadOrDuplicateRoutesLoserToInbox(t *testing.T) {
+	db := setupTestDB(t)
+
+	const sharedURL = "https://example.com/loser.jpg"
+	first := &DownloadedPhoto{URL: sharedURL, FileName: "loser.jpg", Status: "downloaded"}
+	kept, err := db.RecordDownloadOrDuplicate(first, nil)
+	if err != nil || !kept {
+		t.Fatalf("Expected first insert to win, kept=%v err=%v", kept, err)
+	}
+
+	second := &DownloadedPhoto{URL: sharedURL, FileName: "loser-2.jpg", Status: "downloaded"}
+	duplicate := &InboxItem{
+		ProviderID: "webgallery",
+		DedupeKey:  "webgallery:loser",
+		Status:     "duplicate",
+		Reason:     "url_hash already kept",
+	}
+	kept, err = db.RecordDownloadOrDuplicate(second, duplicate)
+	if err != nil {
+		t.Fatalf("Expected duplicate to be routed to inbox without error, got %v", err)
+	}
+	if kept {
+		t.Fatalf("Expected the second insert to lose the url_hash guard")
+	}
+
+	exceptions, total, err := db.GetInboxExceptions(10, 0)
+	if err != nil {
+		t.Fatalf("Failed to read inbox exceptions: %v", err)
+	}
+	if total != 1 || len(exceptions) != 1 || exceptions[0].Status != "duplicate" {
+		t.Fatalf("Expected one duplicate inbox exception, got total=%d items=%#v", total, exceptions)
+	}
+}
+
 func TestMarkPhotoFailed(t *testing.T) {
 	db := setupTestDB(t)
 

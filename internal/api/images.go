@@ -26,14 +26,14 @@ const (
 // handleImageThumbnail serves a thumbnail version of an image
 func (s *Server) handleImageThumbnail(w http.ResponseWriter, r *http.Request) {
 	idStr := chi.URLParam(r, "id")
-	id, err := strconv.ParseUint(idStr, 10, 32)
+	id, err := strconv.ParseUint(idStr, 10, 64)
 	if err != nil {
 		s.writeError(w, http.StatusBadRequest, "Invalid photo ID")
 		return
 	}
 
 	// Get photo from database
-	photo, err := s.db.GetPhotoByID(uint(id))
+	photo, err := s.db.GetPhotoByID(id)
 	if err != nil {
 		s.writeError(w, http.StatusNotFound, "Photo not found")
 		return
@@ -79,14 +79,14 @@ func (s *Server) handleImageThumbnail(w http.ResponseWriter, r *http.Request) {
 // handleImageFull serves the full-size image
 func (s *Server) handleImageFull(w http.ResponseWriter, r *http.Request) {
 	idStr := chi.URLParam(r, "id")
-	id, err := strconv.ParseUint(idStr, 10, 32)
+	id, err := strconv.ParseUint(idStr, 10, 64)
 	if err != nil {
 		s.writeError(w, http.StatusBadRequest, "Invalid photo ID")
 		return
 	}
 
 	// Get photo from database
-	photo, err := s.db.GetPhotoByID(uint(id))
+	photo, err := s.db.GetPhotoByID(id)
 	if err != nil {
 		s.writeError(w, http.StatusNotFound, "Photo not found")
 		return
@@ -132,14 +132,14 @@ func (s *Server) handleImageFull(w http.ResponseWriter, r *http.Request) {
 // handlePhotoDetail returns detailed information about a photo
 func (s *Server) handlePhotoDetail(w http.ResponseWriter, r *http.Request) {
 	idStr := chi.URLParam(r, "id")
-	id, err := strconv.ParseUint(idStr, 10, 32)
+	id, err := strconv.ParseUint(idStr, 10, 64)
 	if err != nil {
 		s.writeError(w, http.StatusBadRequest, "Invalid photo ID")
 		return
 	}
 
 	// Get photo from database
-	photo, err := s.db.GetPhotoByID(uint(id))
+	photo, err := s.db.GetPhotoByID(id)
 	if err != nil {
 		s.writeError(w, http.StatusNotFound, "Photo not found")
 		return
