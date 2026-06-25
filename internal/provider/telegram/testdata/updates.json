@@ -3,15 +3,27 @@
   "result": [
     {
       "update_id": 1000,
-      "channel_post": {
-        "message_id": 42,
+      "message": {
+        "message_id": 77,
         "date": 1700000000,
         "caption": "Fixture channel photo",
         "chat": {
-          "id": -1001234567890,
+          "id": 12345,
+          "type": "private",
+          "first_name": "Fixture",
+          "last_name": "User"
+        },
+        "forward_origin": {
           "type": "channel",
-          "title": "Fixture Channel",
-          "username": "fixture_channel"
+          "date": 1699999900,
+          "chat": {
+            "id": -1001234567890,
+            "type": "channel",
+            "title": "Fixture Channel",
+            "username": "fixture_channel"
+          },
+          "message_id": 42,
+          "author_signature": "Fixture Artist"
         },
         "photo": [
           {
@@ -38,11 +50,18 @@
         "date": 1700000300,
         "caption": "Fixture document",
         "chat": {
-          "id": 12345,
+          "id": 67890,
           "type": "private",
-          "first_name": "Fixture",
-          "last_name": "User"
+          "first_name": "Other",
+          "last_name": "Forwarder"
         },
+        "forward_from_chat": {
+          "id": -1009876543210,
+          "type": "channel",
+          "title": "Legacy Fixture Channel",
+          "username": "legacy_fixture"
+        },
+        "forward_from_message_id": 88,
         "document": {
           "file_id": "document-file-id",
           "file_unique_id": "document-unique-id",

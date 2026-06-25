@@ -18,7 +18,7 @@ import (
 
 func TestDiscoverPageMapsTelegramFixture(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/botfixture-token/getUpdates" {
+		if r.URL.Path != "/botfixture-credential/getUpdates" {
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
 		if r.URL.Query().Get("offset") != "1000" {
@@ -70,14 +70,34 @@ func TestDiscoverPageMapsTelegramFixture(t *testing.T) {
 	if item.DedupeKey.Value != "-1001234567890:42:photo-large-unique-id" {
 		t.Fatalf("unexpected dedupe key: %s", item.DedupeKey.Value)
 	}
+	if item.Artist != "Fixture Artist" {
+		t.Fatalf("expected forward author signature as artist, got %q", item.Artist)
+	}
 	if item.PublishedAt != time.Unix(1700000000, 0).UTC() {
 		t.Fatalf("unexpected published date: %s", item.PublishedAt)
+	}
+
+	legacy := result.Items[1]
+	if legacy.Source.CollectionID != "-1009876543210" {
+		t.Fatalf("unexpected legacy collection ID: %q", legacy.Source.CollectionID)
+	}
+	if legacy.Source.CollectionName != "Legacy Fixture Channel" {
+		t.Fatalf("unexpected legacy collection name: %q", legacy.Source.CollectionName)
+	}
+	if legacy.Source.ItemID != "88" || legacy.Source.ExternalID != "-1009876543210:88" {
+		t.Fatalf("unexpected legacy source IDs: %+v", legacy.Source)
+	}
+	if legacy.Source.URL != "https://t.me/legacy_fixture/88" {
+		t.Fatalf("unexpected legacy source URL: %s", legacy.Source.URL)
+	}
+	if legacy.DedupeKey.Value != "-1009876543210:88:document-unique-id" {
+		t.Fatalf("unexpected legacy dedupe key: %s", legacy.DedupeKey.Value)
 	}
 }
 
 func TestResolveMediaUsesGetFileFixture(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/botfixture-token/getFile" {
+		if r.URL.Path != "/botfixture-credential/getFile" {
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
 		if r.URL.Query().Get("file_id") != "photo-large-file-id" {
@@ -90,7 +110,7 @@ func TestResolveMediaUsesGetFileFixture(t *testing.T) {
 	connector := newTestConnector(server.URL)
 	item := provider.DiscoveredMedia{
 		ProviderID: ProviderID,
-		DedupeKey:  provider.DedupeKey{ProviderID: ProviderID, Value: "-1001234567890:42:photo-large-unique-id"},
+		DedupeKey:  provider.DedupeKey{ProviderID: ProviderID, Value: "-1001234567890:42"},
 		Source:     provider.SourceMetadata{ExternalID: "-1001234567890:42"},
 		Media:      provider.MediaMetadata{ExternalID: "photo-large-file-id", MIMEType: "image/jpeg"},
 	}
@@ -100,7 +120,7 @@ func TestResolveMediaUsesGetFileFixture(t *testing.T) {
 		t.Fatalf("ResolveMedia returned error: %v", err)
 	}
 
-	expectedURL := server.URL + "/file/botfixture-token/photos/file_42.jpg"
+	expectedURL := server.URL + "/file/botfixture-credential/photos/file_42.jpg"
 	if resolved.Media.URL != expectedURL {
 		t.Fatalf("unexpected media URL: %s", resolved.Media.URL)
 	}
@@ -116,7 +136,7 @@ func TestDiscoverPageFiltersConfiguredChat(t *testing.T) {
 	defer server.Close()
 
 	connector := New(Config{
-		BotToken:    "fixture-token",
+		BotToken:    "fixture-credential",
 		BaseURL:     server.URL,
 		FileBaseURL: server.URL + "/file",
 		ChatID:      "12345",
@@ -130,8 +150,91 @@ func TestDiscoverPageFiltersConfiguredChat(t *testing.T) {
 	if len(result.Items) != 1 {
 		t.Fatalf("expected 1 filtered media item, got %d", len(result.Items))
 	}
-	if result.Items[0].Source.CollectionName != "Fixture User" {
+	if result.Items[0].Source.CollectionName != "Fixture Channel" {
 		t.Fatalf("unexpected filtered item: %+v", result.Items[0].Source)
+	}
+}
+
+func TestDiscoverPageFallsBackToBotMessageDedupe(t *testing.T) {
+	item, ok := discoveredMedia(Message{
+		MessageID: 12,
+		Date:      1700000900,
+		Chat: Chat{
+			ID:        12345,
+			Type:      "private",
+			FirstName: "Fixture",
+			LastName:  "User",
+		},
+		ForwardOrigin: &ForwardOrigin{
+			Type:           "hidden_user",
+			Date:           1700000800,
+			SenderUserName: "Hidden Sender",
+		},
+		Document: &Document{
+			FileID:       "hidden-document-file-id",
+			FileUniqueID: "hidden-document-unique-id",
+			FileName:     "hidden.png",
+			MIMEType:     "image/png",
+		},
+	})
+	if !ok {
+		t.Fatal("expected media item")
+	}
+	if item.DedupeKey.Value != "12345:12:hidden-document-unique-id" {
+		t.Fatalf("expected bot chat fallback dedupe key, got %q", item.DedupeKey.Value)
+	}
+	if item.Source.ExternalID != "12345:12" || item.Source.ItemID != "12" {
+		t.Fatalf("unexpected fallback source IDs: %+v", item.Source)
+	}
+	if item.Source.CollectionName != "Hidden Sender" {
+		t.Fatalf("expected hidden sender provenance, got %q", item.Source.CollectionName)
+	}
+}
+
+func TestDiscoverPageUsesForwardOriginSenderChat(t *testing.T) {
+	item, ok := discoveredMedia(Message{
+		MessageID: 15,
+		Date:      1700000900,
+		Chat: Chat{
+			ID:        12345,
+			Type:      "private",
+			FirstName: "Fixture",
+			LastName:  "User",
+		},
+		ForwardOrigin: &ForwardOrigin{
+			Type: "chat",
+			Date: 1700000800,
+			SenderChat: &Chat{
+				ID:    -1002223334445,
+				Type:  "supergroup",
+				Title: "Origin Group",
+			},
+			AuthorSignature: "Origin Author",
+		},
+		Photo: []PhotoSize{{
+			FileID:       "sender-chat-photo-file-id",
+			FileUniqueID: "sender-chat-photo-unique-id",
+			Width:        800,
+			Height:       600,
+		}},
+	})
+	if !ok {
+		t.Fatal("expected media item")
+	}
+	if item.Source.CollectionID != "-1002223334445" {
+		t.Fatalf("expected sender_chat collection ID, got %q", item.Source.CollectionID)
+	}
+	if item.Source.CollectionName != "Origin Group" {
+		t.Fatalf("expected sender_chat collection name, got %q", item.Source.CollectionName)
+	}
+	if item.Source.ExternalID != "12345:15" {
+		t.Fatalf("expected bot message fallback source ID without origin message ID, got %q", item.Source.ExternalID)
+	}
+	if item.DedupeKey.Value != "12345:15:sender-chat-photo-unique-id" {
+		t.Fatalf("unexpected dedupe key: %q", item.DedupeKey.Value)
+	}
+	if item.Artist != "Origin Author" {
+		t.Fatalf("expected author signature as artist, got %q", item.Artist)
 	}
 }
 
@@ -237,7 +340,7 @@ func assertProviderError(t *testing.T, err error, kind provider.ErrorKind) {
 
 func newTestConnector(baseURL string) *Connector {
 	return New(Config{
-		BotToken:    "fixture-token",
+		BotToken:    "fixture-credential",
 		BaseURL:     baseURL,
 		FileBaseURL: strings.TrimRight(baseURL, "/") + "/file",
 		Limit:       25,

@@ -201,24 +201,44 @@ func discoveredMedia(message Message) (provider.DiscoveredMedia, bool) {
 		return provider.DiscoveredMedia{}, false
 	}
 
-	externalID := fmt.Sprintf("%s:%d", message.Chat.IDString(), message.MessageID)
+	source := message.SourceRef()
+	externalID := fallbackExternalID(message)
+	if source.ChatID != "" && source.MessageID > 0 {
+		externalID = fmt.Sprintf("%s:%d", source.ChatID, source.MessageID)
+	}
+	collectionID := source.ChatID
+	if collectionID == "" {
+		collectionID = message.Chat.IDString()
+	}
+	collectionName := source.ChatName
+	if collectionName == "" {
+		collectionName = message.Chat.DisplayName()
+	}
+	itemID := strconv.Itoa(message.MessageID)
+	if source.MessageID > 0 {
+		itemID = strconv.Itoa(source.MessageID)
+	}
 	title := message.Caption
 	if title == "" {
 		title = ref.FileName
+	}
+	artist := collectionName
+	if source.Author != "" {
+		artist = source.Author
 	}
 
 	return provider.DiscoveredMedia{
 		ProviderID: ProviderID,
 		DedupeKey: provider.DedupeKey{
 			ProviderID: ProviderID,
-			Value:      fmt.Sprintf("%s:%s", externalID, ref.StableID()),
+			Value:      telegramDedupeValue(externalID, ref),
 		},
 		Source: provider.SourceMetadata{
-			URL:            message.URL(),
+			URL:            source.URL,
 			ExternalID:     externalID,
-			CollectionID:   message.Chat.IDString(),
-			CollectionName: message.Chat.DisplayName(),
-			ItemID:         strconv.Itoa(message.MessageID),
+			CollectionID:   collectionID,
+			CollectionName: collectionName,
+			ItemID:         itemID,
 		},
 		Media: provider.MediaMetadata{
 			MIMEType:   ref.MIMEType,
@@ -226,9 +246,20 @@ func discoveredMedia(message Message) (provider.DiscoveredMedia, bool) {
 			ExternalID: ref.FileID,
 		},
 		Title:       title,
-		Artist:      message.Chat.DisplayName(),
+		Artist:      artist,
 		PublishedAt: time.Unix(message.Date, 0).UTC(),
 	}, true
+}
+
+func fallbackExternalID(message Message) string {
+	return fmt.Sprintf("%s:%d", message.Chat.IDString(), message.MessageID)
+}
+
+func telegramDedupeValue(sourceID string, ref MediaRef) string {
+	if ref.StableID() == "" {
+		return sourceID
+	}
+	return sourceID + ":" + ref.StableID()
 }
 
 type httpAPIClient struct {
