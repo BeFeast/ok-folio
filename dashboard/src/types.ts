@@ -91,6 +91,7 @@ export interface Photo {
   FileName: string;
   DownloadedAt: string;
   FileSize: number;
+  Favorite: boolean;
   Status: string;
 }
 
@@ -185,6 +186,9 @@ export interface PhotoDetailResponse {
   id: number;
   url: string;
   source_page: string;
+  source: string;
+  provider: string;
+  category: string;
   title: string;
   artist: string;
   upload_date: string;
@@ -192,6 +196,7 @@ export interface PhotoDetailResponse {
   file_name: string;
   downloaded_at: string;
   file_size: number;
+  favorite: boolean;
   status: string;
   file_mod_time: string;
 }

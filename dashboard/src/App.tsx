@@ -18,6 +18,7 @@ import Gallery from "./pages/Gallery";
 import TodayImages from "./pages/TodayImages";
 import WeeklyImages from "./pages/WeeklyImages";
 import RunDetail from "./pages/RunDetail";
+import PieceDetail from "./pages/PieceDetail";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -123,6 +124,7 @@ function AppContent() {
           <Route path="/search" element={<Search />} />
           <Route path="/artists" element={<ArtistList />} />
           <Route path="/artists/:artistName" element={<ArtistDetail />} />
+          <Route path="/pieces/:photoId" element={<PieceDetail />} />
           <Route path="/runs/:runId" element={<RunDetail />} />
         </Routes>
       </main>

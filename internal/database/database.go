@@ -25,6 +25,7 @@ type DownloadedPhoto struct {
 	FileName     string    `gorm:"index"`
 	DownloadedAt time.Time `gorm:"autoCreateTime"`
 	FileSize     int64
+	Favorite     bool   `gorm:"index;default:false"`
 	Status       string `gorm:"index;default:'downloaded'"` // downloaded, failed, deleted
 	ErrorMessage string `gorm:"type:text"`                  // Error message if status is 'failed'
 }
@@ -341,6 +342,13 @@ func (db *DB) GetPhotoByID(id uint) (*DownloadedPhoto, error) {
 	return &photo, nil
 }
 
+// SetPhotoFavorite persists the local OK Folio favorite state for a photo.
+func (db *DB) SetPhotoFavorite(id uint, favorite bool) error {
+	return db.DB.Model(&DownloadedPhoto{}).
+		Where("id = ?", id).
+		Update("favorite", favorite).Error
+}
+
 // GetPhotosToday returns photos downloaded today
 func (db *DB) GetPhotosToday(limit int, offset int) ([]DownloadedPhoto, int64, error) {
 	var photos []DownloadedPhoto
@@ -484,8 +492,7 @@ func (db *DB) GetGalleryArtistStats() ([]GalleryFacetStats, error) {
 	return artists, nil
 }
 
-// GetGalleryFavoriteStats returns favorite facets when the adopted DB exposes
-// a legacy favorite column. Without one, every downloaded row is non-favorite.
+// GetGalleryFavoriteStats returns favorite facets for downloaded media.
 func (db *DB) GetGalleryFavoriteStats() ([]GalleryFavoriteStats, error) {
 	var total int64
 	if err := db.DB.Model(&DownloadedPhoto{}).Where("status = ?", "downloaded").Count(&total).Error; err != nil {
@@ -619,16 +626,15 @@ func (db *DB) galleryFavoriteColumn() (string, bool, error) {
 		return "", false, err
 	}
 
-	candidates := map[string]bool{
-		"favorite":     true,
-		"favorites":    true,
-		"is_favorite":  true,
-		"is_favourite": true,
-	}
+	available := make(map[string]string, len(columnTypes))
 	for _, columnType := range columnTypes {
 		name := strings.ToLower(columnType.Name())
-		if candidates[name] {
-			return columnType.Name(), true, nil
+		available[name] = columnType.Name()
+	}
+
+	for _, candidate := range []string{"favorite", "favorites", "is_favorite", "is_favourite"} {
+		if column, ok := available[candidate]; ok {
+			return column, true, nil
 		}
 	}
 	return "", false, nil

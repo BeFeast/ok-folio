@@ -1,15 +1,13 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { fetchGalleryCatalog } from "../api";
-import ImageModal from "../components/ImageModal";
 import ImageThumbnail from "../components/ImageThumbnail";
 import { formatBytes, formatDate, formatNumber } from "../utils";
 
 const PAGE_SIZE = 100;
 
 export default function Gallery() {
-  const [selectedPhotoId, setSelectedPhotoId] = useState<number | null>(null);
   const [offset, setOffset] = useState(0);
   const [providerFilter, setProviderFilter] = useState("");
   const [sourceFilter, setSourceFilter] = useState("");
@@ -35,7 +33,6 @@ export default function Gallery() {
   const showingEnd = Math.min(offset + photos.length, total);
   const hasPreviousPage = offset > 0;
   const hasNextPage = offset + PAGE_SIZE < total;
-  const photoIds = useMemo(() => photos.map((photo) => photo.ID), [photos]);
   const resultCopy = hasActiveFilter
     ? `${formatNumber(total)} matching ${total === 1 ? "image" : "images"}`
     : `${formatNumber(total)} cataloged ${total === 1 ? "image" : "images"} from provider downloads`;
@@ -193,21 +190,21 @@ export default function Gallery() {
         <section className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
           {photos.map((photo) => (
             <article key={photo.ID} className="min-w-0">
-              <ImageThumbnail
-                photoId={photo.ID}
-                title={photo.Title}
-                onClick={() => setSelectedPhotoId(photo.ID)}
-                className="aspect-[4/3] w-full rounded"
-              />
+              <Link to={`/pieces/${photo.ID}`} className="block">
+                <ImageThumbnail
+                  photoId={photo.ID}
+                  title={photo.Title}
+                  className="aspect-[4/3] w-full rounded"
+                />
+              </Link>
               <div className="mt-2 min-w-0 text-xs">
-                <button
-                  type="button"
+                <Link
+                  to={`/pieces/${photo.ID}`}
                   className="block w-full truncate text-left font-medium text-gray-950"
                   title={photo.Title}
-                  onClick={() => setSelectedPhotoId(photo.ID)}
                 >
                   {photo.Title || photo.FileName}
-                </button>
+                </Link>
                 <Link
                   to={`/artists/${encodeURIComponent(photo.Artist)}`}
                   className="mt-1 block truncate text-gray-600 hover:text-gray-950"
@@ -222,15 +219,6 @@ export default function Gallery() {
             </article>
           ))}
         </section>
-      )}
-
-      {selectedPhotoId && (
-        <ImageModal
-          photoId={selectedPhotoId}
-          photoIds={photoIds}
-          onClose={() => setSelectedPhotoId(null)}
-          onNavigate={(id) => setSelectedPhotoId(id)}
-        />
       )}
     </div>
   );

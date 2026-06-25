@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -71,6 +72,12 @@ func setupTestServer(t *testing.T) (*Server, *database.DB) {
 func safeShutdown(server *Server) {
 	server.Shutdown()
 	time.Sleep(100 * time.Millisecond) // Give workers time to stop
+}
+
+func TestIsDashboardRouteIncludesPieceDetail(t *testing.T) {
+	if !isDashboardRoute("/pieces/123") {
+		t.Fatalf("Expected piece detail route to fall back to dashboard index")
+	}
 }
 
 func TestHandleHealth_Healthy(t *testing.T) {
@@ -385,6 +392,130 @@ func TestHandleGalleryCatalogFiltersEmptyArtist(t *testing.T) {
 	}
 	if response.Artist != "" {
 		t.Fatalf("Expected empty artist filter echo, got %q", response.Artist)
+	}
+}
+
+func TestHandlePhotoDetailIncludesProvenanceAndFavorite(t *testing.T) {
+	server, db := setupTestServer(t)
+	defer safeShutdown(server)
+
+	photo := database.DownloadedPhoto{
+		URL:          "https://example.com/piece.jpg",
+		SourcePage:   "https://webgallery/gallery/category/7/piece",
+		Title:        "Detail Piece",
+		Artist:       "Detail Artist",
+		FilePath:     filepath.Join(server.cfg.Storage.BaseDirectory, "piece.jpg"),
+		FileName:     "piece.jpg",
+		UploadDate:   time.Date(2026, 6, 20, 12, 0, 0, 0, time.UTC),
+		DownloadedAt: time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC),
+		FileSize:     4096,
+		Favorite:     true,
+		Status:       "downloaded",
+	}
+	if err := db.Create(&photo).Error; err != nil {
+		t.Fatalf("Failed to create photo: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/photos/"+strconv.Itoa(int(photo.ID)), nil)
+	w := httptest.NewRecorder()
+
+	server.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d", w.Code)
+	}
+
+	var response struct {
+		ID        uint   `json:"id"`
+		Source    string `json:"source"`
+		Provider  string `json:"provider"`
+		Category  string `json:"category"`
+		Artist    string `json:"artist"`
+		Favorite  bool   `json:"favorite"`
+		SourceURL string `json:"source_page"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode photo detail: %v", err)
+	}
+
+	if response.ID != photo.ID || response.Artist != "Detail Artist" || !response.Favorite {
+		t.Fatalf("Expected detail identity and favorite state, got %#v", response)
+	}
+	if response.Provider != "webgallery" || response.Source != "webgallery/gallery/category/7/piece" || response.Category != "Category 7" {
+		t.Fatalf("Expected provenance fields from source page, got %#v", response)
+	}
+	if response.SourceURL != photo.SourcePage {
+		t.Fatalf("Expected raw source page to be preserved, got %q", response.SourceURL)
+	}
+}
+
+func TestHandleFavoritePersistsLocally(t *testing.T) {
+	server, db := setupTestServer(t)
+	defer safeShutdown(server)
+
+	photo := database.DownloadedPhoto{
+		URL:      "https://example.com/favorite-toggle.jpg",
+		Title:    "Favorite Toggle",
+		FilePath: filepath.Join(server.cfg.Storage.BaseDirectory, "favorite-toggle.jpg"),
+		FileName: "favorite-toggle.jpg",
+		Status:   "downloaded",
+	}
+	if err := db.Create(&photo).Error; err != nil {
+		t.Fatalf("Failed to create photo: %v", err)
+	}
+
+	favoriteURL := "/api/v1/photos/" + strconv.Itoa(int(photo.ID)) + "/favorite"
+	req := httptest.NewRequest(http.MethodPost, favoriteURL, nil)
+	w := httptest.NewRecorder()
+
+	server.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected add favorite status 200, got %d", w.Code)
+	}
+
+	stored, err := db.GetPhotoByID(photo.ID)
+	if err != nil {
+		t.Fatalf("Failed to fetch stored photo: %v", err)
+	}
+	if !stored.Favorite {
+		t.Fatalf("Expected favorite to persist true")
+	}
+
+	req = httptest.NewRequest(http.MethodGet, favoriteURL, nil)
+	w = httptest.NewRecorder()
+
+	server.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected get favorite status 200, got %d", w.Code)
+	}
+	var response struct {
+		ID        uint `json:"id"`
+		Favorite  bool `json:"favorite"`
+		Available bool `json:"available"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode favorite status: %v", err)
+	}
+	if response.ID != photo.ID || !response.Favorite || !response.Available {
+		t.Fatalf("Expected favorite status from local DB, got %#v", response)
+	}
+
+	req = httptest.NewRequest(http.MethodDelete, favoriteURL, nil)
+	w = httptest.NewRecorder()
+
+	server.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected remove favorite status 200, got %d", w.Code)
+	}
+	stored, err = db.GetPhotoByID(photo.ID)
+	if err != nil {
+		t.Fatalf("Failed to fetch stored photo: %v", err)
+	}
+	if stored.Favorite {
+		t.Fatalf("Expected favorite to persist false")
 	}
 }
 
