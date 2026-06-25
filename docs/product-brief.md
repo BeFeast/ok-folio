@@ -1,5 +1,7 @@
 # OK Folio — Product Brief
 
+> **Product priority:** OK Folio is **aggregator-first**; the curation emphasis in this doc is the *secondary* layer. Canonical for V1 product priority: `product-prd.md` + `design-notes.md`.
+
 ## One line
 
 A beautiful folio for visual discoveries — a personal, self-hosted, open-source beauty

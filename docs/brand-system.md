@@ -1,5 +1,7 @@
 # OK Folio — Brand & Design System Brief
 
+> **Product priority:** OK Folio is **aggregator-first**; the curation emphasis in this doc is the *secondary* layer. Canonical for V1 product priority: `product-prd.md` + `design-notes.md`.
+
 This is the canonical brand brief for OK Folio. It guides design, UI, and public-facing copy.
 
 ## Identity
