@@ -67,7 +67,7 @@ func TestDiscoverPageMapsTelegramFixture(t *testing.T) {
 	if item.Media.MIMEType != "image/jpeg" {
 		t.Fatalf("unexpected MIME type: %q", item.Media.MIMEType)
 	}
-	if item.DedupeKey.Value != "-1001234567890:42" {
+	if item.DedupeKey.Value != "-1001234567890:42:photo-large-unique-id" {
 		t.Fatalf("unexpected dedupe key: %s", item.DedupeKey.Value)
 	}
 	if item.Artist != "Fixture Artist" {
@@ -90,7 +90,7 @@ func TestDiscoverPageMapsTelegramFixture(t *testing.T) {
 	if legacy.Source.URL != "https://t.me/legacy_fixture/88" {
 		t.Fatalf("unexpected legacy source URL: %s", legacy.Source.URL)
 	}
-	if legacy.DedupeKey.Value != "-1009876543210:88" {
+	if legacy.DedupeKey.Value != "-1009876543210:88:document-unique-id" {
 		t.Fatalf("unexpected legacy dedupe key: %s", legacy.DedupeKey.Value)
 	}
 }
@@ -180,7 +180,7 @@ func TestDiscoverPageFallsBackToBotMessageDedupe(t *testing.T) {
 	if !ok {
 		t.Fatal("expected media item")
 	}
-	if item.DedupeKey.Value != "12345:12" {
+	if item.DedupeKey.Value != "12345:12:hidden-document-unique-id" {
 		t.Fatalf("expected bot chat fallback dedupe key, got %q", item.DedupeKey.Value)
 	}
 	if item.Source.ExternalID != "12345:12" || item.Source.ItemID != "12" {
@@ -188,6 +188,53 @@ func TestDiscoverPageFallsBackToBotMessageDedupe(t *testing.T) {
 	}
 	if item.Source.CollectionName != "Hidden Sender" {
 		t.Fatalf("expected hidden sender provenance, got %q", item.Source.CollectionName)
+	}
+}
+
+func TestDiscoverPageUsesForwardOriginSenderChat(t *testing.T) {
+	item, ok := discoveredMedia(Message{
+		MessageID: 15,
+		Date:      1700000900,
+		Chat: Chat{
+			ID:        12345,
+			Type:      "private",
+			FirstName: "Fixture",
+			LastName:  "User",
+		},
+		ForwardOrigin: &ForwardOrigin{
+			Type: "chat",
+			Date: 1700000800,
+			SenderChat: &Chat{
+				ID:    -1002223334445,
+				Type:  "supergroup",
+				Title: "Origin Group",
+			},
+			AuthorSignature: "Origin Author",
+		},
+		Photo: []PhotoSize{{
+			FileID:       "sender-chat-photo-file-id",
+			FileUniqueID: "sender-chat-photo-unique-id",
+			Width:        800,
+			Height:       600,
+		}},
+	})
+	if !ok {
+		t.Fatal("expected media item")
+	}
+	if item.Source.CollectionID != "-1002223334445" {
+		t.Fatalf("expected sender_chat collection ID, got %q", item.Source.CollectionID)
+	}
+	if item.Source.CollectionName != "Origin Group" {
+		t.Fatalf("expected sender_chat collection name, got %q", item.Source.CollectionName)
+	}
+	if item.Source.ExternalID != "12345:15" {
+		t.Fatalf("expected bot message fallback source ID without origin message ID, got %q", item.Source.ExternalID)
+	}
+	if item.DedupeKey.Value != "12345:15:sender-chat-photo-unique-id" {
+		t.Fatalf("unexpected dedupe key: %q", item.DedupeKey.Value)
+	}
+	if item.Artist != "Origin Author" {
+		t.Fatalf("expected author signature as artist, got %q", item.Artist)
 	}
 }
 

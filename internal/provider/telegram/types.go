@@ -202,18 +202,23 @@ type ForwardOrigin struct {
 	SenderUser      *User  `json:"sender_user"`
 	SenderUserName  string `json:"sender_user_name"`
 	Chat            *Chat  `json:"chat"`
+	SenderChat      *Chat  `json:"sender_chat"`
 	MessageID       int    `json:"message_id"`
 	Date            int64  `json:"date"`
 	AuthorSignature string `json:"author_signature"`
 }
 
 func (o ForwardOrigin) SourceRef() (SourceRef, bool) {
-	if o.Chat != nil {
+	chat := o.Chat
+	if chat == nil {
+		chat = o.SenderChat
+	}
+	if chat != nil {
 		ref := SourceRef{
-			ChatID:    o.Chat.IDString(),
-			ChatName:  o.Chat.DisplayName(),
+			ChatID:    chat.IDString(),
+			ChatName:  chat.DisplayName(),
 			MessageID: o.MessageID,
-			URL:       messageURL(*o.Chat, o.MessageID),
+			URL:       messageURL(*chat, o.MessageID),
 		}
 		if o.AuthorSignature != "" {
 			ref.Author = o.AuthorSignature

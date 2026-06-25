@@ -231,7 +231,7 @@ func discoveredMedia(message Message) (provider.DiscoveredMedia, bool) {
 		ProviderID: ProviderID,
 		DedupeKey: provider.DedupeKey{
 			ProviderID: ProviderID,
-			Value:      externalID,
+			Value:      telegramDedupeValue(externalID, ref),
 		},
 		Source: provider.SourceMetadata{
 			URL:            source.URL,
@@ -253,6 +253,13 @@ func discoveredMedia(message Message) (provider.DiscoveredMedia, bool) {
 
 func fallbackExternalID(message Message) string {
 	return fmt.Sprintf("%s:%d", message.Chat.IDString(), message.MessageID)
+}
+
+func telegramDedupeValue(sourceID string, ref MediaRef) string {
+	if ref.StableID() == "" {
+		return sourceID
+	}
+	return sourceID + ":" + ref.StableID()
 }
 
 type httpAPIClient struct {
