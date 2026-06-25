@@ -32,7 +32,7 @@ func setupTestServer(t *testing.T) (*Server, *database.DB) {
 		t.Fatalf("Failed to create test database: %v", err)
 	}
 
-	if err := gormDB.AutoMigrate(&database.DownloadedPhoto{}, &database.ExtractionRun{}); err != nil {
+	if err := gormDB.AutoMigrate(&database.DownloadedPhoto{}, &database.ExtractionRun{}, &database.InboxItem{}); err != nil {
 		t.Fatalf("Failed to migrate test database: %v", err)
 	}
 
@@ -516,6 +516,65 @@ func TestHandleFavoritePersistsLocally(t *testing.T) {
 	}
 	if stored.Favorite {
 		t.Fatalf("Expected favorite to persist false")
+	}
+}
+
+func TestHandleInboxReturnsOnlyExceptions(t *testing.T) {
+	server, db := setupTestServer(t)
+	defer safeShutdown(server)
+
+	items := []database.InboxItem{
+		{
+			ProviderID: "telegram",
+			DedupeKey:  "telegram:source-1:media-1",
+			SourceID:   "source-1",
+			MediaID:    "media-1",
+			Status:     "duplicate",
+			Reason:     "dedupe key already kept",
+		},
+		{
+			ProviderID: "webgallery",
+			SourceID:   "source-2",
+			Status:     "ambiguous",
+			Reason:     "missing connector dedupe key",
+		},
+		{
+			ProviderID: "webgallery",
+			DedupeKey:  "webgallery:source-3:media-3",
+			Status:     "dismissed",
+		},
+	}
+	for _, item := range items {
+		if err := db.Create(&item).Error; err != nil {
+			t.Fatalf("Failed to create inbox item: %v", err)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/inbox?limit=10", nil)
+	w := httptest.NewRecorder()
+
+	server.handleInbox(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d", w.Code)
+	}
+
+	var response struct {
+		Items  []database.InboxItem `json:"items"`
+		Total  int64                `json:"total"`
+		Limit  int                  `json:"limit"`
+		Offset int                  `json:"offset"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode inbox response: %v", err)
+	}
+	if response.Total != 2 || len(response.Items) != 2 {
+		t.Fatalf("Expected only duplicate and ambiguous inbox items, got total=%d items=%#v", response.Total, response.Items)
+	}
+	for _, item := range response.Items {
+		if item.Status != "duplicate" && item.Status != "ambiguous" {
+			t.Fatalf("Inbox returned non-exception status: %#v", item)
+		}
 	}
 }
 

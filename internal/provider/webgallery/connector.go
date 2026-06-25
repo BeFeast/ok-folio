@@ -94,12 +94,13 @@ func (c *Connector) DiscoverPage(ctx context.Context, req provider.PageRequest) 
 			}
 
 			seen[sourceURL] = true
+			sourceID := externalID(sourceURL)
 			items = append(items, provider.DiscoveredMedia{
 				ProviderID: ProviderID,
-				DedupeKey:  provider.DedupeKey{ProviderID: ProviderID, Value: sourceURL},
+				DedupeKey:  provider.DedupeKey{ProviderID: ProviderID, Value: sourceID},
 				Source: provider.SourceMetadata{
 					URL:        sourceURL,
-					ExternalID: externalID(sourceURL),
+					ExternalID: sourceID,
 				},
 			})
 		})
@@ -148,7 +149,7 @@ func (c *Connector) ResolveMedia(ctx context.Context, item provider.DiscoveredMe
 		out := item
 		out.ProviderID = ProviderID
 		if out.DedupeKey.Value == "" {
-			out.DedupeKey = provider.DedupeKey{ProviderID: ProviderID, Value: item.Source.URL}
+			out.DedupeKey = provider.DedupeKey{ProviderID: ProviderID, Value: externalID(item.Source.URL)}
 		}
 
 		doc.Find("h1[itemprop='name']").Each(func(_ int, s *goquery.Selection) {
@@ -264,5 +265,9 @@ func externalID(sourceURL string) string {
 	if err != nil {
 		return sourceURL
 	}
-	return strings.Trim(parsed.Path, "/")
+	id := strings.Trim(parsed.Path, "/")
+	if parsed.RawQuery != "" {
+		id += "?" + parsed.RawQuery
+	}
+	return id
 }
