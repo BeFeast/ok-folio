@@ -19,6 +19,10 @@ const galleryModes: { id: GalleryMode; label: string }[] = [
   { id: "wall", label: "Wall" },
 ];
 
+function pieceTitle(photo: Photo) {
+  return photo.Title || photo.FileName || `Piece ${photo.ID}`;
+}
+
 export default function Gallery() {
   const [offset, setOffset] = useState(0);
   const [mode, setMode] = useState<GalleryMode>("library");
@@ -354,7 +358,7 @@ function GalleryModeView({ mode, photos }: { mode: GalleryMode; photos: Photo[] 
             <Link to={`/pieces/${feature.ID}`} className="block">
               <ImageThumbnail
                 photoId={feature.ID}
-                title={feature.Title}
+                title={pieceTitle(feature)}
                 className="aspect-[16/10] w-full"
               />
             </Link>
@@ -367,7 +371,7 @@ function GalleryModeView({ mode, photos }: { mode: GalleryMode; photos: Photo[] 
               <Link to={`/pieces/${photo.ID}`} className="block">
                 <ImageThumbnail
                   photoId={photo.ID}
-                  title={photo.Title}
+                  title={pieceTitle(photo)}
                   className="aspect-[5/4] w-full"
                 />
               </Link>
@@ -387,11 +391,11 @@ function GalleryModeView({ mode, photos }: { mode: GalleryMode; photos: Photo[] 
             key={photo.ID}
             to={`/pieces/${photo.ID}`}
             className="mb-3 block break-inside-avoid border border-[color:var(--folio-line)] bg-[color:var(--folio-surface)] p-2"
-            title={photo.Title || photo.FileName}
+            title={pieceTitle(photo)}
           >
             <ImageThumbnail
               photoId={photo.ID}
-              title={photo.Title}
+              title={pieceTitle(photo)}
               className={`${index % 5 === 0 ? "aspect-[3/4]" : index % 3 === 0 ? "aspect-square" : "aspect-[4/3]"} w-full`}
             />
           </Link>
@@ -407,7 +411,7 @@ function GalleryModeView({ mode, photos }: { mode: GalleryMode; photos: Photo[] 
           <Link to={`/pieces/${photo.ID}`} className="block">
             <ImageThumbnail
               photoId={photo.ID}
-              title={photo.Title}
+              title={pieceTitle(photo)}
               className="aspect-[4/3] w-full"
             />
           </Link>
@@ -419,7 +423,8 @@ function GalleryModeView({ mode, photos }: { mode: GalleryMode; photos: Photo[] 
 }
 
 function PieceText({ photo, compact = false, size = "normal" }: { photo: Photo; compact?: boolean; size?: "normal" | "large" }) {
-  const title = photo.Title || photo.FileName;
+  const title = pieceTitle(photo);
+  const artist = photo.Artist.trim();
   return (
     <div className={`${compact ? "mt-1.5" : "mt-3"} min-w-0 text-xs`}>
       <Link
@@ -429,13 +434,19 @@ function PieceText({ photo, compact = false, size = "normal" }: { photo: Photo; 
       >
         {title}
       </Link>
-      <Link
-        to={`/artists/${encodeURIComponent(photo.Artist)}`}
-        className={`${compact ? "mt-0.5" : "mt-1"} block truncate text-[color:var(--folio-graphite)] hover:text-[color:var(--folio-ink)]`}
-        title={photo.Artist}
-      >
-        {photo.Artist || "Unknown artist"}
-      </Link>
+      {artist ? (
+        <Link
+          to={`/artists/${encodeURIComponent(artist)}`}
+          className={`${compact ? "mt-0.5" : "mt-1"} block truncate text-[color:var(--folio-graphite)] hover:text-[color:var(--folio-ink)]`}
+          title={artist}
+        >
+          {artist}
+        </Link>
+      ) : (
+        <span className={`${compact ? "mt-0.5" : "mt-1"} block truncate text-[color:var(--folio-graphite)]`}>
+          Unknown artist
+        </span>
+      )}
       {!compact && (
         <div className="mt-1 truncate text-[color:var(--folio-graphite)]">
           {formatDate(photo.DownloadedAt)} - {formatBytes(photo.FileSize)}
