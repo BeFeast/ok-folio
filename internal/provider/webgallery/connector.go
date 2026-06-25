@@ -265,5 +265,9 @@ func externalID(sourceURL string) string {
 	if err != nil {
 		return sourceURL
 	}
-	return strings.Trim(parsed.Path, "/")
+	id := strings.Trim(parsed.Path, "/")
+	if parsed.RawQuery != "" {
+		id += "?" + parsed.RawQuery
+	}
+	return id
 }

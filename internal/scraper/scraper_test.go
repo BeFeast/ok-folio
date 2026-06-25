@@ -135,6 +135,56 @@ func TestScrapePageRecordsDuplicateAndAmbiguousInboxExceptions(t *testing.T) {
 	}
 }
 
+func TestScrapePageRecognizesLegacyWebGallerySourceURLAsDuplicate(t *testing.T) {
+	db := setupScraperTestDB(t)
+	cfg := setupScraperTestConfig(t)
+	legacySourceURL := "https://webgallery.test/photos/alpha?id=1"
+	if err := db.RecordDownload(&database.DownloadedPhoto{
+		URL:      legacySourceURL,
+		FilePath: filepath.Join(cfg.Storage.BaseDirectory, "existing.jpg"),
+		FileName: "existing.jpg",
+		Status:   "downloaded",
+	}); err != nil {
+		t.Fatalf("Failed to seed legacy downloaded media: %v", err)
+	}
+
+	connector := &fakeConnector{
+		providerID: "webgallery",
+		items: []provider.DiscoveredMedia{
+			{
+				ProviderID: "webgallery",
+				DedupeKey:  provider.DedupeKey{ProviderID: "webgallery", Value: "photos/alpha?id=1"},
+				Source: provider.SourceMetadata{
+					URL:        legacySourceURL,
+					ExternalID: "photos/alpha?id=1",
+				},
+				Media: provider.MediaMetadata{ExternalID: "media-1"},
+				Title: "Legacy Duplicate",
+			},
+		},
+	}
+	s := NewWithProvider(cfg, db, zerolog.New(os.Stderr).Level(zerolog.Disabled), connector)
+
+	downloaded, skipped, failed, err := s.ScrapePage(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("ScrapePage returned error: %v", err)
+	}
+	if downloaded != 0 || skipped != 1 || failed != 0 {
+		t.Fatalf("Expected legacy URL keyed item to be treated as duplicate, got downloaded=%d skipped=%d failed=%d", downloaded, skipped, failed)
+	}
+
+	inbox, total, err := db.GetInboxExceptions(10, 0)
+	if err != nil {
+		t.Fatalf("Failed to query inbox: %v", err)
+	}
+	if total != 1 || len(inbox) != 1 {
+		t.Fatalf("Expected one duplicate inbox exception, got total=%d inbox=%#v", total, inbox)
+	}
+	if inbox[0].Status != "duplicate" || inbox[0].DedupeKey != "webgallery:photos/alpha?id=1" {
+		t.Fatalf("Unexpected inbox item for legacy duplicate: %#v", inbox[0])
+	}
+}
+
 func setupScraperTestDB(t *testing.T) *database.DB {
 	t.Helper()
 
@@ -177,12 +227,17 @@ func setupScraperTestConfig(t *testing.T) *config.Config {
 }
 
 type fakeConnector struct {
-	items    []provider.DiscoveredMedia
-	mediaURL string
+	providerID string
+	items      []provider.DiscoveredMedia
+	mediaURL   string
 }
 
 func (c *fakeConnector) Provider() provider.Source {
-	return provider.Source{ID: "fixture", DisplayName: "Fixture"}
+	id := c.providerID
+	if id == "" {
+		id = "fixture"
+	}
+	return provider.Source{ID: id, DisplayName: "Fixture"}
 }
 
 func (c *fakeConnector) DiscoverPage(context.Context, provider.PageRequest) (*provider.PageResult, error) {

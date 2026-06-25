@@ -51,6 +51,30 @@ func TestDiscoverPageUsesWebGalleryCategoryFixture(t *testing.T) {
 	}
 }
 
+func TestDiscoverPagePreservesQueryIdentityInDedupeKey(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`
+			<div class="photo-item"><a href="/photo?id=1">One</a></div>
+			<div class="photo-item"><a href="/photo?id=2">Two</a></div>
+		`))
+	}))
+	defer server.Close()
+
+	connector := newTestConnector(server.URL + "/gallery/category/1/")
+
+	result, err := connector.DiscoverPage(context.Background(), provider.PageRequest{Page: 1})
+	if err != nil {
+		t.Fatalf("DiscoverPage returned error: %v", err)
+	}
+
+	if len(result.Items) != 2 {
+		t.Fatalf("expected 2 media items with distinct query IDs, got %d", len(result.Items))
+	}
+	if result.Items[0].DedupeKey.Value != "photo?id=1" || result.Items[1].DedupeKey.Value != "photo?id=2" {
+		t.Fatalf("dedupe keys should preserve query identity, got %q and %q", result.Items[0].DedupeKey.Value, result.Items[1].DedupeKey.Value)
+	}
+}
+
 func TestResolveMediaUsesWebGalleryPhotoFixture(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, "testdata/photo.html")

@@ -140,7 +140,7 @@ func (s *Scraper) ScrapePage(ctx context.Context, page int) (int, int, int, erro
 			}
 
 			// Check if already downloaded
-			exists, err := s.db.IsPhotoDownloaded(dedupeKey)
+			exists, err := s.isMediaAlreadyKept(mediaItem)
 			if err != nil {
 				s.logger.Error().Err(err).Str("dedupe_key", dedupeKey).Msg("Failed to check if photo exists")
 				mu.Lock()
@@ -307,6 +307,27 @@ func stableDedupeKey(item provider.DiscoveredMedia) string {
 		return ""
 	}
 	return item.DedupeKey.String()
+}
+
+func (s *Scraper) isMediaAlreadyKept(item provider.DiscoveredMedia) (bool, error) {
+	keys := []string{stableDedupeKey(item)}
+	if item.ProviderID == webgallery.ProviderID && item.Source.URL != "" {
+		keys = append(keys, item.Source.URL)
+	}
+
+	for _, key := range keys {
+		if key == "" {
+			continue
+		}
+		exists, err := s.db.IsPhotoDownloaded(key)
+		if err != nil {
+			return false, err
+		}
+		if exists {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // downloadFile downloads a file from a URL
