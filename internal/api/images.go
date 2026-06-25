@@ -157,6 +157,9 @@ func (s *Server) handlePhotoDetail(w http.ResponseWriter, r *http.Request) {
 		"id":            photo.ID,
 		"url":           photo.URL,
 		"source_page":   photo.SourcePage,
+		"source":        sourceDisplayName(photo.SourcePage),
+		"provider":      providerDisplayName(providerIDFromSourcePage(photo.SourcePage)),
+		"category":      categoryDisplayName(galleryCategoryIDFromSourcePage(photo.SourcePage)),
 		"title":         photo.Title,
 		"artist":        photo.Artist,
 		"upload_date":   photo.UploadDate,
@@ -164,6 +167,7 @@ func (s *Server) handlePhotoDetail(w http.ResponseWriter, r *http.Request) {
 		"file_name":     photo.FileName,
 		"downloaded_at": photo.DownloadedAt,
 		"file_size":     photo.FileSize,
+		"favorite":      photo.Favorite,
 		"status":        photo.Status,
 		"file_mod_time": fileModTime,
 	}

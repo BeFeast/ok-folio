@@ -277,6 +277,32 @@ func categoryDisplayName(category string) string {
 	return "Category " + category
 }
 
+func galleryCategoryIDFromSourcePage(sourcePage string) string {
+	if sourcePage == "" {
+		return "unknown"
+	}
+	parsed, err := url.Parse(sourcePage)
+	if err != nil {
+		return "unknown"
+	}
+
+	parts := strings.Split(strings.Trim(parsed.EscapedPath(), "/"), "/")
+	for i := 0; i < len(parts)-1; i++ {
+		if strings.EqualFold(parts[i], "category") && parts[i+1] != "" {
+			return parts[i+1]
+		}
+	}
+
+	query := parsed.Query()
+	for _, key := range []string{"category", "category_id", "cat"} {
+		if value := strings.TrimSpace(query.Get(key)); value != "" {
+			return value
+		}
+	}
+
+	return "unknown"
+}
+
 func parseOptionalBool(value string) *bool {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "true", "1", "yes":

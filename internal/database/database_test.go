@@ -556,10 +556,6 @@ func TestGetGalleryCatalogFiltersCategoryArtistAndFavorites(t *testing.T) {
 	db := setupTestDB(t)
 	baseTime := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
 
-	if err := db.Exec("ALTER TABLE downloaded_photos ADD COLUMN favorite boolean DEFAULT false").Error; err != nil {
-		t.Fatalf("Failed to add legacy favorite fixture column: %v", err)
-	}
-
 	photos := []DownloadedPhoto{
 		{
 			URL:          "https://example.com/favorite.jpg",
@@ -598,7 +594,7 @@ func TestGetGalleryCatalogFiltersCategoryArtistAndFavorites(t *testing.T) {
 			t.Fatalf("Failed to create photo: %v", err)
 		}
 	}
-	if err := db.Exec("UPDATE downloaded_photos SET favorite = ? WHERE url = ?", true, "https://example.com/favorite.jpg").Error; err != nil {
+	if err := db.SetPhotoFavorite(photos[0].ID, true); err != nil {
 		t.Fatalf("Failed to mark favorite fixture: %v", err)
 	}
 
