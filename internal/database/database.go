@@ -1,9 +1,9 @@
 package database
 
 import (
+	"database/sql"
 	"fmt"
 	"net/url"
-	"sort"
 	"strings"
 	"time"
 
@@ -97,9 +97,18 @@ type GalleryFavoriteStats struct {
 // ConnectorSourceStats summarizes media state for a connector source.
 type ConnectorSourceStats struct {
 	SourcePage   string     `gorm:"column:source_page" json:"source_page"`
+	URL          string     `gorm:"column:url" json:"url"`
 	Status       string     `gorm:"column:status" json:"status"`
 	Count        int64      `gorm:"column:count" json:"count"`
 	LastActivity *time.Time `gorm:"column:last_activity" json:"last_activity"`
+}
+
+type connectorSourceStatsRow struct {
+	SourcePage   string         `gorm:"column:source_page"`
+	URL          string         `gorm:"column:url"`
+	Status       string         `gorm:"column:status"`
+	Count        int64          `gorm:"column:count"`
+	LastActivity sql.NullString `gorm:"column:last_activity"`
 }
 
 // ConnectorError captures recent persisted connector failures.
@@ -543,45 +552,54 @@ func (db *DB) GetGallerySourceStats() ([]GallerySourceStats, error) {
 
 // GetConnectorSourceStats returns per-source media counts for Streams status.
 func (db *DB) GetConnectorSourceStats() ([]ConnectorSourceStats, error) {
-	var photos []DownloadedPhoto
-	if err := db.DB.Model(&DownloadedPhoto{}).
-		Select("source_page, status, downloaded_at").
-		Order("source_page ASC, status ASC").
-		Find(&photos).Error; err != nil {
+	var rows []connectorSourceStatsRow
+	err := db.DB.Model(&DownloadedPhoto{}).
+		Select("source_page, url, status, COUNT(*) as count, CAST(MAX(downloaded_at) AS CHAR) as last_activity").
+		Group("source_page, url, status").
+		Order("source_page ASC, url ASC, status ASC").
+		Scan(&rows).Error
+	if err != nil {
 		return nil, err
 	}
 
-	bySourceStatus := make(map[string]*ConnectorSourceStats)
-	for _, photo := range photos {
-		key := photo.SourcePage + "\x00" + photo.Status
-		stat, ok := bySourceStatus[key]
-		if !ok {
-			stat = &ConnectorSourceStats{
-				SourcePage: photo.SourcePage,
-				Status:     photo.Status,
-			}
-			bySourceStatus[key] = stat
+	sources := make([]ConnectorSourceStats, 0, len(rows))
+	for _, row := range rows {
+		stat := ConnectorSourceStats{
+			SourcePage: row.SourcePage,
+			URL:        row.URL,
+			Status:     row.Status,
+			Count:      row.Count,
 		}
-		stat.Count++
-		if !photo.DownloadedAt.IsZero() && (stat.LastActivity == nil || photo.DownloadedAt.After(*stat.LastActivity)) {
-			lastActivity := photo.DownloadedAt
+		if row.LastActivity.Valid {
+			lastActivity, err := parseDBTime(row.LastActivity.String)
+			if err != nil {
+				return nil, err
+			}
 			stat.LastActivity = &lastActivity
 		}
+		sources = append(sources, stat)
 	}
-
-	sources := make([]ConnectorSourceStats, 0, len(bySourceStatus))
-	for _, stat := range bySourceStatus {
-		sources = append(sources, *stat)
-	}
-
-	sort.Slice(sources, func(i, j int) bool {
-		if sources[i].SourcePage == sources[j].SourcePage {
-			return sources[i].Status < sources[j].Status
-		}
-		return sources[i].SourcePage < sources[j].SourcePage
-	})
 
 	return sources, nil
+}
+
+func parseDBTime(value string) (time.Time, error) {
+	layouts := []string{
+		time.RFC3339Nano,
+		"2006-01-02 15:04:05.999999999-07:00",
+		"2006-01-02 15:04:05.999999999Z07:00",
+		"2006-01-02 15:04:05.999999999",
+		"2006-01-02 15:04:05-07:00",
+		"2006-01-02 15:04:05Z07:00",
+		"2006-01-02 15:04:05",
+	}
+	for _, layout := range layouts {
+		parsed, err := time.Parse(layout, value)
+		if err == nil {
+			return parsed, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("failed to parse database time %q", value)
 }
 
 // GetRecentConnectorErrors returns failed media with operator-facing error details.

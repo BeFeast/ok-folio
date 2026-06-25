@@ -399,10 +399,10 @@ func TestHandleConnectorStatus(t *testing.T) {
 	server, db := setupTestServer(t)
 	defer safeShutdown(server)
 
-	sourcePage := "https://webgallery/gallery/category/7/source"
+	sourcePage := "https://example.com/gallery/category/7/source"
 	photos := []database.DownloadedPhoto{
 		{
-			URL:          "https://example.com/kept.jpg",
+			URL:          "webgallery:gallery/category/7/source",
 			SourcePage:   sourcePage,
 			Title:        "Kept Piece",
 			FilePath:     filepath.Join(server.cfg.Storage.BaseDirectory, "kept.jpg"),
@@ -411,7 +411,7 @@ func TestHandleConnectorStatus(t *testing.T) {
 			Status:       "downloaded",
 		},
 		{
-			URL:          "https://example.com/failed.jpg",
+			URL:          "webgallery:gallery/category/7/failed",
 			SourcePage:   sourcePage,
 			Title:        "Failed Piece",
 			FileName:     "failed.jpg",
@@ -426,6 +426,14 @@ func TestHandleConnectorStatus(t *testing.T) {
 			FileName:     "telegram.jpg",
 			DownloadedAt: time.Date(2026, 6, 25, 11, 0, 0, 0, time.UTC),
 			Status:       "downloaded",
+		},
+		{
+			URL:          "telegram:-1001234567890:99:photo-unique-id",
+			Title:        "Telegram Failed Piece",
+			FileName:     "telegram-failed.jpg",
+			DownloadedAt: time.Date(2026, 6, 25, 12, 7, 0, 0, time.UTC),
+			Status:       "failed",
+			ErrorMessage: "telegram media expired",
 		},
 	}
 	for _, photo := range photos {
@@ -495,6 +503,11 @@ func TestHandleConnectorStatus(t *testing.T) {
 	if connector.LastSync == nil || !connector.LastSync.Equal(photos[1].DownloadedAt) {
 		t.Fatalf("Expected last sync from latest connector activity, got %v", connector.LastSync)
 	}
+	for _, item := range response.Connectors {
+		if item.ID == "example.com" {
+			t.Fatalf("Expected web gallery host source to stay under webgallery, got %#v", response.Connectors)
+		}
+	}
 
 	var telegram *connectorStatus
 	for i := range response.Connectors {
@@ -506,8 +519,11 @@ func TestHandleConnectorStatus(t *testing.T) {
 	if telegram == nil || telegram.DisplayName != "Telegram" {
 		t.Fatalf("Expected Telegram connector from t.me source, got %#v", response.Connectors)
 	}
-	if telegram.Counts.Downloaded != 1 || telegram.Health != "healthy" {
-		t.Fatalf("Expected healthy Telegram downloaded count, got %#v", telegram)
+	if telegram.Counts.Downloaded != 1 || telegram.Counts.Failed != 1 || telegram.Health != "degraded" {
+		t.Fatalf("Expected degraded Telegram counts from source URL and dedupe-key failure, got %#v", telegram)
+	}
+	if len(telegram.RecentErrors) != 1 || telegram.RecentErrors[0].Message != "telegram media expired" {
+		t.Fatalf("Expected Telegram dedupe-key failure under Telegram connector, got %#v", telegram.RecentErrors)
 	}
 }
 

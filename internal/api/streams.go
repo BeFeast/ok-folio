@@ -2,8 +2,10 @@ package api
 
 import (
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"ok-folio/internal/database"
@@ -62,6 +64,11 @@ type connectorErrorStatus struct {
 	OccurredAt time.Time `json:"occurred_at"`
 }
 
+type connectorSourceRef struct {
+	connector *connectorStatus
+	index     int
+}
+
 func (s *Server) handleConnectorStatus(w http.ResponseWriter, r *http.Request) {
 	sourceStats, err := s.db.GetConnectorSourceStats()
 	if err != nil {
@@ -100,25 +107,31 @@ func buildConnectorStatuses(sourceStats []database.ConnectorSourceStats, runs []
 			RecentErrors: []connectorErrorStatus{},
 		},
 	}
-	sourceIndex := make(map[string]*connectorSourceStatus)
+	sourceIndex := make(map[string]connectorSourceRef)
 
 	for _, stat := range sourceStats {
-		providerID := connectorProviderIDFromSourcePage(stat.SourcePage)
+		providerID := connectorProviderIDFromSource(stat.SourcePage, stat.URL)
 		if providerID == "unknown" {
 			providerID = "webgallery"
 		}
 		connector := ensureConnectorStatus(byConnector, providerID)
+		sourceID := connectorSourceID(stat.SourcePage, stat.URL, providerID)
+		sourceKey := providerID + "\x00" + sourceID
 
-		source := sourceIndex[stat.SourcePage]
-		if source == nil {
+		sourceRef, ok := sourceIndex[sourceKey]
+		if !ok {
 			connector.Sources = append(connector.Sources, connectorSourceStatus{
-				ID:          stat.SourcePage,
-				DisplayName: sourceDisplayName(stat.SourcePage),
+				ID:          sourceID,
+				DisplayName: connectorSourceDisplayName(sourceID, providerID),
 				ProviderID:  providerID,
 			})
-			source = &connector.Sources[len(connector.Sources)-1]
-			sourceIndex[stat.SourcePage] = source
+			sourceRef = connectorSourceRef{
+				connector: connector,
+				index:     len(connector.Sources) - 1,
+			}
+			sourceIndex[sourceKey] = sourceRef
 		}
+		source := &sourceRef.connector.Sources[sourceRef.index]
 
 		applyConnectorCount(&source.Counts, stat.Status, stat.Count)
 		applyConnectorCount(&connector.Counts, stat.Status, stat.Count)
@@ -150,19 +163,20 @@ func buildConnectorStatuses(sourceStats []database.ConnectorSourceStats, runs []
 	}
 
 	for _, connectorError := range recentErrors {
-		providerID := connectorProviderIDFromSourcePage(connectorError.SourcePage)
+		providerID := connectorProviderIDFromSource(connectorError.SourcePage, connectorError.URL)
 		if providerID == "unknown" {
 			providerID = "webgallery"
 		}
 		connector := ensureConnectorStatus(byConnector, providerID)
+		sourceID := connectorSourceID(connectorError.SourcePage, connectorError.URL, providerID)
 		message := connectorError.ErrorMessage
 		if message == "" {
 			message = "Download failed"
 		}
 		connector.RecentErrors = append(connector.RecentErrors, connectorErrorStatus{
 			ID:         strconvUint(connectorError.ID),
-			SourceID:   connectorError.SourcePage,
-			Source:     sourceDisplayName(connectorError.SourcePage),
+			SourceID:   sourceID,
+			Source:     connectorSourceDisplayName(sourceID, providerID),
 			Title:      connectorError.Title,
 			Message:    message,
 			OccurredAt: connectorError.OccurredAt,
@@ -258,13 +272,31 @@ func strconvUint(value uint) string {
 	return strconv.FormatUint(uint64(value), 10)
 }
 
+func connectorProviderIDFromSource(sourcePage string, storedURL string) string {
+	if sourcePage != "" {
+		if providerID := connectorProviderIDFromSourcePage(sourcePage); providerID != "unknown" {
+			return providerID
+		}
+	}
+	if providerID := providerIDFromDedupeKey(storedURL); providerID != "" {
+		return providerID
+	}
+	return "unknown"
+}
+
 func connectorProviderIDFromSourcePage(sourcePage string) string {
-	providerID := providerIDFromSourcePage(sourcePage)
-	switch providerID {
+	if sourcePage == "" {
+		return "unknown"
+	}
+	parsed, err := url.Parse(sourcePage)
+	if err != nil || parsed.Hostname() == "" {
+		return sourcePage
+	}
+	switch strings.TrimPrefix(parsed.Hostname(), "www.") {
 	case "t.me", "telegram.me":
 		return "telegram"
 	default:
-		return providerID
+		return "webgallery"
 	}
 }
 
@@ -277,4 +309,41 @@ func connectorDisplayName(providerID string) string {
 	default:
 		return providerDisplayName(providerID)
 	}
+}
+
+func connectorSourceID(sourcePage string, storedURL string, providerID string) string {
+	if sourcePage != "" {
+		return sourcePage
+	}
+	if providerID != "" && providerID != "unknown" {
+		return providerID
+	}
+	if storedURL != "" {
+		return storedURL
+	}
+	return "unknown"
+}
+
+func connectorSourceDisplayName(sourceID string, providerID string) string {
+	if sourceID == "" || sourceID == providerID || sourceID == "unknown" {
+		return connectorDisplayName(providerID)
+	}
+	return sourceDisplayName(sourceID)
+}
+
+func providerIDFromDedupeKey(value string) string {
+	prefix, _, ok := strings.Cut(value, ":")
+	if !ok || prefix == "" {
+		return ""
+	}
+	if prefix == "http" || prefix == "https" {
+		return ""
+	}
+	for _, r := range prefix {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			continue
+		}
+		return ""
+	}
+	return prefix
 }
