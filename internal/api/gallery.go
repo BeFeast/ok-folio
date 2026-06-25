@@ -52,6 +52,7 @@ func (s *Server) handleGalleryCatalog(w http.ResponseWriter, r *http.Request) {
 		Artist:    strings.TrimSpace(r.URL.Query().Get("artist")),
 		ArtistSet: queryHasKey(r.URL.Query(), "artist"),
 		Favorite:  parseOptionalBool(r.URL.Query().Get("favorite")),
+		Query:     strings.TrimSpace(r.URL.Query().Get("q")),
 	}
 
 	photos, total, err := s.db.GetGalleryCatalog(limit, offset, filters)
@@ -61,25 +62,25 @@ func (s *Server) handleGalleryCatalog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sourceStats, err := s.db.GetGallerySourceStats()
+	sourceStats, err := s.db.GetGallerySourceStatsForFilters(filters)
 	if err != nil {
 		s.logger.Error().Err(err).Msg("Failed to fetch gallery source facets")
 		s.writeError(w, http.StatusInternalServerError, "Failed to fetch gallery sources")
 		return
 	}
-	categoryStats, err := s.db.GetGalleryCategoryStats()
+	categoryStats, err := s.db.GetGalleryCategoryStatsForFilters(filters)
 	if err != nil {
 		s.logger.Error().Err(err).Msg("Failed to fetch gallery category facets")
 		s.writeError(w, http.StatusInternalServerError, "Failed to fetch gallery categories")
 		return
 	}
-	artistStats, err := s.db.GetGalleryArtistStats()
+	artistStats, err := s.db.GetGalleryArtistStatsForFilters(filters)
 	if err != nil {
 		s.logger.Error().Err(err).Msg("Failed to fetch gallery artist facets")
 		s.writeError(w, http.StatusInternalServerError, "Failed to fetch gallery artists")
 		return
 	}
-	favoriteStats, err := s.db.GetGalleryFavoriteStats()
+	favoriteStats, err := s.db.GetGalleryFavoriteStatsForFilters(filters)
 	if err != nil {
 		s.logger.Error().Err(err).Msg("Failed to fetch gallery favorite facets")
 		s.writeError(w, http.StatusInternalServerError, "Failed to fetch gallery favorites")
@@ -98,6 +99,7 @@ func (s *Server) handleGalleryCatalog(w http.ResponseWriter, r *http.Request) {
 		"category":  filters.Category,
 		"artist":    filters.Artist,
 		"favorite":  filters.Favorite,
+		"query":     filters.Query,
 		"providers": providerFacets,
 		"facets": galleryCatalogFacets{
 			Sources:    flattenGallerySourceFacets(providerFacets),

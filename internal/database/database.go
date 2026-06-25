@@ -74,6 +74,7 @@ type GalleryCatalogFilters struct {
 	Artist    string
 	ArtistSet bool
 	Favorite  *bool
+	Query     string
 }
 
 // GallerySourceStats summarizes downloaded media by provider source page.
@@ -535,11 +536,22 @@ func (db *DB) GetGalleryCatalog(limit int, offset int, filters GalleryCatalogFil
 
 // GetGallerySourceStats returns provider source facets for downloaded media.
 func (db *DB) GetGallerySourceStats() ([]GallerySourceStats, error) {
+	return db.GetGallerySourceStatsForFilters(GalleryCatalogFilters{})
+}
+
+// GetGallerySourceStatsForFilters returns provider source facets for the active gallery filter set.
+func (db *DB) GetGallerySourceStatsForFilters(filters GalleryCatalogFilters) ([]GallerySourceStats, error) {
 	var sources []GallerySourceStats
 
-	err := db.DB.Model(&DownloadedPhoto{}).
+	query := db.DB.Model(&DownloadedPhoto{}).
 		Select("source_page, COUNT(*) as count").
-		Where("status = ?", "downloaded").
+		Where("status = ?", "downloaded")
+	query, err := db.applyGalleryCatalogFilters(query, filters)
+	if err != nil {
+		return nil, err
+	}
+
+	err = query.
 		Group("source_page").
 		Order("count DESC, source_page ASC").
 		Scan(&sources).Error
@@ -621,7 +633,12 @@ func (db *DB) GetRecentConnectorErrors(limit int) ([]ConnectorError, error) {
 
 // GetGalleryCategoryStats returns category facets inferred from source URLs.
 func (db *DB) GetGalleryCategoryStats() ([]GalleryFacetStats, error) {
-	sources, err := db.GetGallerySourceStats()
+	return db.GetGalleryCategoryStatsForFilters(GalleryCatalogFilters{})
+}
+
+// GetGalleryCategoryStatsForFilters returns category facets for the active gallery filter set.
+func (db *DB) GetGalleryCategoryStatsForFilters(filters GalleryCatalogFilters) ([]GalleryFacetStats, error) {
+	sources, err := db.GetGallerySourceStatsForFilters(filters)
 	if err != nil {
 		return nil, err
 	}
@@ -641,11 +658,22 @@ func (db *DB) GetGalleryCategoryStats() ([]GalleryFacetStats, error) {
 
 // GetGalleryArtistStats returns artist facets for downloaded media.
 func (db *DB) GetGalleryArtistStats() ([]GalleryFacetStats, error) {
+	return db.GetGalleryArtistStatsForFilters(GalleryCatalogFilters{})
+}
+
+// GetGalleryArtistStatsForFilters returns artist facets for the active gallery filter set.
+func (db *DB) GetGalleryArtistStatsForFilters(filters GalleryCatalogFilters) ([]GalleryFacetStats, error) {
 	var artists []GalleryFacetStats
 
-	err := db.DB.Model(&DownloadedPhoto{}).
+	query := db.DB.Model(&DownloadedPhoto{}).
 		Select("artist as id, COUNT(*) as count").
-		Where("status = ?", "downloaded").
+		Where("status = ?", "downloaded")
+	query, err := db.applyGalleryCatalogFilters(query, filters)
+	if err != nil {
+		return nil, err
+	}
+
+	err = query.
 		Group("artist").
 		Order("count DESC, artist ASC").
 		Scan(&artists).Error
@@ -658,8 +686,18 @@ func (db *DB) GetGalleryArtistStats() ([]GalleryFacetStats, error) {
 
 // GetGalleryFavoriteStats returns favorite facets for downloaded media.
 func (db *DB) GetGalleryFavoriteStats() ([]GalleryFavoriteStats, error) {
+	return db.GetGalleryFavoriteStatsForFilters(GalleryCatalogFilters{})
+}
+
+// GetGalleryFavoriteStatsForFilters returns favorite facets for the active gallery filter set.
+func (db *DB) GetGalleryFavoriteStatsForFilters(filters GalleryCatalogFilters) ([]GalleryFavoriteStats, error) {
 	var total int64
-	if err := db.DB.Model(&DownloadedPhoto{}).Where("status = ?", "downloaded").Count(&total).Error; err != nil {
+	totalQuery := db.DB.Model(&DownloadedPhoto{}).Where("status = ?", "downloaded")
+	totalQuery, err := db.applyGalleryCatalogFilters(totalQuery, filters)
+	if err != nil {
+		return nil, err
+	}
+	if err := totalQuery.Count(&total).Error; err != nil {
 		return nil, err
 	}
 
@@ -675,10 +713,12 @@ func (db *DB) GetGalleryFavoriteStats() ([]GalleryFavoriteStats, error) {
 	}
 
 	var favoriteCount int64
-	if err := db.DB.Model(&DownloadedPhoto{}).
-		Where("status = ?", "downloaded").
-		Where(column+" = ?", true).
-		Count(&favoriteCount).Error; err != nil {
+	favoriteQuery := db.DB.Model(&DownloadedPhoto{}).Where("status = ?", "downloaded")
+	favoriteQuery, err = db.applyGalleryCatalogFilters(favoriteQuery, filters)
+	if err != nil {
+		return nil, err
+	}
+	if err := favoriteQuery.Where(column+" = ?", true).Count(&favoriteCount).Error; err != nil {
 		return nil, err
 	}
 
@@ -728,6 +768,17 @@ func (db *DB) applyGalleryCatalogFilters(query *gorm.DB, filters GalleryCatalogF
 		} else if *filters.Favorite {
 			query = query.Where("1 = 0")
 		}
+	}
+	if filters.Query != "" {
+		searchPattern := "%" + escapeSQLLike(filters.Query) + "%"
+		query = query.Where(
+			"title LIKE ? ESCAPE '\\' OR artist LIKE ? ESCAPE '\\' OR file_name LIKE ? ESCAPE '\\' OR url LIKE ? ESCAPE '\\' OR source_page LIKE ? ESCAPE '\\'",
+			searchPattern,
+			searchPattern,
+			searchPattern,
+			searchPattern,
+			searchPattern,
+		)
 	}
 	return query, nil
 }
