@@ -32,7 +32,7 @@ func setupTestServer(t *testing.T) (*Server, *database.DB) {
 		t.Fatalf("Failed to create test database: %v", err)
 	}
 
-	if err := gormDB.AutoMigrate(&database.DownloadedPhoto{}, &database.ExtractionRun{}); err != nil {
+	if err := gormDB.AutoMigrate(&database.DownloadedPhoto{}, &database.ExtractionRun{}, &database.InboxItem{}); err != nil {
 		t.Fatalf("Failed to migrate test database: %v", err)
 	}
 
