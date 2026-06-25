@@ -3,6 +3,7 @@ package database
 import (
 	"fmt"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -91,6 +92,24 @@ type GalleryFacetStats struct {
 type GalleryFavoriteStats struct {
 	Favorite bool  `json:"favorite"`
 	Count    int64 `json:"count"`
+}
+
+// ConnectorSourceStats summarizes media state for a connector source.
+type ConnectorSourceStats struct {
+	SourcePage   string     `gorm:"column:source_page" json:"source_page"`
+	Status       string     `gorm:"column:status" json:"status"`
+	Count        int64      `gorm:"column:count" json:"count"`
+	LastActivity *time.Time `gorm:"column:last_activity" json:"last_activity"`
+}
+
+// ConnectorError captures recent persisted connector failures.
+type ConnectorError struct {
+	ID           uint      `gorm:"column:id" json:"id"`
+	SourcePage   string    `gorm:"column:source_page" json:"source_page"`
+	URL          string    `gorm:"column:url" json:"url"`
+	Title        string    `gorm:"column:title" json:"title"`
+	ErrorMessage string    `gorm:"column:error_message" json:"error_message"`
+	OccurredAt   time.Time `gorm:"column:occurred_at" json:"occurred_at"`
 }
 
 // New creates a new database connection
@@ -520,6 +539,66 @@ func (db *DB) GetGallerySourceStats() ([]GallerySourceStats, error) {
 	}
 
 	return sources, nil
+}
+
+// GetConnectorSourceStats returns per-source media counts for Streams status.
+func (db *DB) GetConnectorSourceStats() ([]ConnectorSourceStats, error) {
+	var photos []DownloadedPhoto
+	if err := db.DB.Model(&DownloadedPhoto{}).
+		Select("source_page, status, downloaded_at").
+		Order("source_page ASC, status ASC").
+		Find(&photos).Error; err != nil {
+		return nil, err
+	}
+
+	bySourceStatus := make(map[string]*ConnectorSourceStats)
+	for _, photo := range photos {
+		key := photo.SourcePage + "\x00" + photo.Status
+		stat, ok := bySourceStatus[key]
+		if !ok {
+			stat = &ConnectorSourceStats{
+				SourcePage: photo.SourcePage,
+				Status:     photo.Status,
+			}
+			bySourceStatus[key] = stat
+		}
+		stat.Count++
+		if !photo.DownloadedAt.IsZero() && (stat.LastActivity == nil || photo.DownloadedAt.After(*stat.LastActivity)) {
+			lastActivity := photo.DownloadedAt
+			stat.LastActivity = &lastActivity
+		}
+	}
+
+	sources := make([]ConnectorSourceStats, 0, len(bySourceStatus))
+	for _, stat := range bySourceStatus {
+		sources = append(sources, *stat)
+	}
+
+	sort.Slice(sources, func(i, j int) bool {
+		if sources[i].SourcePage == sources[j].SourcePage {
+			return sources[i].Status < sources[j].Status
+		}
+		return sources[i].SourcePage < sources[j].SourcePage
+	})
+
+	return sources, nil
+}
+
+// GetRecentConnectorErrors returns failed media with operator-facing error details.
+func (db *DB) GetRecentConnectorErrors(limit int) ([]ConnectorError, error) {
+	var errors []ConnectorError
+
+	err := db.DB.Model(&DownloadedPhoto{}).
+		Select("id, source_page, url, title, error_message, downloaded_at as occurred_at").
+		Where("status = ?", "failed").
+		Order("downloaded_at DESC, id DESC").
+		Limit(limit).
+		Scan(&errors).Error
+	if err != nil {
+		return nil, err
+	}
+
+	return errors, nil
 }
 
 // GetGalleryCategoryStats returns category facets inferred from source URLs.

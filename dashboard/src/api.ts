@@ -3,6 +3,7 @@ import type {
   RunsResponse,
   HealthResponse,
   WorkerStatus,
+  ConnectorStatusResponse,
   TimelineResponse,
   TopArtistsResponse,
   FailedPhotosResponse,
@@ -73,6 +74,14 @@ export async function fetchWorkerStatus(): Promise<WorkerStatus> {
   const response = await fetch(`${API_BASE}/workers/status`);
   if (!response.ok) {
     throw new Error("Failed to fetch worker status");
+  }
+  return response.json();
+}
+
+export async function fetchConnectorStatus(): Promise<ConnectorStatusResponse> {
+  const response = await fetch(`${API_BASE}/streams/connectors/status`);
+  if (!response.ok) {
+    throw new Error("Failed to fetch connector status");
   }
   return response.json();
 }

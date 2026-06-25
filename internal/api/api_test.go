@@ -395,6 +395,122 @@ func TestHandleGalleryCatalogFiltersEmptyArtist(t *testing.T) {
 	}
 }
 
+func TestHandleConnectorStatus(t *testing.T) {
+	server, db := setupTestServer(t)
+	defer safeShutdown(server)
+
+	sourcePage := "https://webgallery/gallery/category/7/source"
+	photos := []database.DownloadedPhoto{
+		{
+			URL:          "https://example.com/kept.jpg",
+			SourcePage:   sourcePage,
+			Title:        "Kept Piece",
+			FilePath:     filepath.Join(server.cfg.Storage.BaseDirectory, "kept.jpg"),
+			FileName:     "kept.jpg",
+			DownloadedAt: time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC),
+			Status:       "downloaded",
+		},
+		{
+			URL:          "https://example.com/failed.jpg",
+			SourcePage:   sourcePage,
+			Title:        "Failed Piece",
+			FileName:     "failed.jpg",
+			DownloadedAt: time.Date(2026, 6, 25, 12, 5, 0, 0, time.UTC),
+			Status:       "failed",
+			ErrorMessage: "upstream returned 500",
+		},
+		{
+			URL:          "https://example.com/telegram.jpg",
+			SourcePage:   "https://t.me/sourcechannel/42",
+			Title:        "Telegram Piece",
+			FileName:     "telegram.jpg",
+			DownloadedAt: time.Date(2026, 6, 25, 11, 0, 0, 0, time.UTC),
+			Status:       "downloaded",
+		},
+	}
+	for _, photo := range photos {
+		if err := db.Create(&photo).Error; err != nil {
+			t.Fatalf("Failed to create photo: %v", err)
+		}
+	}
+
+	run := database.ExtractionRun{
+		StartTime:        time.Date(2026, 6, 25, 12, 1, 0, 0, time.UTC),
+		Status:           "failed",
+		PagesProcessed:   1,
+		PhotosFound:      2,
+		PhotosDownloaded: 1,
+		PhotosFailed:     1,
+		ErrorMessage:     "connector failed",
+	}
+	if err := db.Create(&run).Error; err != nil {
+		t.Fatalf("Failed to create run: %v", err)
+	}
+
+	if _, err := db.GetConnectorSourceStats(); err != nil {
+		t.Fatalf("Failed to get connector source stats: %v", err)
+	}
+	if _, err := db.GetRecentConnectorErrors(10); err != nil {
+		t.Fatalf("Failed to get connector errors: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/streams/connectors/status", nil)
+	w := httptest.NewRecorder()
+
+	server.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d", w.Code)
+	}
+
+	var response connectorStatusResponse
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode connector status: %v", err)
+	}
+	if len(response.Connectors) == 0 {
+		t.Fatalf("Expected at least webgallery connector, got none")
+	}
+	connector := response.Connectors[0]
+	if connector.ID != "webgallery" || connector.DisplayName != "Web Gallery" {
+		t.Fatalf("Expected webgallery connector first, got %#v", connector)
+	}
+	if connector.Health != "error" || connector.State != "Needs review" {
+		t.Fatalf("Expected failed run to mark connector unhealthy, got health=%q state=%q", connector.Health, connector.State)
+	}
+	if connector.Counts.Downloaded != 1 || connector.Counts.Failed != 1 || connector.Counts.Total != 2 {
+		t.Fatalf("Expected per-source media counts, got %#v", connector.Counts)
+	}
+	if len(connector.Sources) != 1 || connector.Sources[0].ID != sourcePage {
+		t.Fatalf("Expected source status for source page, got %#v", connector.Sources)
+	}
+	if connector.Sources[0].Counts.Downloaded != 1 || connector.Sources[0].Counts.Failed != 1 {
+		t.Fatalf("Expected source counts, got %#v", connector.Sources[0].Counts)
+	}
+	if len(connector.RecentRuns) != 1 || connector.RecentRuns[0].Status != "failed" {
+		t.Fatalf("Expected recent failed run, got %#v", connector.RecentRuns)
+	}
+	if len(connector.RecentErrors) != 1 || connector.RecentErrors[0].Message != "upstream returned 500" {
+		t.Fatalf("Expected recent failed media error, got %#v", connector.RecentErrors)
+	}
+	if connector.LastSync == nil || !connector.LastSync.Equal(photos[1].DownloadedAt) {
+		t.Fatalf("Expected last sync from latest connector activity, got %v", connector.LastSync)
+	}
+
+	var telegram *connectorStatus
+	for i := range response.Connectors {
+		if response.Connectors[i].ID == "telegram" {
+			telegram = &response.Connectors[i]
+			break
+		}
+	}
+	if telegram == nil || telegram.DisplayName != "Telegram" {
+		t.Fatalf("Expected Telegram connector from t.me source, got %#v", response.Connectors)
+	}
+	if telegram.Counts.Downloaded != 1 || telegram.Health != "healthy" {
+		t.Fatalf("Expected healthy Telegram downloaded count, got %#v", telegram)
+	}
+}
+
 func TestHandlePhotoDetailIncludesProvenanceAndFavorite(t *testing.T) {
 	server, db := setupTestServer(t)
 	defer safeShutdown(server)

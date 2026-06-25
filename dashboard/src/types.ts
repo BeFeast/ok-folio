@@ -37,6 +37,59 @@ export interface WorkerStatus {
   queue_utilization: number;
 }
 
+export interface ConnectorStatusResponse {
+  connectors: ConnectorStatus[];
+}
+
+export interface ConnectorStatus {
+  id: string;
+  display_name: string;
+  health: "healthy" | "degraded" | "error" | "syncing" | "idle";
+  state: string;
+  last_sync: string | null;
+  counts: ConnectorCounts;
+  sources: ConnectorSourceStatus[];
+  recent_runs: ConnectorRunStatus[];
+  recent_errors: ConnectorErrorStatus[];
+}
+
+export interface ConnectorCounts {
+  downloaded: number;
+  failed: number;
+  pending: number;
+  total: number;
+}
+
+export interface ConnectorSourceStatus {
+  id: string;
+  display_name: string;
+  provider_id: string;
+  last_sync: string | null;
+  counts: ConnectorCounts;
+}
+
+export interface ConnectorRunStatus {
+  id: number;
+  start_time: string;
+  end_time: string | null;
+  status: string;
+  pages_processed: number;
+  photos_found: number;
+  photos_downloaded: number;
+  photos_skipped: number;
+  photos_failed: number;
+  error_message?: string;
+}
+
+export interface ConnectorErrorStatus {
+  id: string;
+  source_id: string;
+  source: string;
+  title: string;
+  message: string;
+  occurred_at: string;
+}
+
 export interface TimelineEntry {
   date: string;
   downloaded: number;
