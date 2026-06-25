@@ -626,16 +626,15 @@ func (db *DB) galleryFavoriteColumn() (string, bool, error) {
 		return "", false, err
 	}
 
-	candidates := map[string]bool{
-		"favorite":     true,
-		"favorites":    true,
-		"is_favorite":  true,
-		"is_favourite": true,
-	}
+	available := make(map[string]string, len(columnTypes))
 	for _, columnType := range columnTypes {
 		name := strings.ToLower(columnType.Name())
-		if candidates[name] {
-			return columnType.Name(), true, nil
+		available[name] = columnType.Name()
+	}
+
+	for _, candidate := range []string{"favorite", "favorites", "is_favorite", "is_favourite"} {
+		if column, ok := available[candidate]; ok {
+			return column, true, nil
 		}
 	}
 	return "", false, nil

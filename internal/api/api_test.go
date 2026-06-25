@@ -74,6 +74,12 @@ func safeShutdown(server *Server) {
 	time.Sleep(100 * time.Millisecond) // Give workers time to stop
 }
 
+func TestIsDashboardRouteIncludesPieceDetail(t *testing.T) {
+	if !isDashboardRoute("/pieces/123") {
+		t.Fatalf("Expected piece detail route to fall back to dashboard index")
+	}
+}
+
 func TestHandleHealth_Healthy(t *testing.T) {
 	server, _ := setupTestServer(t)
 

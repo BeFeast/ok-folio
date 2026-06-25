@@ -620,6 +620,62 @@ func TestGetGalleryCatalogFiltersCategoryArtistAndFavorites(t *testing.T) {
 	}
 }
 
+func TestGalleryFavoriteColumnPrefersCanonicalFavorite(t *testing.T) {
+	gormDB, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		t.Fatalf("Failed to open test database: %v", err)
+	}
+
+	if err := gormDB.Exec(`
+		CREATE TABLE downloaded_photos (
+			id integer primary key autoincrement,
+			url text,
+			file_path text,
+			file_name text,
+			status text,
+			favorites boolean
+		)
+	`).Error; err != nil {
+		t.Fatalf("Failed to create legacy photos table: %v", err)
+	}
+	if err := gormDB.AutoMigrate(&DownloadedPhoto{}, &ExtractionRun{}); err != nil {
+		t.Fatalf("Failed to migrate test database: %v", err)
+	}
+
+	db := &DB{gormDB}
+	photo := DownloadedPhoto{
+		URL:      "https://example.com/canonical-favorite.jpg",
+		FilePath: filepath.Join(t.TempDir(), "canonical-favorite.jpg"),
+		FileName: "canonical-favorite.jpg",
+		Status:   "downloaded",
+	}
+	if err := db.Create(&photo).Error; err != nil {
+		t.Fatalf("Failed to create photo: %v", err)
+	}
+	if err := db.SetPhotoFavorite(photo.ID, true); err != nil {
+		t.Fatalf("Failed to set canonical favorite: %v", err)
+	}
+
+	favorite := true
+	filtered, total, err := db.GetGalleryCatalog(10, 0, GalleryCatalogFilters{Favorite: &favorite})
+	if err != nil {
+		t.Fatalf("Failed to filter favorites: %v", err)
+	}
+	if total != 1 || len(filtered) != 1 || filtered[0].ID != photo.ID {
+		t.Fatalf("Expected favorite filter to read canonical favorite column, total=%d rows=%#v", total, filtered)
+	}
+
+	favorites, err := db.GetGalleryFavoriteStats()
+	if err != nil {
+		t.Fatalf("Failed to get favorite stats: %v", err)
+	}
+	if len(favorites) != 2 || favorites[0].Count != 1 || favorites[1].Count != 0 {
+		t.Fatalf("Expected favorite stats to read canonical favorite column, got %#v", favorites)
+	}
+}
+
 func TestGetGalleryCatalogCategoryFilterMatchesFacetParser(t *testing.T) {
 	db := setupTestDB(t)
 	baseTime := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
