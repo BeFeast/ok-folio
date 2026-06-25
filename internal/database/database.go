@@ -30,6 +30,22 @@ type DownloadedPhoto struct {
 	ErrorMessage string `gorm:"type:text"`                  // Error message if status is 'failed'
 }
 
+// InboxItem is an ingestion exception that needs an operator decision.
+type InboxItem struct {
+	ID         uint   `gorm:"primarykey"`
+	ProviderID string `gorm:"index;not null"`
+	DedupeKey  string `gorm:"index"`
+	SourceID   string `gorm:"index"`
+	MediaID    string `gorm:"index"`
+	SourceURL  string
+	Title      string
+	Artist     string
+	Status     string    `gorm:"index;not null"` // duplicate, ambiguous
+	Reason     string    `gorm:"type:text"`
+	CreatedAt  time.Time `gorm:"autoCreateTime"`
+	UpdatedAt  time.Time `gorm:"autoUpdateTime"`
+}
+
 // ExtractionRun tracks extraction job runs
 type ExtractionRun struct {
 	ID               uint      `gorm:"primarykey"`
@@ -99,7 +115,7 @@ func New(cfg *config.DatabaseConfig) (*DB, error) {
 	sqlDB.SetConnMaxLifetime(cfg.ConnMaxLifetime)
 
 	// Auto-migrate schemas
-	if err := db.AutoMigrate(&DownloadedPhoto{}, &ExtractionRun{}); err != nil {
+	if err := db.AutoMigrate(&DownloadedPhoto{}, &ExtractionRun{}, &InboxItem{}); err != nil {
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
 	}
 
@@ -175,6 +191,57 @@ func (db *DB) RecordFailedDownload(url, errorMsg string) error {
 		"status":        "failed",
 		"error_message": errorMsg,
 	}).Error
+}
+
+// RecordInboxException records a duplicate or ambiguous ingest item for Inbox review.
+func (db *DB) RecordInboxException(item *InboxItem) error {
+	if item.Status != "duplicate" && item.Status != "ambiguous" {
+		return fmt.Errorf("invalid inbox exception status: %s", item.Status)
+	}
+	if item.ProviderID == "" {
+		return fmt.Errorf("provider ID is required")
+	}
+
+	var existing InboxItem
+	query := db.DB.Where("provider_id = ? AND status = ?", item.ProviderID, item.Status)
+	if item.DedupeKey != "" {
+		query = query.Where("dedupe_key = ?", item.DedupeKey)
+	} else {
+		query = query.Where("dedupe_key = ? AND source_id = ? AND media_id = ? AND source_url = ?", "", item.SourceID, item.MediaID, item.SourceURL)
+	}
+	result := query.First(&existing)
+	if result.Error == gorm.ErrRecordNotFound {
+		return db.Create(item).Error
+	}
+	if result.Error != nil {
+		return result.Error
+	}
+
+	return db.Model(&existing).Updates(map[string]interface{}{
+		"source_id":  item.SourceID,
+		"media_id":   item.MediaID,
+		"source_url": item.SourceURL,
+		"title":      item.Title,
+		"artist":     item.Artist,
+		"reason":     item.Reason,
+	}).Error
+}
+
+// GetInboxExceptions returns only Inbox exception items.
+func (db *DB) GetInboxExceptions(limit int, offset int) ([]InboxItem, int64, error) {
+	var items []InboxItem
+	var total int64
+
+	query := db.DB.Model(&InboxItem{}).Where("status IN ?", []string{"duplicate", "ambiguous"})
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	if err := query.Order("updated_at DESC, id DESC").Limit(limit).Offset(offset).Find(&items).Error; err != nil {
+		return nil, 0, err
+	}
+
+	return items, total, nil
 }
 
 // StartExtractionRun creates a new extraction run record

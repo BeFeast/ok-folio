@@ -43,8 +43,8 @@ func TestDiscoverPageUsesWebGalleryCategoryFixture(t *testing.T) {
 	if result.Items[0].Source.URL != server.URL+"/photos/alpha" {
 		t.Fatalf("unexpected first source URL: %s", result.Items[0].Source.URL)
 	}
-	if result.Items[0].DedupeKey.Value != result.Items[0].Source.URL {
-		t.Fatalf("dedupe key should use source URL")
+	if result.Items[0].DedupeKey.Value != "photos/alpha" {
+		t.Fatalf("dedupe key should use stable source identity, got %q", result.Items[0].DedupeKey.Value)
 	}
 	if !result.Pagination.HasNext || result.Pagination.NextPage != 3 {
 		t.Fatalf("unexpected pagination: %+v", result.Pagination)
@@ -60,7 +60,7 @@ func TestResolveMediaUsesWebGalleryPhotoFixture(t *testing.T) {
 	connector := newTestConnector(server.URL + "/gallery/category/1/")
 	item := provider.DiscoveredMedia{
 		ProviderID: ProviderID,
-		DedupeKey:  provider.DedupeKey{ProviderID: ProviderID, Value: server.URL + "/photos/alpha"},
+		DedupeKey:  provider.DedupeKey{ProviderID: ProviderID, Value: "photos/alpha"},
 		Source:     provider.SourceMetadata{URL: server.URL + "/photos/alpha"},
 	}
 

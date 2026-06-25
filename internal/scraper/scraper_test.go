@@ -1,0 +1,199 @@
+package scraper
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"ok-folio/internal/config"
+	"ok-folio/internal/database"
+	"ok-folio/internal/provider"
+	"ok-folio/internal/testguard"
+
+	"github.com/rs/zerolog"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
+)
+
+func TestScrapePageAutoKeepsNewMediaByStableDedupeKey(t *testing.T) {
+	imageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("fixture image bytes"))
+	}))
+	defer imageServer.Close()
+
+	db := setupScraperTestDB(t)
+	cfg := setupScraperTestConfig(t)
+	connector := &fakeConnector{
+		items: []provider.DiscoveredMedia{
+			{
+				ProviderID: "fixture",
+				DedupeKey:  provider.DedupeKey{ProviderID: "fixture", Value: "source-1:media-1"},
+				Source: provider.SourceMetadata{
+					URL:        "https://fixture.test/source/1",
+					ExternalID: "source-1",
+				},
+				Media: provider.MediaMetadata{
+					ExternalID: "media-1",
+					FileName:   "media-1.jpg",
+				},
+				Title:       "New Fixture",
+				Artist:      "Fixture Artist",
+				PublishedAt: time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC),
+			},
+		},
+		mediaURL: imageServer.URL + "/media-1.jpg",
+	}
+	s := NewWithProvider(cfg, db, zerolog.New(os.Stderr).Level(zerolog.Disabled), connector)
+
+	downloaded, skipped, failed, err := s.ScrapePage(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("ScrapePage returned error: %v", err)
+	}
+	if downloaded != 1 || skipped != 0 || failed != 0 {
+		t.Fatalf("Expected one auto-kept item, got downloaded=%d skipped=%d failed=%d", downloaded, skipped, failed)
+	}
+
+	var photo database.DownloadedPhoto
+	if err := db.Where("url = ?", "fixture:source-1:media-1").First(&photo).Error; err != nil {
+		t.Fatalf("Expected downloaded photo keyed by connector dedupe key: %v", err)
+	}
+	if photo.SourcePage != "https://fixture.test/source/1" {
+		t.Fatalf("Expected source provenance to remain separate from dedupe key, got %q", photo.SourcePage)
+	}
+
+	inbox, total, err := db.GetInboxExceptions(10, 0)
+	if err != nil {
+		t.Fatalf("Failed to query inbox: %v", err)
+	}
+	if total != 0 || len(inbox) != 0 {
+		t.Fatalf("Expected no inbox exceptions for new media, got total=%d inbox=%#v", total, inbox)
+	}
+}
+
+func TestScrapePageRecordsDuplicateAndAmbiguousInboxExceptions(t *testing.T) {
+	db := setupScraperTestDB(t)
+	cfg := setupScraperTestConfig(t)
+	if err := db.RecordDownload(&database.DownloadedPhoto{
+		URL:      "fixture:source-1:media-1",
+		FilePath: filepath.Join(cfg.Storage.BaseDirectory, "existing.jpg"),
+		FileName: "existing.jpg",
+		Status:   "downloaded",
+	}); err != nil {
+		t.Fatalf("Failed to seed downloaded media: %v", err)
+	}
+
+	connector := &fakeConnector{
+		items: []provider.DiscoveredMedia{
+			{
+				ProviderID: "fixture",
+				DedupeKey:  provider.DedupeKey{ProviderID: "fixture", Value: "source-1:media-1"},
+				Source:     provider.SourceMetadata{URL: "https://fixture.test/source/1", ExternalID: "source-1"},
+				Media:      provider.MediaMetadata{ExternalID: "media-1"},
+				Title:      "Duplicate Fixture",
+			},
+			{
+				ProviderID: "fixture",
+				Source:     provider.SourceMetadata{URL: "https://fixture.test/source/ambiguous", ExternalID: "source-ambiguous"},
+				Media:      provider.MediaMetadata{ExternalID: "media-ambiguous"},
+				Title:      "Ambiguous Fixture",
+			},
+		},
+	}
+	s := NewWithProvider(cfg, db, zerolog.New(os.Stderr).Level(zerolog.Disabled), connector)
+
+	downloaded, skipped, failed, err := s.ScrapePage(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("ScrapePage returned error: %v", err)
+	}
+	if downloaded != 0 || skipped != 2 || failed != 0 {
+		t.Fatalf("Expected duplicate and ambiguous items to be skipped into inbox, got downloaded=%d skipped=%d failed=%d", downloaded, skipped, failed)
+	}
+
+	inbox, total, err := db.GetInboxExceptions(10, 0)
+	if err != nil {
+		t.Fatalf("Failed to query inbox: %v", err)
+	}
+	if total != 2 || len(inbox) != 2 {
+		t.Fatalf("Expected two inbox exceptions, got total=%d inbox=%#v", total, inbox)
+	}
+
+	statuses := map[string]bool{}
+	for _, item := range inbox {
+		statuses[item.Status] = true
+		if item.Status == "duplicate" && item.DedupeKey != "fixture:source-1:media-1" {
+			t.Fatalf("Duplicate inbox item used wrong dedupe key: %#v", item)
+		}
+	}
+	if !statuses["duplicate"] || !statuses["ambiguous"] {
+		t.Fatalf("Expected duplicate and ambiguous statuses, got %#v", statuses)
+	}
+}
+
+func setupScraperTestDB(t *testing.T) *database.DB {
+	t.Helper()
+
+	gormDB, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		t.Fatalf("Failed to open test database: %v", err)
+	}
+	if err := gormDB.AutoMigrate(&database.DownloadedPhoto{}, &database.ExtractionRun{}, &database.InboxItem{}); err != nil {
+		t.Fatalf("Failed to migrate test database: %v", err)
+	}
+	return &database.DB{DB: gormDB}
+}
+
+func setupScraperTestConfig(t *testing.T) *config.Config {
+	t.Helper()
+
+	root := t.TempDir()
+	cfg := &config.Config{
+		Source: config.SourceConfig{
+			BaseURL: "https://fixture.test/gallery",
+		},
+		Storage: config.StorageConfig{
+			BaseDirectory:  filepath.Join(root, "originals"),
+			DailyDirectory: filepath.Join(root, "daily"),
+		},
+		Download: config.DownloadConfig{
+			ConcurrentLimit: 1,
+			Timeout:         5 * time.Second,
+		},
+		Retry: config.RetryConfig{
+			MaxAttempts: 1,
+		},
+	}
+	if err := testguard.ValidateConfig(cfg); err != nil {
+		t.Fatalf("unsafe scraper test config: %v", err)
+	}
+	return cfg
+}
+
+type fakeConnector struct {
+	items    []provider.DiscoveredMedia
+	mediaURL string
+}
+
+func (c *fakeConnector) Provider() provider.Source {
+	return provider.Source{ID: "fixture", DisplayName: "Fixture"}
+}
+
+func (c *fakeConnector) DiscoverPage(context.Context, provider.PageRequest) (*provider.PageResult, error) {
+	return &provider.PageResult{Items: c.items}, nil
+}
+
+func (c *fakeConnector) ResolveMedia(_ context.Context, item provider.DiscoveredMedia) (*provider.DiscoveredMedia, error) {
+	out := item
+	out.Media.URL = c.mediaURL
+	if out.Media.FileName == "" {
+		out.Media.FileName = "fixture.jpg"
+	}
+	return &out, nil
+}

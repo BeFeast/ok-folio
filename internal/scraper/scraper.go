@@ -83,6 +83,12 @@ func New(cfg *config.Config, db *database.DB, logger zerolog.Logger) *Scraper {
 	}
 }
 
+func NewWithProvider(cfg *config.Config, db *database.DB, logger zerolog.Logger, connector provider.Connector) *Scraper {
+	s := New(cfg, db, logger)
+	s.provider = connector
+	return s
+}
+
 // ScrapePage scrapes a single page and downloads photos
 func (s *Scraper) ScrapePage(ctx context.Context, page int) (int, int, int, error) {
 	pageURL := fmt.Sprintf("%s?pager=%d", s.cfg.Source.BaseURL, page)
@@ -118,15 +124,25 @@ func (s *Scraper) ScrapePage(ctx context.Context, page int) (int, int, int, erro
 			semaphore <- struct{}{}        // Acquire
 			defer func() { <-semaphore }() // Release
 
-			dedupeURL := mediaItem.DedupeKey.Value
-			if dedupeURL == "" {
-				dedupeURL = mediaItem.Source.URL
+			dedupeKey := stableDedupeKey(mediaItem)
+			if dedupeKey == "" {
+				if err := s.recordInboxException(mediaItem, "ambiguous", "missing connector dedupe key"); err != nil {
+					s.logger.Error().Err(err).Msg("Failed to record ambiguous inbox item")
+					mu.Lock()
+					failed++
+					mu.Unlock()
+					return
+				}
+				mu.Lock()
+				skipped++
+				mu.Unlock()
+				return
 			}
 
 			// Check if already downloaded
-			exists, err := s.db.IsPhotoDownloaded(dedupeURL)
+			exists, err := s.db.IsPhotoDownloaded(dedupeKey)
 			if err != nil {
-				s.logger.Error().Err(err).Str("url", dedupeURL).Msg("Failed to check if photo exists")
+				s.logger.Error().Err(err).Str("dedupe_key", dedupeKey).Msg("Failed to check if photo exists")
 				mu.Lock()
 				failed++
 				mu.Unlock()
@@ -134,7 +150,14 @@ func (s *Scraper) ScrapePage(ctx context.Context, page int) (int, int, int, erro
 			}
 
 			if exists {
-				s.logger.Debug().Str("url", dedupeURL).Msg("Photo already downloaded, skipping")
+				if err := s.recordInboxException(mediaItem, "duplicate", "dedupe key already kept"); err != nil {
+					s.logger.Error().Err(err).Str("dedupe_key", dedupeKey).Msg("Failed to record duplicate inbox item")
+					mu.Lock()
+					failed++
+					mu.Unlock()
+					return
+				}
+				s.logger.Debug().Str("dedupe_key", dedupeKey).Msg("Photo already kept, adding duplicate exception")
 				mu.Lock()
 				skipped++
 				mu.Unlock()
@@ -148,11 +171,11 @@ func (s *Scraper) ScrapePage(ctx context.Context, page int) (int, int, int, erro
 
 			// Download photo
 			if err := s.downloadPhoto(ctx, mediaItem); err != nil {
-				s.logger.Error().Err(err).Str("url", dedupeURL).Msg("Failed to download photo")
+				s.logger.Error().Err(err).Str("dedupe_key", dedupeKey).Msg("Failed to download photo")
 
 				// Record the failed download to the database
-				if dbErr := s.db.RecordFailedDownload(dedupeURL, err.Error()); dbErr != nil {
-					s.logger.Error().Err(dbErr).Str("url", dedupeURL).Msg("Failed to record failed download")
+				if dbErr := s.db.RecordFailedDownload(dedupeKey, err.Error()); dbErr != nil {
+					s.logger.Error().Err(dbErr).Str("dedupe_key", dedupeKey).Msg("Failed to record failed download")
 				}
 
 				mu.Lock()
@@ -174,11 +197,11 @@ func (s *Scraper) ScrapePage(ctx context.Context, page int) (int, int, int, erro
 
 // downloadPhoto downloads a single photo and its metadata
 func (s *Scraper) downloadPhoto(ctx context.Context, item provider.DiscoveredMedia) error {
-	photoURL := item.DedupeKey.Value
-	if photoURL == "" {
-		photoURL = item.Source.URL
+	dedupeKey := stableDedupeKey(item)
+	if dedupeKey == "" {
+		return fmt.Errorf("missing connector dedupe key")
 	}
-	s.logger.Debug().Str("url", photoURL).Msg("Downloading photo")
+	s.logger.Debug().Str("dedupe_key", dedupeKey).Msg("Downloading photo")
 
 	resolved, err := s.provider.ResolveMedia(ctx, item)
 	if err != nil {
@@ -231,7 +254,7 @@ func (s *Scraper) downloadPhoto(ctx context.Context, item provider.DiscoveredMed
 
 	// Record in database
 	photo := &database.DownloadedPhoto{
-		URL:        photoURL,
+		URL:        dedupeKey,
 		SourcePage: resolved.Source.URL,
 		Title:      resolved.Title,
 		Artist:     resolved.Artist,
@@ -263,6 +286,27 @@ func (s *Scraper) downloadPhoto(ctx context.Context, item provider.DiscoveredMed
 		Msg("Successfully downloaded photo")
 
 	return nil
+}
+
+func (s *Scraper) recordInboxException(item provider.DiscoveredMedia, status string, reason string) error {
+	return s.db.RecordInboxException(&database.InboxItem{
+		ProviderID: item.ProviderID,
+		DedupeKey:  stableDedupeKey(item),
+		SourceID:   item.Source.ExternalID,
+		MediaID:    item.Media.ExternalID,
+		SourceURL:  item.Source.URL,
+		Title:      item.Title,
+		Artist:     item.Artist,
+		Status:     status,
+		Reason:     reason,
+	})
+}
+
+func stableDedupeKey(item provider.DiscoveredMedia) string {
+	if item.DedupeKey.ProviderID == "" || item.DedupeKey.Value == "" {
+		return ""
+	}
+	return item.DedupeKey.String()
 }
 
 // downloadFile downloads a file from a URL

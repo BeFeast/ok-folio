@@ -21,7 +21,7 @@ func setupTestDB(t *testing.T) *DB {
 	}
 
 	// Auto-migrate schemas
-	if err := gormDB.AutoMigrate(&DownloadedPhoto{}, &ExtractionRun{}); err != nil {
+	if err := gormDB.AutoMigrate(&DownloadedPhoto{}, &ExtractionRun{}, &InboxItem{}); err != nil {
 		t.Fatalf("Failed to migrate test database: %v", err)
 	}
 
@@ -174,6 +174,73 @@ func TestMarkPhotoFailed(t *testing.T) {
 	}
 	if retrieved.ErrorMessage != "Network error" {
 		t.Errorf("Expected error message 'Network error', got '%s'", retrieved.ErrorMessage)
+	}
+}
+
+func TestInboxExceptionsOnlyDuplicateAndAmbiguous(t *testing.T) {
+	db := setupTestDB(t)
+
+	items := []InboxItem{
+		{ProviderID: "telegram", DedupeKey: "telegram:source-1:media-1", Status: "duplicate"},
+		{ProviderID: "webgallery", SourceID: "source-2", Status: "ambiguous"},
+		{ProviderID: "webgallery", DedupeKey: "webgallery:source-3:media-3", Status: "dismissed"},
+	}
+	for _, item := range items {
+		if err := db.Create(&item).Error; err != nil {
+			t.Fatalf("Failed to create inbox item: %v", err)
+		}
+	}
+
+	exceptions, total, err := db.GetInboxExceptions(10, 0)
+	if err != nil {
+		t.Fatalf("Failed to get inbox exceptions: %v", err)
+	}
+	if total != 2 || len(exceptions) != 2 {
+		t.Fatalf("Expected 2 exceptions, got total=%d exceptions=%#v", total, exceptions)
+	}
+	for _, item := range exceptions {
+		if item.Status != "duplicate" && item.Status != "ambiguous" {
+			t.Fatalf("Expected exception-only inbox result, got %#v", item)
+		}
+	}
+}
+
+func TestRecordInboxExceptionUpsertsDuplicateByStableKey(t *testing.T) {
+	db := setupTestDB(t)
+
+	first := &InboxItem{
+		ProviderID: "telegram",
+		DedupeKey:  "telegram:source-1:media-1",
+		SourceID:   "source-1",
+		MediaID:    "media-1",
+		Title:      "Original title",
+		Status:     "duplicate",
+		Reason:     "dedupe key already kept",
+	}
+	if err := db.RecordInboxException(first); err != nil {
+		t.Fatalf("Failed to record first duplicate: %v", err)
+	}
+
+	second := *first
+	second.Title = "Updated title"
+	if err := db.RecordInboxException(&second); err != nil {
+		t.Fatalf("Failed to update duplicate: %v", err)
+	}
+
+	var count int64
+	if err := db.Model(&InboxItem{}).Where("dedupe_key = ?", first.DedupeKey).Count(&count).Error; err != nil {
+		t.Fatalf("Failed to count inbox items: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("Expected duplicate exception to upsert by stable key, got %d rows", count)
+	}
+
+	var stored InboxItem
+	if err := db.Where("dedupe_key = ?", first.DedupeKey).First(&stored).Error; err != nil {
+		t.Fatalf("Failed to fetch inbox item: %v", err)
+	}
+	if stored.Title != "Updated title" {
+		t.Fatalf("Expected inbox item update, got title %q", stored.Title)
 	}
 }
 
