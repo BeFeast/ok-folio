@@ -8,6 +8,7 @@ import { formatBytes, formatDate, formatNumber } from "../utils";
 
 const PAGE_SIZE = 100;
 const ALL_FAVORITES = "all";
+const ALL_ARTISTS = "__all_artists__";
 
 type FavoriteFilter = typeof ALL_FAVORITES | "true" | "false";
 
@@ -224,9 +225,10 @@ export default function Gallery() {
             label="Artist"
             value={artistFilter}
             allLabel="All artists"
+            allValue={ALL_ARTISTS}
             options={artistOptions}
             onChange={(value) => {
-              setArtistFilter(value === "" ? undefined : value);
+              setArtistFilter(value === ALL_ARTISTS ? undefined : value);
               resetPage();
             }}
           />
@@ -355,20 +357,21 @@ interface FacetSelectProps {
   label: string;
   value: string | undefined;
   allLabel: string;
+  allValue?: string;
   options: { id: string; display_name: string; count: number }[];
   onChange: (value: string) => void;
 }
 
-function FacetSelect({ label, value, allLabel, options, onChange }: FacetSelectProps) {
+function FacetSelect({ label, value, allLabel, allValue = "", options, onChange }: FacetSelectProps) {
   return (
     <label className="block text-sm font-medium text-gray-800">
       <span className="mb-1 block">{label}</span>
       <select
         className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900"
-        value={value ?? ""}
+        value={value ?? allValue}
         onChange={(event) => onChange(event.target.value)}
       >
-        <option value="">{allLabel}</option>
+        <option value={allValue}>{allLabel}</option>
         {options.map((option) => (
           <option key={option.id} value={option.id}>
             {option.display_name} ({formatNumber(option.count)})
