@@ -617,6 +617,22 @@ func TestGetGalleryCatalog(t *testing.T) {
 	if len(artists) != 2 {
 		t.Fatalf("Expected 2 downloaded artist facets, got %#v", artists)
 	}
+
+	searchFiltered, total, err := db.GetGalleryCatalog(10, 0, GalleryCatalogFilters{Query: "new"})
+	if err != nil {
+		t.Fatalf("Failed to get search-filtered gallery catalog: %v", err)
+	}
+	if total != 1 || len(searchFiltered) != 1 || searchFiltered[0].Title != "New Download" {
+		t.Fatalf("Expected search filter to match metadata, total=%d rows=%#v", total, searchFiltered)
+	}
+
+	filteredArtists, err := db.GetGalleryArtistStatsForFilters(GalleryCatalogFilters{Category: "2"})
+	if err != nil {
+		t.Fatalf("Failed to get filtered gallery artist stats: %v", err)
+	}
+	if len(filteredArtists) != 1 || filteredArtists[0].ID != "Artist B" || filteredArtists[0].Count != 1 {
+		t.Fatalf("Expected active category filter to narrow artist facets, got %#v", filteredArtists)
+	}
 }
 
 func TestGetGalleryCatalogFiltersCategoryArtistAndFavorites(t *testing.T) {

@@ -198,6 +198,7 @@ export interface GalleryCatalogResponse {
   category: string;
   artist: string;
   favorite: boolean | null;
+  query: string;
   providers: GalleryProviderFacet[];
   facets: GalleryCatalogFacets;
 }

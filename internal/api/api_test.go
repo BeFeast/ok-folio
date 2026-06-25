@@ -241,6 +241,7 @@ func TestHandleGalleryCatalog(t *testing.T) {
 		Source    string                     `json:"source"`
 		Category  string                     `json:"category"`
 		Artist    string                     `json:"artist"`
+		Query     string                     `json:"query"`
 		Providers []struct {
 			ID          string `json:"id"`
 			DisplayName string `json:"display_name"`
@@ -335,6 +336,30 @@ func TestHandleGalleryCatalog(t *testing.T) {
 	}
 	if response.Category != "2" || response.Artist != "Artist B" {
 		t.Fatalf("Expected category/artist filter echo, got category=%q artist=%q", response.Category, response.Artist)
+	}
+	if len(response.Facets.Categories) != 1 || response.Facets.Categories[0].ID != "2" {
+		t.Fatalf("Expected filtered category facets to reflect active filters, got %#v", response.Facets.Categories)
+	}
+	if len(response.Facets.Artists) != 1 || response.Facets.Artists[0].ID != "Artist B" {
+		t.Fatalf("Expected filtered artist facets to reflect active filters, got %#v", response.Facets.Artists)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/gallery/catalog?q=old", nil)
+	w = httptest.NewRecorder()
+
+	server.handleGalleryCatalog(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected search-filtered status 200, got %d", w.Code)
+	}
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode search-filtered gallery catalog: %v", err)
+	}
+	if response.Total != 1 || len(response.Photos) != 1 || response.Photos[0].Title != "Oldest" {
+		t.Fatalf("Expected search to match piece metadata, total=%d photos=%#v", response.Total, response.Photos)
+	}
+	if response.Query != "old" {
+		t.Fatalf("Expected search query echo, got %q", response.Query)
 	}
 }
 
