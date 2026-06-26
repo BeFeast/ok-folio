@@ -158,7 +158,7 @@ func resolveCategory(p *DownloadedPhoto) string {
 	if p.Category != "" {
 		return p.Category
 	}
-	return categoryIDFromSourcePage(p.SourcePage)
+	return CategoryIDFromSourcePage(p.SourcePage)
 }
 
 // BeforeSave keeps the inbox fingerprint in sync so RecordInboxException can
@@ -1046,7 +1046,8 @@ func escapeSQLLike(value string) string {
 	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(value)
 }
 
-func categoryIDFromSourcePage(sourcePage string) string {
+// CategoryIDFromSourcePage derives the stored category from a provider source URL.
+func CategoryIDFromSourcePage(sourcePage string) string {
 	if sourcePage == "" {
 		return "unknown"
 	}

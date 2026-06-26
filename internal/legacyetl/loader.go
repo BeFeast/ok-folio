@@ -30,9 +30,9 @@ type LoadResult struct {
 const downloadedPhotoUpsertSQL = `
 		INSERT INTO downloaded_photos (
 			id, url, url_hash, source_page, title, artist, upload_date, file_path,
-			file_name, downloaded_at, file_size, status, error_message, provider
+			file_name, downloaded_at, file_size, status, error_message, provider, category
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (url_hash) DO UPDATE SET
 			source_page = EXCLUDED.source_page,
 			title = EXCLUDED.title,
@@ -140,6 +140,7 @@ func upsertDownloadedPhoto(tx *gorm.DB, row LegacyDownloadedPhoto) (time.Time, e
 		row.Status,
 		row.ErrorMessage,
 		database.DefaultProvider,
+		database.CategoryIDFromSourcePage(row.SourcePage),
 	).Scan(&loadedAt).Error
 	if err != nil {
 		return time.Time{}, fmt.Errorf("upsert downloaded_photos legacy id %d: %w", row.ID, err)

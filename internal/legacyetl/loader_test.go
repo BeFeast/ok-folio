@@ -35,6 +35,9 @@ func TestDownloadedPhotoUpsertContract(t *testing.T) {
 	if !strings.Contains(sql, "provider") {
 		t.Fatalf("provider must be stamped on insert: %s", sql)
 	}
+	if !strings.Contains(sql, "provider, category") {
+		t.Fatalf("category must be derived and stamped on insert: %s", sql)
+	}
 }
 
 func TestExtractionRunUpsertContract(t *testing.T) {
