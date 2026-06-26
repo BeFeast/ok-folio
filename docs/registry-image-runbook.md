@@ -11,9 +11,9 @@ OK Folio registry images are released manually from GitHub Actions. The registry
   - `${GITHUB_SHA}` for the immutable deploy pin
   - `dev` for the latest development image
 
-The workflow builds the repository `Dockerfile` with Docker Buildx, loads the smoke image into the runner Docker daemon, runs the container locally, curls `http://127.0.0.1:18080/health`, and only then tags and pushes the same image content as `${GITHUB_SHA}` and `dev`.
+The workflow builds the repository `Dockerfile` with Docker Buildx, loads the smoke image into the runner Docker daemon, runs the container locally, curls `http://127.0.0.1:18080/health`, checks that `${GITHUB_SHA}` does not already exist in the registry, and only then tags and pushes the same image content as `${GITHUB_SHA}` and `dev`.
 
-Do not rerun the workflow for a commit after changing the Docker build context outside that commit. The `${GITHUB_SHA}` tag must never point at different content.
+Do not rerun the workflow for a commit after changing the Docker build context outside that commit. The workflow refuses to push when the `${GITHUB_SHA}` tag already exists because commit tags must never point at different content.
 
 ## Required Secrets
 
@@ -60,6 +60,17 @@ curl -fsS http://127.0.0.1:18080/health
 docker rm -f ok-folio-smoke
 
 docker login "$registry"
+inspect_log="$(mktemp)"
+trap 'rm -f "$inspect_log"' EXIT
+if docker manifest inspect "$image:$sha" >"$inspect_log" 2>&1; then
+  echo "Immutable image tag already exists: $image:$sha" >&2
+  exit 1
+fi
+if ! grep -Eiq '(manifest unknown|manifest.*not found|no such manifest|not found|name unknown)' "$inspect_log"; then
+  echo "Could not verify whether immutable image tag exists: $image:$sha" >&2
+  cat "$inspect_log" >&2
+  exit 1
+fi
 docker tag "$image:smoke-$sha" "$image:$sha"
 docker tag "$image:smoke-$sha" "$image:dev"
 docker push "$image:$sha"

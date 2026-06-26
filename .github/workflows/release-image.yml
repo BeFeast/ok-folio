@@ -154,6 +154,34 @@ jobs:
           username: ${{ secrets.REGISTRY_USERNAME }}
           password: ${{ secrets.REGISTRY_PASSWORD }}
 
+      - name: Refuse existing immutable tag
+        env:
+          IMAGE: ${{ steps.image.outputs.image }}
+          SHA_TAG: ${{ steps.image.outputs.sha_tag }}
+        run: |
+          set -euo pipefail
+          immutable_ref="$IMAGE:$SHA_TAG"
+          inspect_log="$(mktemp)"
+          cleanup() {
+            rm -f "$inspect_log"
+          }
+          trap cleanup EXIT
+
+          if docker manifest inspect "$immutable_ref" >"$inspect_log" 2>&1; then
+            echo "Immutable image tag already exists: $immutable_ref" >&2
+            echo "Refusing to overwrite a commit tag. Use the existing tag or run from a new commit." >&2
+            exit 1
+          fi
+
+          if grep -Eiq '(manifest unknown|manifest.*not found|no such manifest|not found|name unknown)' "$inspect_log"; then
+            echo "Immutable image tag is not present yet: $immutable_ref"
+            exit 0
+          fi
+
+          echo "Could not verify whether immutable image tag exists: $immutable_ref" >&2
+          cat "$inspect_log" >&2
+          exit 1
+
       - name: Push immutable and dev tags
         env:
           IMAGE: ${{ steps.image.outputs.image }}
