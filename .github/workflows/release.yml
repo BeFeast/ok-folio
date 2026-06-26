@@ -1,0 +1,40 @@
+name: Release
+
+# Cut a GitHub Release from a pushed semver tag (vMAJOR.MINOR.PATCH).
+# Versioning follows SemVer 2.0.0; see RELEASING.md. The container image is
+# built on the LAN and pushed to the homelab registry as ok-folio:<tag>
+# (the registry is not reachable from GitHub-hosted runners), so this workflow
+# only produces the GitHub Release + auto-generated notes.
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-*'   # pre-releases (e.g. v0.1.0-rc.1)
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history for release notes)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          prerelease=()
+          case "$TAG" in
+            *-*) prerelease=(--prerelease) ;;
+          esac
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --generate-notes \
+            --verify-tag \
+            "${prerelease[@]}"
