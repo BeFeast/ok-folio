@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/url"
 	"sort"
@@ -75,9 +76,18 @@ type cacheGalleryCatalogFilters struct {
 	Query    cacheQueryValue `json:"query"`
 }
 
+type cacheGalleryCatalogETagShape struct {
+	Filters cacheGalleryCatalogFilters `json:"filters"`
+	Limit   int                        `json:"limit"`
+	Offset  int                        `json:"offset"`
+}
+
+const catalogCacheControl = "private, no-cache, stale-while-revalidate=120"
+
 func (s *Server) handleGalleryCatalog(w http.ResponseWriter, r *http.Request) {
 	limit, offset := s.parsePagination(r)
 	values := r.URL.Query()
+	cacheFilters := cacheFiltersFromQuery(values)
 	filters := database.GalleryCatalogFilters{
 		Provider:  strings.TrimSpace(values.Get("provider")),
 		Source:    strings.TrimSpace(values.Get("source")),
@@ -88,10 +98,25 @@ func (s *Server) handleGalleryCatalog(w http.ResponseWriter, r *http.Request) {
 		Query:     strings.TrimSpace(values.Get("q")),
 	}
 
-	key, err := okfcache.CatalogKey(s.cache.Epoch(r.Context()), cacheFiltersFromQuery(values), limit, offset)
+	epoch := s.cache.Epoch(r.Context())
+	canUseConditionalResponse := !s.cache.Passthrough()
+	key, err := okfcache.CatalogKey(epoch, cacheFilters, limit, offset)
 	if err != nil {
 		s.logger.Error().Err(err).Msg("Failed to build gallery cache key")
 		s.writeError(w, http.StatusInternalServerError, "Failed to fetch gallery catalog")
+		return
+	}
+	etag, err := galleryCatalogETag(epoch, cacheFilters, limit, offset)
+	if err != nil {
+		s.logger.Error().Err(err).Msg("Failed to build gallery ETag")
+		s.writeError(w, http.StatusInternalServerError, "Failed to fetch gallery catalog")
+		return
+	}
+
+	w.Header().Set("Cache-Control", catalogCacheControl)
+	w.Header().Set("ETag", etag)
+	if canUseConditionalResponse && requestETagMatches(r, etag) {
+		w.WriteHeader(http.StatusNotModified)
 		return
 	}
 
@@ -105,6 +130,18 @@ func (s *Server) handleGalleryCatalog(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.writeJSON(w, http.StatusOK, response)
+}
+
+func galleryCatalogETag(epoch int64, filters cacheGalleryCatalogFilters, limit int, offset int) (string, error) {
+	hash, err := okfcache.FilterHash(cacheGalleryCatalogETagShape{
+		Filters: filters,
+		Limit:   limit,
+		Offset:  offset,
+	})
+	if err != nil {
+		return "", err
+	}
+	return quoteETag(fmt.Sprintf("catalog-e%d-%s", epoch, hash)), nil
 }
 
 func (s *Server) galleryCatalogResponse(_ context.Context, limit int, offset int, filters database.GalleryCatalogFilters) (galleryCatalogResponse, error) {

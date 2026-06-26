@@ -11,7 +11,7 @@ import (
 func (s *Server) handleStatsStream(w http.ResponseWriter, r *http.Request) {
 	// Set headers for SSE
 	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 
@@ -69,11 +69,11 @@ func (s *Server) handleWorkerStatus(w http.ResponseWriter, r *http.Request) {
 	queueCap := cap(s.jobQueue)
 
 	status := map[string]interface{}{
-		"total_workers":    MaxConcurrentExtractions,
-		"queue_size":       queueLen,
-		"queue_capacity":   queueCap,
-		"workers_busy":     queueLen,
-		"workers_idle":     MaxConcurrentExtractions - queueLen,
+		"total_workers":     MaxConcurrentExtractions,
+		"queue_size":        queueLen,
+		"queue_capacity":    queueCap,
+		"workers_busy":      queueLen,
+		"workers_idle":      MaxConcurrentExtractions - queueLen,
 		"queue_utilization": float64(queueLen) / float64(queueCap) * 100,
 	}
 
