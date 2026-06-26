@@ -16,26 +16,26 @@ COPY dashboard/ ./
 RUN npm run build
 
 # Backend build stage
-FROM golang:1.22-alpine AS backend-builder
+FROM golang:1.25-alpine AS backend-builder
 
 # Install build dependencies
 RUN apk add --no-cache git
 
 WORKDIR /build
 
-# Copy go mod files
-COPY go.mod ./
+# Copy go mod files (both, for deterministic reproducible builds)
+COPY go.mod go.sum ./
 
-# Copy source code (needed to detect all dependencies)
+# Download modules against the committed go.sum (no `go mod tidy`: it can drift
+# versions and needs network beyond the module cache)
+RUN go mod download
+RUN go mod verify
+
+# Copy source code
 COPY . .
 
 # Copy built frontend into embed location
 COPY --from=frontend-builder /build/dashboard/dist ./internal/dashboard/dist
-
-# Download dependencies and create go.sum with correct checksums
-RUN go mod tidy
-RUN go mod download
-RUN go mod verify
 
 # Build the application
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o extractor ./cmd/extractor
