@@ -43,9 +43,19 @@ jobs:
           set -euo pipefail
           registry="${REGISTRY_URL#http://}"
           registry="${registry#https://}"
-          registry="${registry%/}"
+          while [ "${registry%/}" != "$registry" ]; do
+            registry="${registry%/}"
+          done
           if [ -z "$registry" ]; then
             echo "REGISTRY_URL secret must contain the registry host" >&2
+            exit 1
+          fi
+          if [ "$registry" != "${registry%%/*}" ]; then
+            echo "REGISTRY_URL secret must not include a repository name or path component" >&2
+            exit 1
+          fi
+          if [[ "$registry" == *"?"* || "$registry" == *"#"* ]]; then
+            echo "REGISTRY_URL secret must contain only the registry host" >&2
             exit 1
           fi
           image="$registry/${IMAGE_NAME}"
@@ -72,9 +82,11 @@ jobs:
         run: |
           set -euo pipefail
           config_dir="$(mktemp -d)"
+          health_log="$(mktemp)"
           container_name="ok-folio-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           cleanup() {
             docker rm -f "$container_name" >/dev/null 2>&1 || true
+            rm -f "$health_log"
             rm -rf "$config_dir"
           }
           trap cleanup EXIT
@@ -137,13 +149,19 @@ jobs:
             "$IMAGE_REF"
 
           for _ in $(seq 1 30); do
-            if curl -fsS "http://127.0.0.1:18080/health" >/tmp/ok-folio-health.json; then
-              cat /tmp/ok-folio-health.json
-              exit 0
+            if curl -fsS "http://127.0.0.1:18080/health" >"$health_log"; then
+              if jq -e '.status == "healthy" and .database == "connected"' "$health_log" >/dev/null; then
+                cat "$health_log"
+                exit 0
+              fi
             fi
             sleep 2
           done
 
+          echo "Smoke test did not receive a healthy response with a connected database" >&2
+          if [ -s "$health_log" ]; then
+            cat "$health_log" >&2
+          fi
           docker logs "$container_name"
           exit 1
 
@@ -193,3 +211,13 @@ jobs:
           docker tag "$IMAGE:$SMOKE_TAG" "$IMAGE:dev"
           docker push "$IMAGE:$SHA_TAG"
           docker push "$IMAGE:dev"
+
+      - name: Log out of registry
+        if: always()
+        env:
+          REGISTRY: ${{ steps.image.outputs.registry }}
+        run: |
+          set -euo pipefail
+          if [ -n "$REGISTRY" ]; then
+            docker logout "$REGISTRY" >/dev/null 2>&1 || true
+          fi
