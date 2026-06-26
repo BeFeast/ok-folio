@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/hex"
 	"fmt"
 	"image"
 	"image/jpeg"
@@ -13,6 +14,8 @@ import (
 
 	"github.com/disintegration/imaging"
 	"github.com/go-chi/chi/v5"
+
+	"ok-folio/internal/database"
 )
 
 const (
@@ -21,6 +24,8 @@ const (
 	ThumbnailHeight = 96
 	// JPEG quality for thumbnails
 	ThumbnailQuality = 80
+
+	immutableImageCacheControl = "public, max-age=31536000, immutable"
 )
 
 // handleImageThumbnail serves a thumbnail version of an image
@@ -45,6 +50,20 @@ func (s *Server) handleImageThumbnail(w http.ResponseWriter, r *http.Request) {
 		filePath = filepath.Join(s.cfg.Storage.BaseDirectory, filePath)
 	}
 
+	etag, err := imageETag(photo, filePath)
+	if err != nil {
+		s.logger.Error().Err(err).Str("file_path", photo.FilePath).Msg("Failed to build image validator")
+		s.writeError(w, http.StatusNotFound, "Image file not found")
+		return
+	}
+	w.Header().Set("Cache-Control", immutableImageCacheControl)
+	w.Header().Set("ETag", etag)
+	w.Header().Set("Content-Type", "image/jpeg")
+	if requestETagMatches(r, etag) {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+
 	// Open the image file
 	imgFile, err := os.Open(filePath)
 	if err != nil {
@@ -54,7 +73,8 @@ func (s *Server) handleImageThumbnail(w http.ResponseWriter, r *http.Request) {
 	}
 	defer imgFile.Close()
 
-	// Decode image
+	// Cache misses still decode the full original on each thumbnail request.
+	// The wave-3 derivative cache/warmer is expected to remove that first-paint cost.
 	img, _, err := image.Decode(imgFile)
 	if err != nil {
 		s.logger.Error().Err(err).Str("file_path", photo.FilePath).Msg("Failed to decode image")
@@ -64,10 +84,6 @@ func (s *Server) handleImageThumbnail(w http.ResponseWriter, r *http.Request) {
 
 	// Create thumbnail (fit into 128x96 rectangle)
 	thumbnail := imaging.Fit(img, ThumbnailWidth, ThumbnailHeight, imaging.Lanczos)
-
-	// Set cache headers (thumbnails don't change)
-	w.Header().Set("Cache-Control", "public, max-age=86400") // 24 hours
-	w.Header().Set("Content-Type", "image/jpeg")
 
 	// Encode and send thumbnail
 	if err := jpeg.Encode(w, thumbnail, &jpeg.Options{Quality: ThumbnailQuality}); err != nil {
@@ -98,6 +114,20 @@ func (s *Server) handleImageFull(w http.ResponseWriter, r *http.Request) {
 		filePath = filepath.Join(s.cfg.Storage.BaseDirectory, filePath)
 	}
 
+	etag, err := imageETag(photo, filePath)
+	if err != nil {
+		s.logger.Error().Err(err).Str("file_path", photo.FilePath).Msg("Failed to build image validator")
+		s.writeError(w, http.StatusNotFound, "Image file not found")
+		return
+	}
+	w.Header().Set("Cache-Control", immutableImageCacheControl)
+	w.Header().Set("ETag", etag)
+	w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", photo.FileName))
+	if requestETagMatches(r, etag) {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+
 	// Check if file exists
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
 		s.writeError(w, http.StatusNotFound, "Image file not found")
@@ -122,11 +152,46 @@ func (s *Server) handleImageFull(w http.ResponseWriter, r *http.Request) {
 
 	// Set headers
 	w.Header().Set("Content-Type", contentType)
-	w.Header().Set("Cache-Control", "public, max-age=86400") // 24 hours
-	w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", photo.FileName))
 
 	// Serve the file
 	http.ServeFile(w, r, filePath)
+}
+
+func imageETag(photo *database.DownloadedPhoto, filePath string) (string, error) {
+	if len(photo.ContentHash) > 0 {
+		return quoteETag(fmt.Sprintf("%d-%s", photo.ID, hex.EncodeToString(photo.ContentHash))), nil
+	}
+
+	if filePath == "" {
+		filePath = photo.FilePath
+	}
+	info, err := os.Stat(filePath)
+	if err != nil {
+		return "", err
+	}
+
+	// Rows created before the hashing backfill may not have content_hash yet.
+	// The fallback validator is intentionally derived from stable row identity
+	// plus observed file metadata so it is never empty or falsely shared.
+	fileSize := photo.FileSize
+	if fileSize <= 0 {
+		fileSize = info.Size()
+	}
+	return quoteETag(fmt.Sprintf("%d-%d-%d", photo.ID, fileSize, info.ModTime().UnixNano())), nil
+}
+
+func quoteETag(value string) string {
+	return `"` + value + `"`
+}
+
+func requestETagMatches(r *http.Request, etag string) bool {
+	for _, part := range strings.Split(r.Header.Get("If-None-Match"), ",") {
+		candidate := strings.TrimSpace(part)
+		if candidate == "*" || candidate == etag {
+			return true
+		}
+	}
+	return false
 }
 
 // handlePhotoDetail returns detailed information about a photo

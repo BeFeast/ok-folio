@@ -1,7 +1,13 @@
 package api
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"image"
+	"image/color"
+	"image/jpeg"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -609,6 +615,110 @@ func TestHandlePhotoDetailIncludesProvenanceAndFavorite(t *testing.T) {
 	}
 }
 
+func TestImageHandlersUseImmutableETagAndConditional304(t *testing.T) {
+	server, db := setupTestServer(t)
+	defer safeShutdown(server)
+
+	filePath := filepath.Join(server.cfg.Storage.BaseDirectory, "etag-photo.jpg")
+	createTestJPEG(t, filePath)
+	contentHash := sha256.Sum256([]byte("stable image bytes"))
+	photo := database.DownloadedPhoto{
+		URL:          "https://example.com/etag-photo.jpg",
+		Title:        "ETag Photo",
+		FilePath:     filePath,
+		FileName:     "etag-photo.jpg",
+		FileSize:     1234,
+		ContentHash:  contentHash[:],
+		Status:       "downloaded",
+		DownloadedAt: time.Now(),
+	}
+	if err := db.Create(&photo).Error; err != nil {
+		t.Fatalf("Failed to create photo: %v", err)
+	}
+
+	imageURL := "/api/v1/photos/" + strconv.Itoa(int(photo.ID)) + "/image"
+	req := httptest.NewRequest(http.MethodGet, imageURL, nil)
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected image status 200, got %d", w.Code)
+	}
+	expectedETag := `"` + strconv.FormatUint(photo.ID, 10) + "-" + hex.EncodeToString(contentHash[:]) + `"`
+	if w.Header().Get("Cache-Control") != immutableImageCacheControl {
+		t.Fatalf("Expected immutable image cache header, got %q", w.Header().Get("Cache-Control"))
+	}
+	if w.Header().Get("ETag") != expectedETag {
+		t.Fatalf("Expected content-hash ETag %q, got %q", expectedETag, w.Header().Get("ETag"))
+	}
+
+	if err := os.Remove(filePath); err != nil {
+		t.Fatalf("Failed to remove test image: %v", err)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, imageURL, nil)
+	req.Header.Set("If-None-Match", expectedETag)
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusNotModified {
+		t.Fatalf("Expected image conditional status 304 without reading file, got %d body=%q", w.Code, w.Body.String())
+	}
+	if w.Body.Len() != 0 {
+		t.Fatalf("Expected empty 304 image body, got %q", w.Body.String())
+	}
+
+	thumbURL := "/api/v1/photos/" + strconv.Itoa(int(photo.ID)) + "/thumbnail"
+	req = httptest.NewRequest(http.MethodGet, thumbURL, nil)
+	req.Header.Set("If-None-Match", expectedETag)
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusNotModified {
+		t.Fatalf("Expected thumbnail conditional status 304 without decoding file, got %d body=%q", w.Code, w.Body.String())
+	}
+	if w.Header().Get("Cache-Control") != immutableImageCacheControl {
+		t.Fatalf("Expected immutable thumbnail cache header, got %q", w.Header().Get("Cache-Control"))
+	}
+}
+
+func TestImageHandlersUseFallbackETagWithoutContentHash(t *testing.T) {
+	server, db := setupTestServer(t)
+	defer safeShutdown(server)
+
+	filePath := filepath.Join(server.cfg.Storage.BaseDirectory, "fallback-photo.jpg")
+	createTestJPEG(t, filePath)
+	info, err := os.Stat(filePath)
+	if err != nil {
+		t.Fatalf("Failed to stat test image: %v", err)
+	}
+	photo := database.DownloadedPhoto{
+		URL:          "https://example.com/fallback-photo.jpg",
+		Title:        "Fallback Photo",
+		FilePath:     filePath,
+		FileName:     "fallback-photo.jpg",
+		FileSize:     4321,
+		Status:       "downloaded",
+		DownloadedAt: time.Now(),
+	}
+	if err := db.Create(&photo).Error; err != nil {
+		t.Fatalf("Failed to create photo: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/photos/"+strconv.Itoa(int(photo.ID))+"/image", nil)
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected fallback image status 200, got %d", w.Code)
+	}
+	expectedETag := `"` + strconv.FormatUint(photo.ID, 10) + "-4321-" + strconv.FormatInt(info.ModTime().UnixNano(), 10) + `"`
+	if w.Header().Get("ETag") != expectedETag {
+		t.Fatalf("Expected fallback ETag %q, got %q", expectedETag, w.Header().Get("ETag"))
+	}
+	if w.Header().Get("Cache-Control") != immutableImageCacheControl {
+		t.Fatalf("Expected immutable fallback cache header, got %q", w.Header().Get("Cache-Control"))
+	}
+}
+
 func TestHandleFavoritePersistsLocally(t *testing.T) {
 	server, db := setupTestServer(t)
 	defer safeShutdown(server)
@@ -752,6 +862,64 @@ func TestGalleryCatalogCacheUsesEpochInvalidation(t *testing.T) {
 	}
 }
 
+func TestGalleryCatalogUsesPrivateETagAndConditional304(t *testing.T) {
+	server, db := setupTestServer(t)
+	defer safeShutdown(server)
+
+	photo := database.DownloadedPhoto{
+		URL:          "https://example.com/catalog-etag.jpg",
+		Title:        "Catalog ETag",
+		FilePath:     filepath.Join(server.cfg.Storage.BaseDirectory, "catalog-etag.jpg"),
+		FileName:     "catalog-etag.jpg",
+		Status:       "downloaded",
+		DownloadedAt: time.Now(),
+	}
+	if err := db.Create(&photo).Error; err != nil {
+		t.Fatalf("Failed to create photo: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/gallery/catalog?q=Catalog", nil)
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected catalog status 200, got %d", w.Code)
+	}
+	if got := w.Header().Get("Cache-Control"); got != "private, max-age=30, stale-while-revalidate=120" {
+		t.Fatalf("Expected private catalog cache header, got %q", got)
+	}
+	etag := w.Header().Get("ETag")
+	if etag == "" {
+		t.Fatalf("Expected catalog ETag")
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/gallery/catalog?q=Catalog", nil)
+	req.Header.Set("If-None-Match", etag)
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusNotModified {
+		t.Fatalf("Expected catalog conditional status 304, got %d body=%q", w.Code, w.Body.String())
+	}
+	if w.Body.Len() != 0 {
+		t.Fatalf("Expected empty catalog 304 body, got %q", w.Body.String())
+	}
+}
+
+func TestStatsStreamUsesNoStore(t *testing.T) {
+	server, _ := setupTestServer(t)
+	defer safeShutdown(server)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/stream/stats", nil).WithContext(ctx)
+	w := httptest.NewRecorder()
+
+	server.handleStatsStream(w, req)
+
+	if got := w.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Expected SSE no-store cache header, got %q", got)
+	}
+}
+
 func favoriteCount(facets []struct {
 	Favorite bool  `json:"favorite"`
 	Count    int64 `json:"count"`
@@ -762,6 +930,28 @@ func favoriteCount(facets []struct {
 		}
 	}
 	return 0
+}
+
+func createTestJPEG(t *testing.T, filePath string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
+		t.Fatalf("Failed to create test image directory: %v", err)
+	}
+	file, err := os.Create(filePath)
+	if err != nil {
+		t.Fatalf("Failed to create test image: %v", err)
+	}
+	defer file.Close()
+
+	img := image.NewRGBA(image.Rect(0, 0, 8, 8))
+	for y := 0; y < 8; y++ {
+		for x := 0; x < 8; x++ {
+			img.Set(x, y, color.RGBA{R: uint8(20 * x), G: uint8(20 * y), B: 80, A: 255})
+		}
+	}
+	if err := jpeg.Encode(file, img, &jpeg.Options{Quality: 80}); err != nil {
+		t.Fatalf("Failed to encode test image: %v", err)
+	}
 }
 
 func TestHandleInboxReturnsOnlyExceptions(t *testing.T) {
