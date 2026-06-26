@@ -11,7 +11,7 @@ OK Folio registry images are released manually from GitHub Actions. The registry
   - `${GITHUB_SHA}` for the immutable deploy pin
   - `dev` for the latest development image
 
-The workflow builds the repository `Dockerfile` with Docker Buildx, loads the smoke image into the runner Docker daemon, runs the container locally, curls `http://127.0.0.1:18080/health`, checks that `${GITHUB_SHA}` does not already exist in the registry, and only then tags and pushes the same image content as `${GITHUB_SHA}` and `dev`.
+The workflow builds the repository `Dockerfile` with Docker Buildx, loads the smoke image into the runner Docker daemon, runs the container locally, checks that `http://127.0.0.1:18080/health` reports `status: healthy` and `database: connected`, checks that `${GITHUB_SHA}` does not already exist in the registry, and only then tags and pushes the same image content as `${GITHUB_SHA}` and `dev`.
 
 Do not rerun the workflow for a commit after changing the Docker build context outside that commit. The workflow refuses to push when the `${GITHUB_SHA}` tag already exists because commit tags must never point at different content.
 
@@ -19,7 +19,7 @@ Do not rerun the workflow for a commit after changing the Docker build context o
 
 Create these repository Actions secrets in GitHub:
 
-- `REGISTRY_URL`: registry host, without a repository name
+- `REGISTRY_URL`: registry host, without a repository name or path component
 - `REGISTRY_USERNAME`: push-scoped registry user
 - `REGISTRY_PASSWORD`: push-scoped registry password or token
 
@@ -46,23 +46,74 @@ Credential inventory:
 
 ## Builder LXC Fallback
 
-If GitHub Actions cannot reach the registry, use the same tag scheme from a trusted builder LXC that has Docker Buildx and push-scoped registry credentials:
+If GitHub Actions cannot reach the registry, use the same tag scheme from a trusted builder LXC that has Docker Buildx, `curl`, `jq`, and push-scoped registry credentials:
 
 ```bash
+set -euo pipefail
+
 git fetch origin
 git checkout <commit-sha>
 registry="<registry-host>"
+while [ "${registry%/}" != "$registry" ]; do
+  registry="${registry%/}"
+done
+if [ -z "$registry" ] || [ "$registry" != "${registry%%/*}" ] || [[ "$registry" == *"?"* || "$registry" == *"#"* ]]; then
+  echo "registry must contain only the registry host, without a repository name or path component" >&2
+  exit 1
+fi
+if [[ "$registry" =~ [[:space:]] || ! "$registry" =~ ^[A-Za-z0-9._-]+(:[0-9]+)?$ ]]; then
+  echo "registry must be a valid registry host, optionally with a numeric port" >&2
+  exit 1
+fi
 image="$registry/ok-folio"
 sha="$(git rev-parse HEAD)"
+container_name="ok-folio-smoke-$sha-$$"
+health_log="$(mktemp)"
+inspect_log=""
+container_started=0
+logged_in=0
+
+cleanup() {
+  if [ "$container_started" -eq 1 ]; then
+    docker rm -f "$container_name" >/dev/null 2>&1 || true
+  fi
+  if [ "$logged_in" -eq 1 ]; then
+    docker logout "$registry" >/dev/null 2>&1 || true
+  fi
+  if [ -n "$inspect_log" ]; then
+    rm -f "$inspect_log"
+  fi
+  rm -f "$health_log"
+}
+trap cleanup EXIT
+
+if [ -n "$(git status --porcelain)" ]; then
+  echo "Refusing to build an immutable commit tag from a dirty working tree" >&2
+  git status --short >&2
+  exit 1
+fi
 
 docker buildx build --load -t "$image:smoke-$sha" .
-docker run --rm -d --name ok-folio-smoke --network host -v "$PWD/config.smoke.yaml:/config/config.yaml:ro" "$image:smoke-$sha"
-curl -fsS http://127.0.0.1:18080/health
-docker rm -f ok-folio-smoke
+docker run -d --name "$container_name" --network host -v "$PWD/config.smoke.yaml:/config/config.yaml:ro" "$image:smoke-$sha"
+container_started=1
+for _ in $(seq 1 30); do
+  if curl -fsS http://127.0.0.1:18080/health >"$health_log" &&
+    jq -e '.status == "healthy" and .database == "connected"' "$health_log" >/dev/null; then
+    cat "$health_log"
+    break
+  fi
+  sleep 2
+done
+if ! jq -e '.status == "healthy" and .database == "connected"' "$health_log" >/dev/null 2>&1; then
+  echo "Smoke test did not receive a healthy response with a connected database" >&2
+  cat "$health_log" >&2 || true
+  docker logs "$container_name" >&2
+  exit 1
+fi
 
 docker login "$registry"
+logged_in=1
 inspect_log="$(mktemp)"
-trap 'rm -f "$inspect_log"' EXIT
 if docker manifest inspect "$image:$sha" >"$inspect_log" 2>&1; then
   echo "Immutable image tag already exists: $image:$sha" >&2
   exit 1
