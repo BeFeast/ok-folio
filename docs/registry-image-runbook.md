@@ -42,6 +42,7 @@ Credential inventory:
 3. Confirm the smoke step prints a healthy `/health` response before the login and push steps.
 4. Confirm the registry tag list contains the new commit SHA tag and the updated `dev` tag.
 5. Give the dedicated-stack change the immutable `${GITHUB_SHA}` tag. Do not deploy from `dev`.
+6. Use `docs/dedicated-dockhand-stack-runbook.md` for the Dockhand-only stack deploy contract. Do not deploy with manual `docker compose up`.
 
 ## Builder LXC Fallback
 

@@ -1,0 +1,104 @@
+name: ok-folio
+
+services:
+  postgres:
+    image: ghcr.io/tensorchord/vchord-postgres:pg18-v1.1.1
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:?DB_NAME is required}
+      POSTGRES_USER: ${POSTGRES_ADMIN_USER:?POSTGRES_ADMIN_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:?POSTGRES_ADMIN_PASSWORD is required}
+      DB_USER: ${DB_USER:?DB_USER is required}
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      PGDATA: /var/lib/postgresql/18/docker
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=vchord,vector
+      - -c
+      - full_page_writes=off
+      - -c
+      - wal_init_zero=off
+      - -c
+      - wal_recycle=off
+      - -c
+      - shared_buffers=${POSTGRES_SHARED_BUFFERS:-512MB}
+      - -c
+      - effective_cache_size=${POSTGRES_EFFECTIVE_CACHE_SIZE:-2GB}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h localhost -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    ports:
+      - "${OK_FOLIO_POSTGRES_PORT:?OK_FOLIO_POSTGRES_PORT is required}:5432"
+    volumes:
+      - ${OK_FOLIO_PGDATA_HOST_PATH:?OK_FOLIO_PGDATA_HOST_PATH is required}:/var/lib/postgresql/18/docker
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+    networks:
+      - ok-folio-private
+
+  valkey:
+    image: valkey/valkey:8-alpine
+    restart: unless-stopped
+    command:
+      - valkey-server
+      - /usr/local/etc/valkey/valkey.conf
+    environment:
+      VALKEY_PASSWORD: ${VALKEY_PASSWORD:?VALKEY_PASSWORD is required}
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$${VALKEY_PASSWORD}\" valkey-cli ping | grep -qx PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    ports:
+      - "${OK_FOLIO_VALKEY_PORT:?OK_FOLIO_VALKEY_PORT is required}:6379"
+    volumes:
+      - ${OK_FOLIO_VALKEY_HOST_PATH:?OK_FOLIO_VALKEY_HOST_PATH is required}:/data
+      - ${OK_FOLIO_VALKEY_CONFIG_HOST_PATH:?OK_FOLIO_VALKEY_CONFIG_HOST_PATH is required}:/usr/local/etc/valkey/valkey.conf:ro
+    networks:
+      - ok-folio-private
+
+  app:
+    image: ${OK_FOLIO_IMAGE_REGISTRY:?OK_FOLIO_IMAGE_REGISTRY is required}/ok-folio:${OK_FOLIO_IMAGE_SHA:?OK_FOLIO_IMAGE_SHA is required}
+    restart: unless-stopped
+    user: "1000:1000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    environment:
+      DB_HOST: ${DB_HOST:-postgres}
+      DB_PORT: ${DB_PORT:-5432}
+      DB_USER: ${DB_USER:?DB_USER is required}
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      DB_NAME: ${DB_NAME:?DB_NAME is required}
+      DB_SSLMODE: ${DB_SSLMODE:-disable}
+      VALKEY_HOST: ${VALKEY_HOST:-valkey}
+      VALKEY_PORT: ${VALKEY_PORT:-6379}
+      VALKEY_PASSWORD: ${VALKEY_PASSWORD:?VALKEY_PASSWORD is required}
+      LEGACY_DB_HOST: ${LEGACY_DB_HOST:?LEGACY_DB_HOST is required}
+      LEGACY_DB_USER: ${LEGACY_DB_USER:?LEGACY_DB_USER is required}
+      LEGACY_DB_PASSWORD: ${LEGACY_DB_PASSWORD:?LEGACY_DB_PASSWORD is required}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?TELEGRAM_BOT_TOKEN is required}
+      TELEGRAM_USERNAME: ${TELEGRAM_USERNAME:?TELEGRAM_USERNAME is required}
+    ports:
+      - "${OK_FOLIO_APP_PORT:?OK_FOLIO_APP_PORT is required}:8080"
+    volumes:
+      - ${OK_FOLIO_CONFIG_HOST_PATH:?OK_FOLIO_CONFIG_HOST_PATH is required}:/config/config.yaml:ro
+      - ${PHOTO_ORIGINALS_HOST_PATH:?PHOTO_ORIGINALS_HOST_PATH is required}:/photoprism/originals:ro
+      - ${PHOTO_DAILY_HOST_PATH:?PHOTO_DAILY_HOST_PATH is required}:/photoprism/_daily:ro
+      - ${PHOTOPRISM_STORAGE_HOST_PATH:?PHOTOPRISM_STORAGE_HOST_PATH is required}:/photoprism/storage:ro
+    networks:
+      - ok-folio-private
+      - legacy
+
+networks:
+  ok-folio-private:
+    internal: true
+  legacy:
+    external: true
+    name: ${LEGACY_DOCKER_NETWORK:?LEGACY_DOCKER_NETWORK is required}
