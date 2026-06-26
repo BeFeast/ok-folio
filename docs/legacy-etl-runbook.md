@@ -148,3 +148,39 @@ go run ./cmd/ok-folio-etl hash-content --config /config/config.yaml --originals-
 The pass reads file bytes from the read-only originals mount for rows where
 `content_hash IS NULL` and writes the raw 32-byte sha256 to OK Folio Postgres.
 It performs no legacy database or file writes and can be re-run safely.
+
+## Wave-1 Read-Path Smoke/Perf Gate
+
+After the full legacy backfill has loaded the real catalog, run the read-path
+smoke before opening connector or cache-depth work:
+
+```bash
+go run ./cmd/ok-folio-etl smoke-read-paths \
+  --config /config/config.yaml \
+  --expected-rows 50338 \
+  --expected-artists 1953 \
+  --search-query jpg
+```
+
+The command fails if the downloaded catalog row count is not `50,338` or if the
+artist facet does not return `1,953` grouped artist rows. It records one catalog
+page, the source/category/artist/favorites facets, and search. The category
+facet is explicitly measured as a SQL `GROUP BY` over the stored `category`
+column; it must not load all source URLs into Go to derive categories.
+
+Paste the command output here when the post-backfill smoke is run against the
+LAN runtime:
+
+| Path | Result rows | Total/count | Latency ms | Notes |
+| --- | ---: | ---: | ---: | --- |
+| catalog_page | _record from smoke output_ | 50338 | _record from smoke output_ | limit=50 offset=0 |
+| facet_source | _record from smoke output_ | 50338 | _record from smoke output_ | SQL GROUP BY source_page |
+| facet_category | _record from smoke output_ | 50338 | _record from smoke output_ | SQL GROUP BY category column |
+| facet_artist | 1953 | 50338 | _record from smoke output_ | SQL GROUP BY artist |
+| facet_favorite | 2 | 50338 | _record from smoke output_ | SQL count on favorite |
+| search | _record from smoke output_ | _record from smoke output_ | _record from smoke output_ | title/artist/file_name only |
+
+Flag any `url LIKE`, `url ILIKE`, `source_page LIKE`, or `source_page ILIKE`
+predicate found in the catalog or search read paths. The wave-1 gate permits
+ordinary grouped scans for facets, but URL-shaped text fields must not be part
+of free-text search until a real text-search index exists.

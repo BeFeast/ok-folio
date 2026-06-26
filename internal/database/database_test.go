@@ -2,6 +2,7 @@ package database
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -178,6 +179,50 @@ func TestRecordDownloadRetryPersistsDerivedCategory(t *testing.T) {
 	}
 	if stored.Category != "42" {
 		t.Fatalf("Expected retry update to persist derived category %q, got %q", "42", stored.Category)
+	}
+}
+
+func TestGalleryCategoryFacetUsesStoredCategoryColumn(t *testing.T) {
+	db := setupTestDB(t)
+
+	for _, photo := range []DownloadedPhoto{
+		{URL: "https://example.com/one.jpg", SourcePage: "https://example.com/category/url-only/one", Category: "stored", FileName: "one.jpg", Status: "downloaded"},
+		{URL: "https://example.com/two.jpg", SourcePage: "https://example.com/category/url-only/two", Category: "stored", FileName: "two.jpg", Status: "downloaded"},
+	} {
+		if err := db.Create(&photo).Error; err != nil {
+			t.Fatalf("Failed to seed photo: %v", err)
+		}
+	}
+
+	categories, err := db.GetGalleryCategoryStats()
+	if err != nil {
+		t.Fatalf("GetGalleryCategoryStats failed: %v", err)
+	}
+	if len(categories) != 1 || categories[0].ID != "stored" || categories[0].Count != 2 {
+		t.Fatalf("Expected category facet from stored category column, got %#v", categories)
+	}
+}
+
+func TestGalleryCatalogQueryExcludesURLShapedTextColumns(t *testing.T) {
+	db := setupTestDB(t)
+
+	query := db.DB.Session(&gorm.Session{DryRun: true}).Model(&DownloadedPhoto{}).
+		Where("status = ?", "downloaded")
+	query, err := db.applyGalleryCatalogFilters(query, GalleryCatalogFilters{Query: "needle"})
+	if err != nil {
+		t.Fatalf("applyGalleryCatalogFilters failed: %v", err)
+	}
+	sql := strings.ToLower(query.Find(&[]DownloadedPhoto{}).Statement.SQL.String())
+
+	for _, forbidden := range []string{" url ", "url like", "url ilike", "source_page like", "source_page ilike"} {
+		if strings.Contains(sql, forbidden) {
+			t.Fatalf("Expected gallery free-text SQL to avoid %q, got %s", forbidden, sql)
+		}
+	}
+	for _, required := range []string{"title like", "artist like", "file_name like"} {
+		if !strings.Contains(sql, required) {
+			t.Fatalf("Expected gallery free-text SQL to include %q, got %s", required, sql)
+		}
 	}
 }
 

@@ -21,6 +21,8 @@ func main() {
 		loadDump(os.Args[2:])
 	case "hash-content":
 		hashContent(os.Args[2:])
+	case "smoke-read-paths":
+		smokeReadPaths(os.Args[2:])
 	case "print-legacy-checks":
 		printLegacyChecks(os.Args[2:])
 	default:
@@ -119,7 +121,7 @@ func printLegacyChecks(args []string) {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: ok-folio-etl <load-dump|hash-content|print-legacy-checks> [flags]")
+	fmt.Fprintln(os.Stderr, "usage: ok-folio-etl <load-dump|hash-content|smoke-read-paths|print-legacy-checks> [flags]")
 }
 
 func splitTables(value string) []string {

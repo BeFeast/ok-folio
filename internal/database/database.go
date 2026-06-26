@@ -1017,13 +1017,13 @@ func (db *DB) applyGalleryCatalogFilters(query *gorm.DB, filters GalleryCatalogF
 	}
 	if filters.Query != "" {
 		// Free-text search is case-insensitive (ILIKE on Postgres). The raw url
-		// is intentionally excluded: it carries no index, so url LIKE would force
-		// a full scan.
+		// and source_page columns are intentionally excluded: they carry no
+		// text-search index, so LIKE over either URL-shaped field would force a
+		// full text scan on the real catalog.
 		op := db.caseInsensitiveLike()
 		searchPattern := "%" + escapeSQLLike(filters.Query) + "%"
 		query = query.Where(
-			"title "+op+" ? ESCAPE '\\' OR artist "+op+" ? ESCAPE '\\' OR file_name "+op+" ? ESCAPE '\\' OR source_page "+op+" ? ESCAPE '\\'",
-			searchPattern,
+			"title "+op+" ? ESCAPE '\\' OR artist "+op+" ? ESCAPE '\\' OR file_name "+op+" ? ESCAPE '\\'",
 			searchPattern,
 			searchPattern,
 			searchPattern,
