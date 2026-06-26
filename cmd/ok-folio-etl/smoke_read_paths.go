@@ -100,7 +100,7 @@ func smokeReadPaths(args []string) {
 	if err != nil {
 		exitErr(err)
 	}
-	results = append(results, smokeResult{Name: "search", Rows: len(searchPhotos), Total: searchTotal, DurationMS: duration, Notes: "title/artist/file_name only"})
+	results = append(results, smokeResult{Name: "search", Rows: len(searchPhotos), Total: searchTotal, DurationMS: duration, Notes: "gallery catalog q over title/artist/file_name only"})
 
 	fmt.Printf("OK Folio read-path smoke: downloaded_rows=%d expected_rows=%d search_query=%q\n", downloadedRows, *expectedRows, *searchQuery)
 	fmt.Println()
@@ -145,7 +145,7 @@ func timeFavoriteFacet(db *database.DB) ([]database.GalleryFavoriteStats, float6
 
 func timeSearch(db *database.DB, query string, limit int) ([]database.DownloadedPhoto, int64, float64, error) {
 	start := time.Now()
-	photos, total, err := db.SearchPhotos(query, limit, 0)
+	photos, total, err := db.GetGalleryCatalog(limit, 0, database.GalleryCatalogFilters{Query: query})
 	return photos, total, elapsedMS(start), err
 }
 

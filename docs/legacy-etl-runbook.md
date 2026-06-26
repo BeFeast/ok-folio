@@ -164,9 +164,10 @@ go run ./cmd/ok-folio-etl smoke-read-paths \
 
 The command fails if the downloaded catalog row count is not `50,338` or if the
 artist facet does not return `1,953` grouped artist rows. It records one catalog
-page, the source/category/artist/favorites facets, and search. The category
-facet is explicitly measured as a SQL `GROUP BY` over the stored `category`
-column; it must not load all source URLs into Go to derive categories.
+page, the source/category/artist/favorites facets, and the gallery catalog `q`
+search path. The category facet is explicitly measured as a SQL `GROUP BY` over
+the stored `category` column; it must not load all source URLs into Go to derive
+categories.
 
 Paste the command output here when the post-backfill smoke is run against the
 LAN runtime:
@@ -178,7 +179,7 @@ LAN runtime:
 | facet_category | _record from smoke output_ | 50338 | _record from smoke output_ | SQL GROUP BY category column |
 | facet_artist | 1953 | 50338 | _record from smoke output_ | SQL GROUP BY artist |
 | facet_favorite | 2 | 50338 | _record from smoke output_ | SQL count on favorite |
-| search | _record from smoke output_ | _record from smoke output_ | _record from smoke output_ | title/artist/file_name only |
+| search | _record from smoke output_ | _record from smoke output_ | _record from smoke output_ | gallery catalog q over title/artist/file_name only |
 
 Flag any `url LIKE`, `url ILIKE`, `source_page LIKE`, or `source_page ILIKE`
 predicate found in the catalog or search read paths. The wave-1 gate permits
