@@ -148,6 +148,39 @@ func TestRecordDownload_DuplicateURL(t *testing.T) {
 	}
 }
 
+func TestRecordDownloadRetryPersistsDerivedCategory(t *testing.T) {
+	db := setupTestDB(t)
+
+	const sharedURL = "https://example.com/retry-category.jpg"
+	const sourcePage = "https://webgallery/gallery/category/42/photo"
+
+	// A prior failed attempt; the BeforeSave hook derives category "42" from the
+	// source page on insert.
+	failed := &DownloadedPhoto{URL: sharedURL, SourcePage: sourcePage, FileName: "retry.jpg", Status: "failed"}
+	if err := db.Create(failed).Error; err != nil {
+		t.Fatalf("Failed to seed failed row: %v", err)
+	}
+
+	// The scraper retries with no Category set, relying on the hook to derive it.
+	// The conflict-update path must persist the derived category, not the caller's
+	// empty value, so the recovered download keeps matching its category facet.
+	retry := &DownloadedPhoto{URL: sharedURL, SourcePage: sourcePage, FileName: "retry.jpg", Status: "downloaded"}
+	if err := db.RecordDownload(retry); err != nil {
+		t.Fatalf("Retry RecordDownload failed: %v", err)
+	}
+
+	var stored DownloadedPhoto
+	if err := db.Where("url_hash = ?", HashURL(sharedURL)).First(&stored).Error; err != nil {
+		t.Fatalf("Failed to load retried row: %v", err)
+	}
+	if stored.Status != "downloaded" {
+		t.Fatalf("Expected retry to flip status to downloaded, got %q", stored.Status)
+	}
+	if stored.Category != "42" {
+		t.Fatalf("Expected retry update to persist derived category %q, got %q", "42", stored.Category)
+	}
+}
+
 func TestBeforeSaveHookPopulatesURLHash(t *testing.T) {
 	db := setupTestDB(t)
 

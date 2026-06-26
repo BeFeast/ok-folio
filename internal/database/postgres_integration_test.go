@@ -2,6 +2,7 @@ package database
 
 import (
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -91,6 +92,37 @@ func TestPostgresMigrateSchemaAndIdempotency(t *testing.T) {
 	// The raw url carries no btree (uniqueness lives on url_hash).
 	if urlHasBtree(db) {
 		t.Fatalf("expected raw url to carry no btree index")
+	}
+
+	// source_page holds full source URLs, so it carries a bounded hash index
+	// (immune to the btree tuple limit) and never a plain btree on the full text.
+	sourcePageAMs := columnIndexAccessMethods(db, "source_page")
+	hasHash, hasBtree := false, false
+	for _, am := range sourcePageAMs {
+		switch am {
+		case "hash":
+			hasHash = true
+		case "btree":
+			hasBtree = true
+		}
+	}
+	if hasBtree {
+		t.Fatalf("expected source_page to carry no plain btree index, got access methods %v", sourcePageAMs)
+	}
+	if !hasHash {
+		t.Fatalf("expected a bounded hash index on source_page, got access methods %v", sourcePageAMs)
+	}
+
+	// A source page URL past the ~2704-byte btree tuple limit must insert cleanly
+	// now that source_page carries no plain btree.
+	longSourcePage := "https://example.com/" + strings.Repeat("a", 3000)
+	if err := db.Create(&DownloadedPhoto{
+		URL:        "https://example.com/long-source.jpg",
+		SourcePage: longSourcePage,
+		FileName:   "long-source.jpg",
+		Status:     "downloaded",
+	}).Error; err != nil {
+		t.Fatalf("expected a long source_page to insert without a btree tuple-limit failure: %v", err)
 	}
 
 	// Embedding is added via post-migrate Exec when the vector type exists.
@@ -307,6 +339,22 @@ func standaloneDownloadedAtIndexExists(db *DB) bool {
 		  AND i.indnatts = 1
 		  AND (SELECT attname FROM pg_attribute WHERE attrelid = tbl.oid AND attnum = i.indkey[0]) = 'downloaded_at'`).Scan(&count)
 	return count > 0
+}
+
+// columnIndexAccessMethods returns the access methods (btree, hash, ...) of every
+// single-column index on the given downloaded_photos column.
+func columnIndexAccessMethods(db *DB, column string) []string {
+	var methods []string
+	db.DB.Raw(`
+		SELECT am.amname
+		FROM pg_index i
+		JOIN pg_class tbl ON tbl.oid = i.indrelid
+		JOIN pg_class idx ON idx.oid = i.indexrelid
+		JOIN pg_am am ON am.oid = idx.relam
+		WHERE tbl.relname = 'downloaded_photos'
+		  AND i.indnatts = 1
+		  AND (SELECT attname FROM pg_attribute WHERE attrelid = tbl.oid AND attnum = i.indkey[0]) = ?`, column).Scan(&methods)
+	return methods
 }
 
 func urlHasBtree(db *DB) bool {

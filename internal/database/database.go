@@ -41,8 +41,13 @@ type DownloadedPhoto struct {
 	// URLHash is sha256(canonicalize(url)) as raw 32 bytes (NOT hex text). It is
 	// NOT NULL and populated by the single BeforeSave hook so every insert path
 	// fills it; the unique index here is the real duplicate guard.
-	URLHash    []byte `gorm:"type:bytea;not null;uniqueIndex"`
-	SourcePage string `gorm:"type:text;index"`
+	URLHash []byte `gorm:"type:bytea;not null;uniqueIndex"`
+	// SourcePage stores the full source page URL (the scraper writes
+	// resolved.Source.URL here), so it carries NO plain btree: like the raw url
+	// column, a long URL can exceed Postgres' ~2704-byte btree tuple limit and
+	// fail inserts during index maintenance. A bounded hash index (immune to that
+	// limit) backs the equality lookups; it is created in postMigratePostgres.
+	SourcePage string `gorm:"type:text"`
 	Title      string `gorm:"type:text;index"`
 	// Artist carries its own single-column index plus position 2 of the
 	// (downloaded_at, artist) composite. Values are preserved byte-for-byte.
@@ -123,13 +128,23 @@ func HashURL(rawURL string) []byte {
 // duplicates slip the unique guard, so this must be the only place it is set.
 func (p *DownloadedPhoto) BeforeSave(tx *gorm.DB) error {
 	p.URLHash = HashURL(p.URL)
-	if p.Category == "" {
-		p.Category = categoryIDFromSourcePage(p.SourcePage)
-	}
+	p.Category = resolveCategory(p)
 	if p.Provider == "" {
 		p.Provider = DefaultProvider
 	}
 	return nil
+}
+
+// resolveCategory derives the stored category for a photo, mirroring the
+// BeforeSave hook: an explicit Category wins, otherwise it is derived from the
+// SourcePage. The conflict-update path uses it so a retry update writes the same
+// derived category a fresh insert's hook would compute, instead of capturing the
+// caller's empty Category before BeforeSave runs.
+func resolveCategory(p *DownloadedPhoto) string {
+	if p.Category != "" {
+		return p.Category
+	}
+	return categoryIDFromSourcePage(p.SourcePage)
 }
 
 // BeforeSave keeps the inbox fingerprint in sync so RecordInboxException can
@@ -310,6 +325,22 @@ func postMigratePostgres(db *gorm.DB) error {
 		}
 	}
 
+	// Index source_page with a hash index instead of a plain btree. source_page
+	// holds full source URLs whose length can exceed the btree tuple limit and
+	// fail inserts; a hash index stores only the 32-bit hash, so it is immune to
+	// that limit while still serving the source equality lookups. Drop any legacy
+	// btree of the GORM-default name first (older builds tagged the column
+	// `index`), then create the hash index idempotently.
+	sourcePageIndexStmts := []string{
+		`DROP INDEX IF EXISTS idx_downloaded_photos_source_page`,
+		`CREATE INDEX IF NOT EXISTS idx_downloaded_photos_source_page_hash ON downloaded_photos USING hash (source_page)`,
+	}
+	for _, stmt := range sourcePageIndexStmts {
+		if err := db.Exec(stmt).Error; err != nil {
+			return fmt.Errorf("post-migrate source_page index step failed: %w", err)
+		}
+	}
+
 	// Add the embedding column only when the vector type exists. The app must
 	// not CREATE EXTENSION; if the extension is missing this logs nothing and
 	// continues rather than failing the boot.
@@ -342,6 +373,10 @@ func (db *DB) IsPhotoDownloaded(url string) (bool, error) {
 // duplicate. ON CONFLICT makes this safe under the concurrent Ingestor where
 // the old First-then-Create race would trip Postgres 23505.
 func (db *DB) RecordDownload(photo *DownloadedPhoto) error {
+	// Derive the category up front: this assignment map is built before GORM runs
+	// BeforeSave, so reading photo.Category here would capture the caller's empty
+	// value (the scraper relies on the hook deriving it from SourcePage) and a
+	// retry update would regroup recovered downloads as "unknown".
 	result := db.Clauses(clause.OnConflict{
 		Columns: []clause.Column{{Name: "url_hash"}},
 		Where: clause.Where{Exprs: []clause.Expression{
@@ -351,7 +386,7 @@ func (db *DB) RecordDownload(photo *DownloadedPhoto) error {
 			"source_page":   photo.SourcePage,
 			"title":         photo.Title,
 			"artist":        photo.Artist,
-			"category":      photo.Category,
+			"category":      resolveCategory(photo),
 			"upload_date":   photo.UploadDate,
 			"file_path":     photo.FilePath,
 			"file_name":     photo.FileName,
