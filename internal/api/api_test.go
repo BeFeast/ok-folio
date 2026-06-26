@@ -866,6 +866,10 @@ func TestGalleryCatalogUsesPrivateETagAndConditional304(t *testing.T) {
 	server, db := setupTestServer(t)
 	defer safeShutdown(server)
 
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr(), Protocol: 2})
+	server.cache = okfcache.NewForRedis(rdb, zerolog.Nop())
+
 	photo := database.DownloadedPhoto{
 		URL:          "https://example.com/catalog-etag.jpg",
 		Title:        "Catalog ETag",
@@ -884,7 +888,7 @@ func TestGalleryCatalogUsesPrivateETagAndConditional304(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("Expected catalog status 200, got %d", w.Code)
 	}
-	if got := w.Header().Get("Cache-Control"); got != "private, max-age=30, stale-while-revalidate=120" {
+	if got := w.Header().Get("Cache-Control"); got != catalogCacheControl {
 		t.Fatalf("Expected private catalog cache header, got %q", got)
 	}
 	etag := w.Header().Get("ETag")
@@ -901,6 +905,68 @@ func TestGalleryCatalogUsesPrivateETagAndConditional304(t *testing.T) {
 	}
 	if w.Body.Len() != 0 {
 		t.Fatalf("Expected empty catalog 304 body, got %q", w.Body.String())
+	}
+}
+
+func TestGalleryCatalogDoesNot304WhenCachePassthrough(t *testing.T) {
+	server, db := setupTestServer(t)
+	defer safeShutdown(server)
+
+	mr := miniredis.RunT(t)
+	addr := mr.Addr()
+	mr.Close()
+	rdb := redis.NewClient(&redis.Options{Addr: addr, Protocol: 2})
+	server.cache = okfcache.NewForRedis(rdb, zerolog.Nop())
+
+	photo := database.DownloadedPhoto{
+		URL:          "https://example.com/passthrough-catalog-etag.jpg",
+		Title:        "Passthrough Catalog ETag",
+		FilePath:     filepath.Join(server.cfg.Storage.BaseDirectory, "passthrough-catalog-etag.jpg"),
+		FileName:     "passthrough-catalog-etag.jpg",
+		Status:       "downloaded",
+		DownloadedAt: time.Now(),
+	}
+	if err := db.Create(&photo).Error; err != nil {
+		t.Fatalf("Failed to create photo: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/gallery/catalog?q=Passthrough", nil)
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected first catalog status 200, got %d", w.Code)
+	}
+	etag := w.Header().Get("ETag")
+	if etag == "" {
+		t.Fatalf("Expected catalog ETag")
+	}
+
+	photo.Title = "Passthrough Catalog Updated"
+	if err := db.Save(&photo).Error; err != nil {
+		t.Fatalf("Failed to update photo: %v", err)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/gallery/catalog?q=Passthrough", nil)
+	req.Header.Set("If-None-Match", etag)
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected passthrough catalog status 200, got %d body=%q", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("Cache-Control"); got != catalogCacheControl {
+		t.Fatalf("Expected private catalog cache header, got %q", got)
+	}
+
+	var response struct {
+		Photos []struct {
+			Title string `json:"title"`
+		} `json:"photos"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode passthrough catalog: %v", err)
+	}
+	if len(response.Photos) != 1 || response.Photos[0].Title != "Passthrough Catalog Updated" {
+		t.Fatalf("Expected passthrough request to fetch updated DB row, got %#v", response.Photos)
 	}
 }
 

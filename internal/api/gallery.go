@@ -82,6 +82,8 @@ type cacheGalleryCatalogETagShape struct {
 	Offset  int                        `json:"offset"`
 }
 
+const catalogCacheControl = "private, no-cache, stale-while-revalidate=120"
+
 func (s *Server) handleGalleryCatalog(w http.ResponseWriter, r *http.Request) {
 	limit, offset := s.parsePagination(r)
 	values := r.URL.Query()
@@ -97,6 +99,7 @@ func (s *Server) handleGalleryCatalog(w http.ResponseWriter, r *http.Request) {
 	}
 
 	epoch := s.cache.Epoch(r.Context())
+	canUseConditionalResponse := !s.cache.Passthrough()
 	key, err := okfcache.CatalogKey(epoch, cacheFilters, limit, offset)
 	if err != nil {
 		s.logger.Error().Err(err).Msg("Failed to build gallery cache key")
@@ -110,9 +113,9 @@ func (s *Server) handleGalleryCatalog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Cache-Control", "private, max-age=30, stale-while-revalidate=120")
+	w.Header().Set("Cache-Control", catalogCacheControl)
 	w.Header().Set("ETag", etag)
-	if requestETagMatches(r, etag) {
+	if canUseConditionalResponse && requestETagMatches(r, etag) {
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
