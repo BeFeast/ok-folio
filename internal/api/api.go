@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	okfcache "ok-folio/internal/cache"
 	"ok-folio/internal/config"
 	"ok-folio/internal/database"
 	"ok-folio/internal/scraper"
@@ -44,10 +45,12 @@ type Server struct {
 	jobQueue   chan func()
 	limiter    *rate.Limiter
 	statsCache *StatsCache
+	cache      *okfcache.Client
 }
 
 func New(cfg *config.Config, db *database.DB, scraper *scraper.Scraper, logger zerolog.Logger) *Server {
 	ctx, cancel := context.WithCancel(context.Background())
+	cacheClient := okfcache.New(ctx, cfg.Cache, logger)
 
 	s := &Server{
 		cfg:        cfg,
@@ -60,6 +63,7 @@ func New(cfg *config.Config, db *database.DB, scraper *scraper.Scraper, logger z
 		jobQueue:   make(chan func(), ExtractionJobQueueSize),
 		limiter:    rate.NewLimiter(RateLimitPerSecond, RateLimitBurst),
 		statsCache: NewStatsCache(5 * time.Minute), // Cache stats for 5 minutes
+		cache:      cacheClient,
 	}
 
 	// Start worker pool for extraction jobs
@@ -69,6 +73,10 @@ func New(cfg *config.Config, db *database.DB, scraper *scraper.Scraper, logger z
 
 	s.setupRoutes()
 	return s
+}
+
+func (s *Server) Cache() *okfcache.Client {
+	return s.cache
 }
 
 // extractionWorker processes extraction jobs from the queue
@@ -286,6 +294,7 @@ func (s *Server) handleExtract(w http.ResponseWriter, r *http.Request) {
 		// Invalidate stats cache after successful extraction
 		if totalDownloaded > 0 {
 			s.statsCache.Invalidate()
+			_ = s.cache.BumpEpoch(ctx)
 			s.logger.Debug().Msg("Stats cache invalidated after new downloads")
 		}
 
@@ -351,6 +360,7 @@ func (s *Server) handleExtractPage(w http.ResponseWriter, r *http.Request) {
 		// Invalidate stats cache after successful extraction
 		if downloaded > 0 {
 			s.statsCache.Invalidate()
+			_ = s.cache.BumpEpoch(ctx)
 			s.logger.Debug().Msg("Stats cache invalidated after new downloads")
 		}
 
@@ -440,6 +450,7 @@ func (s *Server) handleExtractPages(w http.ResponseWriter, r *http.Request) {
 		// Invalidate stats cache after successful extraction
 		if totalDownloaded > 0 {
 			s.statsCache.Invalidate()
+			_ = s.cache.BumpEpoch(ctx)
 			s.logger.Debug().Msg("Stats cache invalidated after new downloads")
 		}
 

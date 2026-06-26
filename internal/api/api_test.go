@@ -10,12 +10,15 @@ import (
 	"testing"
 	"time"
 
+	okfcache "ok-folio/internal/cache"
 	"ok-folio/internal/config"
 	"ok-folio/internal/database"
 	"ok-folio/internal/gallery"
 	"ok-folio/internal/scraper"
 	"ok-folio/internal/testguard"
 
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -674,6 +677,91 @@ func TestHandleFavoritePersistsLocally(t *testing.T) {
 	if stored.Favorite {
 		t.Fatalf("Expected favorite to persist false")
 	}
+}
+
+func TestGalleryCatalogCacheUsesEpochInvalidation(t *testing.T) {
+	server, db := setupTestServer(t)
+	defer safeShutdown(server)
+
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr(), Protocol: 2})
+	server.cache = okfcache.NewForRedis(rdb, zerolog.Nop())
+
+	photo := database.DownloadedPhoto{
+		URL:          "https://example.com/cached-favorite.jpg",
+		Title:        "Cached Favorite",
+		FilePath:     filepath.Join(server.cfg.Storage.BaseDirectory, "cached-favorite.jpg"),
+		FileName:     "cached-favorite.jpg",
+		Status:       "downloaded",
+		DownloadedAt: time.Now(),
+	}
+	if err := db.Create(&photo).Error; err != nil {
+		t.Fatalf("Failed to create photo: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/gallery/catalog", nil)
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected first catalog status 200, got %d", w.Code)
+	}
+
+	var first struct {
+		Facets struct {
+			Favorites []struct {
+				Favorite bool  `json:"favorite"`
+				Count    int64 `json:"count"`
+			} `json:"favorites"`
+		} `json:"facets"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&first); err != nil {
+		t.Fatalf("Failed to decode first catalog: %v", err)
+	}
+	if favoriteCount(first.Facets.Favorites, true) != 0 {
+		t.Fatalf("Expected initial favorites count 0, got %#v", first.Facets.Favorites)
+	}
+
+	favoriteURL := "/api/v1/photos/" + strconv.Itoa(int(photo.ID)) + "/favorite"
+	req = httptest.NewRequest(http.MethodPost, favoriteURL, nil)
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected favorite status 200, got %d", w.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/gallery/catalog", nil)
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected second catalog status 200, got %d", w.Code)
+	}
+
+	var second struct {
+		Facets struct {
+			Favorites []struct {
+				Favorite bool  `json:"favorite"`
+				Count    int64 `json:"count"`
+			} `json:"favorites"`
+		} `json:"facets"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&second); err != nil {
+		t.Fatalf("Failed to decode second catalog: %v", err)
+	}
+	if favoriteCount(second.Facets.Favorites, true) != 1 {
+		t.Fatalf("Expected epoch-bumped favorites count 1, got %#v", second.Facets.Favorites)
+	}
+}
+
+func favoriteCount(facets []struct {
+	Favorite bool  `json:"favorite"`
+	Count    int64 `json:"count"`
+}, favorite bool) int64 {
+	for _, facet := range facets {
+		if facet.Favorite == favorite {
+			return facet.Count
+		}
+	}
+	return 0
 }
 
 func TestHandleInboxReturnsOnlyExceptions(t *testing.T) {

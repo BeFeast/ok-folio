@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"strconv"
 
+	okfcache "ok-folio/internal/cache"
+
 	"github.com/go-chi/chi/v5"
 )
 
@@ -135,6 +137,8 @@ func (s *Server) handleRetryPhoto(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusInternalServerError, "Failed to reset photo status")
 		return
 	}
+	_ = s.cache.Delete(r.Context(), okfcache.PhotoKey(id))
+	_ = s.cache.BumpEpoch(r.Context())
 
 	s.writeJSON(w, http.StatusOK, map[string]interface{}{
 		"message":  "Photo status reset to pending",
