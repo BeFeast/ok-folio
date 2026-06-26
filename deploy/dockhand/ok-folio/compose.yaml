@@ -77,9 +77,12 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
       DB_NAME: ${DB_NAME:?DB_NAME is required}
       DB_SSLMODE: ${DB_SSLMODE:-disable}
-      VALKEY_HOST: ${VALKEY_HOST:-valkey}
-      VALKEY_PORT: ${VALKEY_PORT:-6379}
-      VALKEY_PASSWORD: ${VALKEY_PASSWORD:?VALKEY_PASSWORD is required}
+      # The app's config loader reads CACHE_* (internal/config/config.go), so the
+      # Valkey connection settings must be fed under CACHE_* keys. The .env still
+      # uses VALKEY_* (shared with the valkey service, healthcheck, and conf).
+      CACHE_HOST: ${VALKEY_HOST:-valkey}
+      CACHE_PORT: ${VALKEY_PORT:-6379}
+      CACHE_PASSWORD: ${VALKEY_PASSWORD:?VALKEY_PASSWORD is required}
       LEGACY_DB_HOST: ${LEGACY_DB_HOST:?LEGACY_DB_HOST is required}
       LEGACY_DB_USER: ${LEGACY_DB_USER:?LEGACY_DB_USER is required}
       LEGACY_DB_PASSWORD: ${LEGACY_DB_PASSWORD:?LEGACY_DB_PASSWORD is required}
