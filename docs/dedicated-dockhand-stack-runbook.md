@@ -8,6 +8,7 @@ vault copy or any rendered `.env` file.
 ## Repository Artifacts
 
 - Compose template: `deploy/dockhand/ok-folio/compose.yaml`
+- Valkey config template: `deploy/dockhand/ok-folio/valkey.conf.template`
 - Postgres initdb: `deploy/dockhand/ok-folio/initdb/010-vector-extensions.sh`
 - Static template check: `scripts/check-ok-folio-stack-template.sh`
 - Rendered legacy mount assertion: `scripts/assert-rendered-legacy-mounts-ro.sh`
@@ -25,6 +26,7 @@ Record these concrete values in the vault runbook before first deploy:
 | Postgres ZFS child dataset | `<ok-folio-postgres-dataset>` |
 | Postgres PGDATA host path | `<ok-folio-pgdata-host-path>` |
 | Valkey sibling host directory | `<ok-folio-valkey-host-path>` |
+| Rendered Valkey config host path | `<ok-folio-valkey-config-host-path>` |
 | Config file host path | `<ok-folio-config-host-path>` |
 | Originals host path | `<photo-originals-host-path>` |
 | Daily host path | `<photo-daily-host-path>` |
@@ -60,13 +62,14 @@ then create a sibling directory for Valkey:
 zfs create <ok-folio-postgres-dataset>
 zfs set recordsize=16K compression=lz4 atime=off <ok-folio-postgres-dataset>
 install -d -o 999 -g 999 -m 0700 <ok-folio-pgdata-host-path>
-install -d -o 1000 -g 1000 -m 0700 <ok-folio-valkey-host-path>
+install -d -o 999 -g 1000 -m 0700 <ok-folio-valkey-host-path>
 zfs get recordsize,compression,atime <ok-folio-postgres-dataset>
 stat -c '%u:%g %a %n' <ok-folio-pgdata-host-path> <ok-folio-valkey-host-path>
 ```
 
 Expected: Postgres reports `16K`, `lz4`, `off`; PGDATA is owned by uid `999`;
-Valkey is writable by the service owner chosen in the vault runbook.
+Valkey data is owned by the current `valkey/valkey:8-alpine` service identity
+(`999:1000`) so the entrypoint can continue on the non-root server path.
 
 ## Environment Contract
 
@@ -84,9 +87,12 @@ OK_FOLIO_POSTGRES_PORT=<verified-free-postgres-port>
 OK_FOLIO_VALKEY_PORT=<verified-free-valkey-port>
 OK_FOLIO_PGDATA_HOST_PATH=<postgres-pgdata-host-path>
 OK_FOLIO_VALKEY_HOST_PATH=<valkey-host-path>
+OK_FOLIO_VALKEY_CONFIG_HOST_PATH=<rendered-valkey-conf-host-path>
 OK_FOLIO_CONFIG_HOST_PATH=<config-yaml-host-path>
 POSTGRES_SHARED_BUFFERS=<host-budget-placeholder>
 POSTGRES_EFFECTIVE_CACHE_SIZE=<host-budget-placeholder>
+POSTGRES_ADMIN_USER=<ok-folio-postgres-bootstrap-user>
+POSTGRES_ADMIN_PASSWORD=<ok-folio-postgres-bootstrap-password>
 DB_HOST=postgres
 DB_PORT=5432
 DB_USER=<ok-folio-postgres-app-user>
@@ -124,12 +130,17 @@ The server command disables ZFS-unfriendly WAL preallocation behavior and keeps
 final.
 
 The initdb script creates `vector` as superuser and creates `vchord` when the
-image exposes it. The OK Folio app role must never run `CREATE EXTENSION`; app
-migrations only use the `vector` type when initdb already made it available.
+image exposes it. Initdb also creates and grants the least-privilege app role
+from `DB_USER`/`DB_PASSWORD`. The OK Folio app role must never run
+`CREATE EXTENSION`; app migrations only use the `vector` type when initdb
+already made it available.
 
-Valkey uses the alpine image, requires `VALKEY_PASSWORD`, enables appendonly
-persistence, and keeps `maxmemory` and eviction policy as host-budget
-placeholders until sizing is decided.
+Valkey uses the alpine image and starts as `valkey-server` with a rendered
+`valkey.conf` so the image entrypoint can switch to the non-root Valkey user.
+The rendered config requires `VALKEY_PASSWORD`, enables appendonly persistence,
+and keeps `maxmemory` and eviction policy as host-budget placeholders until
+sizing is decided. Do not pass the Valkey password as a long-running process
+argument.
 
 The app image is always pinned as `ok-folio:<immutable-commit-sha>`. It joins
 the private stack network and the external legacy Docker network. The app talks
@@ -144,17 +155,24 @@ All legacy mounts are kernel-enforced read-only:
 ## Render And Assert
 
 Render on the deployment host from Infisical and the vault path references. Do
-not commit the rendered `.env` or rendered compose.
+not commit the rendered `.env`, rendered Valkey config, or rendered compose.
+Stage the assertion script with the stack so this workflow does not depend on
+the staged directory's location relative to a repository checkout.
 
 ```bash
 cd <staged-ok-folio-stack-dir>
+install -m 0755 <repo-checkout>/scripts/assert-rendered-legacy-mounts-ro.sh ./assert-rendered-legacy-mounts-ro.sh
 infisical export --path <ok-folio-infisical-path> --format dotenv > .env
 set -a
 . ./.env
 set +a
+envsubst '$VALKEY_PASSWORD $VALKEY_MAXMEMORY $VALKEY_MAXMEMORY_POLICY' \
+  < valkey.conf.template > "$OK_FOLIO_VALKEY_CONFIG_HOST_PATH"
+chown 999:1000 "$OK_FOLIO_VALKEY_CONFIG_HOST_PATH"
+chmod 0400 "$OK_FOLIO_VALKEY_CONFIG_HOST_PATH"
 envsubst '$PHOTO_ORIGINALS_HOST_PATH $PHOTO_DAILY_HOST_PATH $PHOTOPRISM_STORAGE_HOST_PATH' \
   < compose.yaml > compose.mounts.rendered.yaml
-../../scripts/assert-rendered-legacy-mounts-ro.sh compose.mounts.rendered.yaml
+./assert-rendered-legacy-mounts-ro.sh compose.mounts.rendered.yaml
 ```
 
 The assertion must fail deployment if any legacy path is mounted without a

@@ -6,8 +6,10 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${DB_NAME:?DB_NAME is required}
-      POSTGRES_USER: ${DB_USER:?DB_USER is required}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      POSTGRES_USER: ${POSTGRES_ADMIN_USER:?POSTGRES_ADMIN_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:?POSTGRES_ADMIN_PASSWORD is required}
+      DB_USER: ${DB_USER:?DB_USER is required}
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
       PGDATA: /var/lib/postgresql/18/docker
     command:
       - postgres
@@ -41,15 +43,12 @@ services:
     image: valkey/valkey:8-alpine
     restart: unless-stopped
     command:
-      - sh
-      - -c
-      - exec valkey-server --requirepass "$${VALKEY_PASSWORD:?VALKEY_PASSWORD is required}" --appendonly yes --maxmemory "$${VALKEY_MAXMEMORY:-0}" --maxmemory-policy "$${VALKEY_MAXMEMORY_POLICY:-noeviction}"
+      - valkey-server
+      - /usr/local/etc/valkey/valkey.conf
     environment:
       VALKEY_PASSWORD: ${VALKEY_PASSWORD:?VALKEY_PASSWORD is required}
-      VALKEY_MAXMEMORY: ${VALKEY_MAXMEMORY:-0}
-      VALKEY_MAXMEMORY_POLICY: ${VALKEY_MAXMEMORY_POLICY:-noeviction}
     healthcheck:
-      test: ["CMD-SHELL", "valkey-cli -a \"$${VALKEY_PASSWORD}\" ping | grep -qx PONG"]
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$${VALKEY_PASSWORD}\" valkey-cli ping | grep -qx PONG"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -58,6 +57,7 @@ services:
       - "${OK_FOLIO_VALKEY_PORT:?OK_FOLIO_VALKEY_PORT is required}:6379"
     volumes:
       - ${OK_FOLIO_VALKEY_HOST_PATH:?OK_FOLIO_VALKEY_HOST_PATH is required}:/data
+      - ${OK_FOLIO_VALKEY_CONFIG_HOST_PATH:?OK_FOLIO_VALKEY_CONFIG_HOST_PATH is required}:/usr/local/etc/valkey/valkey.conf:ro
     networks:
       - ok-folio-private
 
@@ -89,9 +89,9 @@ services:
       - "${OK_FOLIO_APP_PORT:?OK_FOLIO_APP_PORT is required}:8080"
     volumes:
       - ${OK_FOLIO_CONFIG_HOST_PATH:?OK_FOLIO_CONFIG_HOST_PATH is required}:/config/config.yaml:ro
-      - ${PHOTO_ORIGINALS_HOST_PATH}:/photoprism/originals:ro
-      - ${PHOTO_DAILY_HOST_PATH}:/photoprism/_daily:ro
-      - ${PHOTOPRISM_STORAGE_HOST_PATH}:/photoprism/storage:ro
+      - ${PHOTO_ORIGINALS_HOST_PATH:?PHOTO_ORIGINALS_HOST_PATH is required}:/photoprism/originals:ro
+      - ${PHOTO_DAILY_HOST_PATH:?PHOTO_DAILY_HOST_PATH is required}:/photoprism/_daily:ro
+      - ${PHOTOPRISM_STORAGE_HOST_PATH:?PHOTOPRISM_STORAGE_HOST_PATH is required}:/photoprism/storage:ro
     networks:
       - ok-folio-private
       - legacy
