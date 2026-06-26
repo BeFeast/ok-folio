@@ -583,7 +583,7 @@ func TestHandlePhotoDetailIncludesProvenanceAndFavorite(t *testing.T) {
 	}
 
 	var response struct {
-		ID        uint   `json:"id"`
+		ID        uint64 `json:"id"`
 		Source    string `json:"source"`
 		Provider  string `json:"provider"`
 		Category  string `json:"category"`
@@ -648,9 +648,9 @@ func TestHandleFavoritePersistsLocally(t *testing.T) {
 		t.Fatalf("Expected get favorite status 200, got %d", w.Code)
 	}
 	var response struct {
-		ID        uint `json:"id"`
-		Favorite  bool `json:"favorite"`
-		Available bool `json:"available"`
+		ID        uint64 `json:"id"`
+		Favorite  bool   `json:"favorite"`
+		Available bool   `json:"available"`
 	}
 	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
 		t.Fatalf("Failed to decode favorite status: %v", err)

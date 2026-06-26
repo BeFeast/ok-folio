@@ -1,64 +1,179 @@
 package database
 
 import (
-	"database/sql"
+	"crypto/sha256"
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
 	"time"
 
 	"ok-folio/internal/config"
+	"ok-folio/internal/testguard"
 
-	"gorm.io/driver/mysql"
+	"github.com/jackc/pgx/v5/pgconn"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"gorm.io/gorm/logger"
 )
 
-// DownloadedPhoto represents a photo that has been downloaded
+// DefaultProvider is the OK Folio default media provider. Provider is set on
+// INSERT only and is never written by the ETL backfill.
+const DefaultProvider = "sight.photo"
+
+// EmbeddingDim is the provisional embedding vector dimension. It is managed via
+// a raw post-migrate Exec (not a Go-bound field) so the dimension can change
+// with the model choice without a non-idempotent struct migration.
+const EmbeddingDim = 512
+
+// DownloadedPhoto represents a photo that has been downloaded.
+//
+// Types map onto OK Folio's own Postgres: text instead of varchar(191),
+// timestamptz instead of datetime(3), bytea hashes, and a bigint identity PK so
+// the loader can insert legacy ids verbatim.
 type DownloadedPhoto struct {
-	ID           uint      `gorm:"primarykey"`
-	URL          string    `gorm:"uniqueIndex;not null"`
-	SourcePage   string    `gorm:"index"`
-	Title        string    `gorm:"index"`
-	Artist       string    `gorm:"index"`
-	UploadDate   time.Time `gorm:"index"`
-	FilePath     string    `gorm:"default:''"`
-	FileName     string    `gorm:"index"`
-	DownloadedAt time.Time `gorm:"autoCreateTime"`
+	ID uint64 `gorm:"primarykey"`
+	// URL carries NO btree index: long URLs can exceed Postgres' ~2704-byte
+	// btree tuple limit and would fail AutoMigrate at boot. Uniqueness is
+	// enforced on URLHash instead.
+	URL string `gorm:"type:text;not null"`
+	// URLHash is sha256(canonicalize(url)) as raw 32 bytes (NOT hex text). It is
+	// NOT NULL and populated by the single BeforeSave hook so every insert path
+	// fills it; the unique index here is the real duplicate guard.
+	URLHash []byte `gorm:"type:bytea;not null;uniqueIndex"`
+	// SourcePage stores the full source page URL (the scraper writes
+	// resolved.Source.URL here), so it carries NO plain btree: like the raw url
+	// column, a long URL can exceed Postgres' ~2704-byte btree tuple limit and
+	// fail inserts during index maintenance. A bounded hash index (immune to that
+	// limit) backs the equality lookups; it is created in postMigratePostgres.
+	SourcePage string `gorm:"type:text"`
+	Title      string `gorm:"type:text;index"`
+	// Artist carries its own single-column index plus position 2 of the
+	// (downloaded_at, artist) composite. Values are preserved byte-for-byte.
+	Artist     string    `gorm:"type:text;index;index:idx_downloaded_photos_downloaded_at_artist,priority:2"`
+	UploadDate time.Time `gorm:"index"`
+	FilePath   string    `gorm:"type:text;default:''"`
+	FileName   string    `gorm:"type:text;index"`
+	// DownloadedAt is position 1 of the composite index; its leading column also
+	// serves ORDER BY downloaded_at, so the redundant standalone downloaded_at
+	// index is intentionally dropped.
+	DownloadedAt time.Time `gorm:"autoCreateTime;index:idx_downloaded_photos_downloaded_at_artist,priority:1"`
 	FileSize     int64
-	Favorite     bool   `gorm:"index;default:false"`
-	Status       string `gorm:"index;default:'downloaded'"` // downloaded, failed, deleted
-	ErrorMessage string `gorm:"type:text"`                  // Error message if status is 'failed'
+	// Favorite is OK Folio-owned and never written by the ETL.
+	Favorite bool `gorm:"not null;default:false;index"`
+	// Provider is set on INSERT only; it is text, NOT a Postgres ENUM.
+	Provider string `gorm:"type:text;not null;default:'sight.photo';index"`
+	// Category is derived once at write time (replacing the N+1 derive-from-URL
+	// filter) and set on INSERT only.
+	Category string `gorm:"type:text;index"`
+	// ContentHash is raw 32 bytes for exact cross-source dedupe; OK Folio-owned.
+	ContentHash []byte `gorm:"type:bytea;index"`
+	// PerceptualHash is a 64-bit pHash stored as bigint to enable Hamming via
+	// bit ops and to avoid a later non-idempotent ALTER from bytea.
+	PerceptualHash int64  `gorm:"index"`
+	Status         string `gorm:"type:text;index;default:'downloaded'"` // downloaded, failed, deleted, pending (transient)
+	ErrorMessage   string `gorm:"type:text"`                            // Error message if status is 'failed'
 }
 
 // InboxItem is an ingestion exception that needs an operator decision.
 type InboxItem struct {
-	ID         uint   `gorm:"primarykey"`
-	ProviderID string `gorm:"index;not null"`
-	DedupeKey  string `gorm:"index"`
-	SourceID   string `gorm:"index"`
-	MediaID    string `gorm:"index"`
-	SourceURL  string
-	Title      string
-	Artist     string
-	Status     string    `gorm:"index;not null"` // duplicate, ambiguous
-	Reason     string    `gorm:"type:text"`
-	CreatedAt  time.Time `gorm:"autoCreateTime"`
-	UpdatedAt  time.Time `gorm:"autoUpdateTime"`
+	ID         uint64 `gorm:"primarykey"`
+	ProviderID string `gorm:"type:text;index;not null"`
+	DedupeKey  string `gorm:"type:text;index"`
+	SourceID   string `gorm:"type:text;index"`
+	MediaID    string `gorm:"type:text;index"`
+	SourceURL  string `gorm:"type:text"`
+	Title      string `gorm:"type:text"`
+	Artist     string `gorm:"type:text"`
+	Status     string `gorm:"type:text;index;not null"` // duplicate, ambiguous
+	Reason     string `gorm:"type:text"`
+	// Fingerprint is a stable identity used as the ON CONFLICT target so inbox
+	// exceptions upsert atomically. It is populated by the BeforeSave hook.
+	Fingerprint string    `gorm:"type:text;uniqueIndex"`
+	CreatedAt   time.Time `gorm:"autoCreateTime"`
+	UpdatedAt   time.Time `gorm:"autoUpdateTime"`
 }
 
 // ExtractionRun tracks extraction job runs
 type ExtractionRun struct {
-	ID               uint      `gorm:"primarykey"`
+	ID               uint64    `gorm:"primarykey"`
 	StartTime        time.Time `gorm:"autoCreateTime"`
 	EndTime          *time.Time
-	Status           string `gorm:"index;default:'running'"` // running, completed, failed
+	Status           string `gorm:"type:text;index;default:'running'"` // running, completed, failed
 	PagesProcessed   int
 	PhotosFound      int
 	PhotosDownloaded int
 	PhotosSkipped    int
 	PhotosFailed     int
 	ErrorMessage     string `gorm:"type:text"`
+}
+
+// canonicalizeURL applies OK Folio's conservative V1 URL canonicalization
+// before hashing. V1 only trims surrounding whitespace so that distinct URLs
+// (and non-URL dedupe keys stored in the url column) never collide; richer
+// canonicalization is deferred to avoid silently merging rows.
+func canonicalizeURL(rawURL string) string {
+	return strings.TrimSpace(rawURL)
+}
+
+// HashURL returns sha256(canonicalize(url)) as raw 32 bytes.
+func HashURL(rawURL string) []byte {
+	sum := sha256.Sum256([]byte(canonicalizeURL(rawURL)))
+	return sum[:]
+}
+
+// BeforeSave populates the NOT NULL url_hash and the derived category from the
+// single hook so every insert/update path is covered. A NULL url_hash would let
+// duplicates slip the unique guard, so this must be the only place it is set.
+func (p *DownloadedPhoto) BeforeSave(tx *gorm.DB) error {
+	p.URLHash = HashURL(p.URL)
+	p.Category = resolveCategory(p)
+	if p.Provider == "" {
+		p.Provider = DefaultProvider
+	}
+	return nil
+}
+
+// resolveCategory derives the stored category for a photo, mirroring the
+// BeforeSave hook: an explicit Category wins, otherwise it is derived from the
+// SourcePage. The conflict-update path uses it so a retry update writes the same
+// derived category a fresh insert's hook would compute, instead of capturing the
+// caller's empty Category before BeforeSave runs.
+func resolveCategory(p *DownloadedPhoto) string {
+	if p.Category != "" {
+		return p.Category
+	}
+	return categoryIDFromSourcePage(p.SourcePage)
+}
+
+// BeforeSave keeps the inbox fingerprint in sync so RecordInboxException can
+// upsert atomically via ON CONFLICT.
+func (i *InboxItem) BeforeSave(tx *gorm.DB) error {
+	i.Fingerprint = inboxFingerprint(i)
+	return nil
+}
+
+func inboxFingerprint(i *InboxItem) string {
+	if i.DedupeKey != "" {
+		return strings.Join([]string{"k", i.ProviderID, i.Status, i.DedupeKey}, "\x1f")
+	}
+	return strings.Join([]string{"t", i.ProviderID, i.Status, i.SourceID, i.MediaID, i.SourceURL}, "\x1f")
+}
+
+// IsUniqueViolation reports whether err is a unique-constraint violation. It
+// detects Postgres errcode 23505 via pgconn.PgError and falls back to a string
+// match for the sqlite test driver.
+func IsUniqueViolation(err error) bool {
+	if err == nil {
+		return false
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == "23505"
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "unique constraint") || strings.Contains(msg, "duplicate key")
 }
 
 type DB struct {
@@ -104,17 +219,9 @@ type ConnectorSourceStats struct {
 	LastActivity *time.Time `gorm:"column:last_activity" json:"last_activity"`
 }
 
-type connectorSourceStatsRow struct {
-	SourcePage   string         `gorm:"column:source_page"`
-	URL          string         `gorm:"column:url"`
-	Status       string         `gorm:"column:status"`
-	Count        int64          `gorm:"column:count"`
-	LastActivity sql.NullString `gorm:"column:last_activity"`
-}
-
 // ConnectorError captures recent persisted connector failures.
 type ConnectorError struct {
-	ID           uint      `gorm:"column:id" json:"id"`
+	ID           uint64    `gorm:"column:id" json:"id"`
 	SourcePage   string    `gorm:"column:source_page" json:"source_page"`
 	URL          string    `gorm:"column:url" json:"url"`
 	Title        string    `gorm:"column:title" json:"title"`
@@ -122,15 +229,32 @@ type ConnectorError struct {
 	OccurredAt   time.Time `gorm:"column:occurred_at" json:"occurred_at"`
 }
 
-// New creates a new database connection
+// New opens OK Folio's own Postgres, tunes the pool, and migrates the schema.
+//
+// It refuses to start when DB_HOST points at the legacy MariaDB/MySQL host and
+// asserts the resolved DSN and the live GORM dialect are Postgres, so a legacy
+// DSN can never reach gorm.Open.
 func New(cfg *config.DatabaseConfig) (*DB, error) {
+	if err := testguard.GuardAppDatabaseConfig(*cfg); err != nil {
+		return nil, err
+	}
+
+	dsn := cfg.DSN()
+	if err := testguard.AssertNonLegacyDSN(dsn); err != nil {
+		return nil, err
+	}
+
 	gormConfig := &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent),
 	}
 
-	db, err := gorm.Open(mysql.Open(cfg.DSN()), gormConfig)
+	db, err := gorm.Open(postgres.Open(dsn), gormConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
+	}
+
+	if name := db.Dialector.Name(); name != "postgres" {
+		return nil, fmt.Errorf("refusing to start: expected postgres GORM dialect, got %q", name)
 	}
 
 	sqlDB, err := db.DB()
@@ -138,91 +262,198 @@ func New(cfg *config.DatabaseConfig) (*DB, error) {
 		return nil, fmt.Errorf("failed to get database instance: %w", err)
 	}
 
-	// Set connection pool settings
-	sqlDB.SetMaxOpenConns(cfg.MaxOpenConns)
-	sqlDB.SetMaxIdleConns(cfg.MaxIdleConns)
+	// Set connection pool settings. Default to a modest Postgres pool when the
+	// config leaves these unset.
+	maxOpen := cfg.MaxOpenConns
+	if maxOpen <= 0 {
+		maxOpen = 15
+	}
+	maxIdle := cfg.MaxIdleConns
+	if maxIdle <= 0 {
+		maxIdle = 5
+	}
+	sqlDB.SetMaxOpenConns(maxOpen)
+	sqlDB.SetMaxIdleConns(maxIdle)
 	sqlDB.SetConnMaxLifetime(cfg.ConnMaxLifetime)
 
-	// Auto-migrate schemas
-	if err := db.AutoMigrate(&DownloadedPhoto{}, &ExtractionRun{}, &InboxItem{}); err != nil {
-		return nil, fmt.Errorf("failed to migrate database: %w", err)
+	if err := Migrate(db); err != nil {
+		return nil, err
 	}
 
 	return &DB{db}, nil
 }
 
-// IsPhotoDownloaded checks if a photo URL has already been downloaded
+// Migrate runs AutoMigrate on the three owned models and, on Postgres, the
+// non-destructive post-migrate steps (identity PK, embedding column). It is the
+// single migration entry point so tests exercise the same path as boot.
+func Migrate(db *gorm.DB) error {
+	if err := db.AutoMigrate(&DownloadedPhoto{}, &ExtractionRun{}, &InboxItem{}); err != nil {
+		return fmt.Errorf("failed to migrate database: %w", err)
+	}
+	if db.Dialector.Name() == "postgres" {
+		if err := postMigratePostgres(db); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// postMigratePostgres applies Postgres-only schema steps that AutoMigrate does
+// not express. Every statement is idempotent and runs outside an explicit
+// transaction. It never runs CREATE EXTENSION (that needs superuser and belongs
+// to the stack's initdb) and never Fatals when the vector extension is absent.
+func postMigratePostgres(db *gorm.DB) error {
+	// Promote the bigserial PK to GENERATED BY DEFAULT AS IDENTITY so the ETL
+	// loader can insert legacy ids verbatim. BY DEFAULT (not ALWAYS) keeps
+	// explicit-id inserts allowed. Idempotent: only converts non-identity ids.
+	identityStmts := []string{
+		`DO $$
+		BEGIN
+			IF NOT EXISTS (
+				SELECT 1 FROM pg_attribute a
+				JOIN pg_class c ON c.oid = a.attrelid
+				WHERE c.relname = 'downloaded_photos' AND a.attname = 'id' AND a.attidentity <> ''
+			) THEN
+				ALTER TABLE downloaded_photos ALTER COLUMN id DROP DEFAULT;
+				ALTER TABLE downloaded_photos ALTER COLUMN id ADD GENERATED BY DEFAULT AS IDENTITY;
+			END IF;
+		END $$;`,
+	}
+	for _, stmt := range identityStmts {
+		if err := db.Exec(stmt).Error; err != nil {
+			return fmt.Errorf("post-migrate identity step failed: %w", err)
+		}
+	}
+
+	// Index source_page with a hash index instead of a plain btree. source_page
+	// holds full source URLs whose length can exceed the btree tuple limit and
+	// fail inserts; a hash index stores only the 32-bit hash, so it is immune to
+	// that limit while still serving the source equality lookups. Drop any legacy
+	// btree of the GORM-default name first (older builds tagged the column
+	// `index`), then create the hash index idempotently.
+	sourcePageIndexStmts := []string{
+		`DROP INDEX IF EXISTS idx_downloaded_photos_source_page`,
+		`CREATE INDEX IF NOT EXISTS idx_downloaded_photos_source_page_hash ON downloaded_photos USING hash (source_page)`,
+	}
+	for _, stmt := range sourcePageIndexStmts {
+		if err := db.Exec(stmt).Error; err != nil {
+			return fmt.Errorf("post-migrate source_page index step failed: %w", err)
+		}
+	}
+
+	// Add the embedding column only when the vector type exists. The app must
+	// not CREATE EXTENSION; if the extension is missing this logs nothing and
+	// continues rather than failing the boot.
+	embeddingStmt := fmt.Sprintf(`DO $$
+	BEGIN
+		IF EXISTS (SELECT 1 FROM pg_type WHERE typname = 'vector') THEN
+			ALTER TABLE downloaded_photos ADD COLUMN IF NOT EXISTS embedding vector(%d);
+		END IF;
+	END $$;`, EmbeddingDim)
+	if err := db.Exec(embeddingStmt).Error; err != nil {
+		return fmt.Errorf("post-migrate embedding step failed: %w", err)
+	}
+
+	return nil
+}
+
+// IsPhotoDownloaded checks if a photo URL has already been downloaded. The
+// lookup is keyed on url_hash (never the raw url) via the shared hash helper.
 func (db *DB) IsPhotoDownloaded(url string) (bool, error) {
 	var count int64
-	err := db.Model(&DownloadedPhoto{}).Where("url = ? AND status = ?", url, "downloaded").Count(&count).Error
+	err := db.Model(&DownloadedPhoto{}).Where("url_hash = ? AND status = ?", HashURL(url), "downloaded").Count(&count).Error
 	return count > 0, err
 }
 
-// RecordDownload records a successful photo download (create or update)
+// RecordDownload atomically records a successful photo download.
+//
+// It upserts on the url_hash unique index: a fresh url inserts, and a row that
+// is not yet downloaded (a previously failed/pending retry) is updated to
+// downloaded. An already-downloaded row is left untouched and reported as a
+// duplicate. ON CONFLICT makes this safe under the concurrent Ingestor where
+// the old First-then-Create race would trip Postgres 23505.
 func (db *DB) RecordDownload(photo *DownloadedPhoto) error {
-	var existing DownloadedPhoto
-	result := db.DB.Where("url = ?", photo.URL).First(&existing)
-
-	if result.Error == gorm.ErrRecordNotFound {
-		// Create new record
-		return db.Create(photo).Error
-	} else if result.Error != nil {
+	// Derive the category up front: this assignment map is built before GORM runs
+	// BeforeSave, so reading photo.Category here would capture the caller's empty
+	// value (the scraper relies on the hook deriving it from SourcePage) and a
+	// retry update would regroup recovered downloads as "unknown".
+	result := db.Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "url_hash"}},
+		Where: clause.Where{Exprs: []clause.Expression{
+			gorm.Expr("downloaded_photos.status <> ?", "downloaded"),
+		}},
+		DoUpdates: clause.Assignments(map[string]interface{}{
+			"source_page":   photo.SourcePage,
+			"title":         photo.Title,
+			"artist":        photo.Artist,
+			"category":      resolveCategory(photo),
+			"upload_date":   photo.UploadDate,
+			"file_path":     photo.FilePath,
+			"file_name":     photo.FileName,
+			"file_size":     photo.FileSize,
+			"status":        photo.Status,
+			"error_message": "",
+		}),
+	}).Create(photo)
+	if result.Error != nil {
 		return result.Error
 	}
-
-	if existing.Status == "downloaded" {
+	if result.RowsAffected == 0 {
 		return fmt.Errorf("photo already downloaded: %s", photo.URL)
 	}
-
-	// Update existing record (handles retry of previously failed photos)
-	return db.Model(&existing).Updates(map[string]interface{}{
-		"source_page":   photo.SourcePage,
-		"title":         photo.Title,
-		"artist":        photo.Artist,
-		"upload_date":   photo.UploadDate,
-		"file_path":     photo.FilePath,
-		"file_name":     photo.FileName,
-		"file_size":     photo.FileSize,
-		"status":        photo.Status,
-		"error_message": "",
-	}).Error
+	return nil
 }
 
-// MarkPhotoFailed marks a photo download as failed
+// RecordDownloadOrDuplicate atomically inserts a downloaded photo. If another
+// row already owns the same url_hash (Postgres 23505), the loser is converted
+// into an Inbox duplicate exception instead of overwriting the winner. It
+// reports whether this caller won the insert.
+func (db *DB) RecordDownloadOrDuplicate(photo *DownloadedPhoto, duplicate *InboxItem) (bool, error) {
+	err := db.Create(photo).Error
+	if err == nil {
+		return true, nil
+	}
+	if IsUniqueViolation(err) {
+		if duplicate != nil {
+			if inboxErr := db.RecordInboxException(duplicate); inboxErr != nil {
+				return false, inboxErr
+			}
+		}
+		return false, nil
+	}
+	return false, err
+}
+
+// MarkPhotoFailed marks a photo download as failed, keyed on url_hash.
 func (db *DB) MarkPhotoFailed(url, errorMsg string) error {
 	return db.Model(&DownloadedPhoto{}).
-		Where("url = ?", url).
+		Where("url_hash = ?", HashURL(url)).
 		Updates(map[string]interface{}{
 			"status":        "failed",
 			"error_message": errorMsg,
 		}).Error
 }
 
-// RecordFailedDownload records a failed download attempt (create or update)
+// RecordFailedDownload atomically records a failed download attempt, upserting
+// on the url_hash unique index.
 func (db *DB) RecordFailedDownload(url, errorMsg string) error {
-	var existing DownloadedPhoto
-	result := db.DB.Where("url = ?", url).First(&existing)
-
-	if result.Error == gorm.ErrRecordNotFound {
-		// Create new record for failed download
-		photo := &DownloadedPhoto{
-			URL:          url,
-			Status:       "failed",
-			ErrorMessage: errorMsg,
-		}
-		return db.Create(photo).Error
-	} else if result.Error != nil {
-		return result.Error
+	photo := &DownloadedPhoto{
+		URL:          url,
+		Status:       "failed",
+		ErrorMessage: errorMsg,
 	}
-
-	// Update existing record to failed status
-	return db.Model(&existing).Updates(map[string]interface{}{
-		"status":        "failed",
-		"error_message": errorMsg,
-	}).Error
+	return db.Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "url_hash"}},
+		DoUpdates: clause.Assignments(map[string]interface{}{
+			"status":        "failed",
+			"error_message": errorMsg,
+		}),
+	}).Create(photo).Error
 }
 
-// RecordInboxException records a duplicate or ambiguous ingest item for Inbox review.
+// RecordInboxException records a duplicate or ambiguous ingest item for Inbox
+// review. It upserts atomically on the stable fingerprint via ON CONFLICT, so a
+// loser routed here under concurrency never trips a duplicate-key error.
 func (db *DB) RecordInboxException(item *InboxItem) error {
 	if item.Status != "duplicate" && item.Status != "ambiguous" {
 		return fmt.Errorf("invalid inbox exception status: %s", item.Status)
@@ -231,29 +462,17 @@ func (db *DB) RecordInboxException(item *InboxItem) error {
 		return fmt.Errorf("provider ID is required")
 	}
 
-	var existing InboxItem
-	query := db.DB.Where("provider_id = ? AND status = ?", item.ProviderID, item.Status)
-	if item.DedupeKey != "" {
-		query = query.Where("dedupe_key = ?", item.DedupeKey)
-	} else {
-		query = query.Where("dedupe_key = ? AND source_id = ? AND media_id = ? AND source_url = ?", "", item.SourceID, item.MediaID, item.SourceURL)
-	}
-	result := query.First(&existing)
-	if result.Error == gorm.ErrRecordNotFound {
-		return db.Create(item).Error
-	}
-	if result.Error != nil {
-		return result.Error
-	}
-
-	return db.Model(&existing).Updates(map[string]interface{}{
-		"source_id":  item.SourceID,
-		"media_id":   item.MediaID,
-		"source_url": item.SourceURL,
-		"title":      item.Title,
-		"artist":     item.Artist,
-		"reason":     item.Reason,
-	}).Error
+	return db.Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "fingerprint"}},
+		DoUpdates: clause.Assignments(map[string]interface{}{
+			"source_id":  item.SourceID,
+			"media_id":   item.MediaID,
+			"source_url": item.SourceURL,
+			"title":      item.Title,
+			"artist":     item.Artist,
+			"reason":     item.Reason,
+		}),
+	}).Create(item).Error
 }
 
 // GetInboxExceptions returns only Inbox exception items.
@@ -288,7 +507,7 @@ func (db *DB) UpdateExtractionRun(run *ExtractionRun) error {
 }
 
 // FinishExtractionRun marks an extraction run as completed
-func (db *DB) FinishExtractionRun(runID uint, status string, errorMsg string) error {
+func (db *DB) FinishExtractionRun(runID uint64, status string, errorMsg string) error {
 	now := time.Now()
 	updates := map[string]interface{}{
 		"end_time": now,
@@ -391,8 +610,14 @@ func (db *DB) GetFailedPhotos(limit int) ([]DownloadedPhoto, error) {
 	return photos, nil
 }
 
-// ResetPhotoStatus resets a photo's status to allow retry
-func (db *DB) ResetPhotoStatus(photoID uint) error {
+// ResetPhotoStatus resets a photo's status to allow retry.
+//
+// 'pending' is an intentional transient status: the gallery filter, facets, and
+// Streams enumerate downloaded/failed/deleted, so a reset row is deliberately
+// hidden from those surfaces until a connector re-processes it back to
+// downloaded or failed. The ETL reconcile set (owned by the ETL issue) must
+// include 'pending' so reset rows are not lost during cutover.
+func (db *DB) ResetPhotoStatus(photoID uint64) error {
 	return db.DB.Model(&DownloadedPhoto{}).
 		Where("id = ?", photoID).
 		Update("status", "pending").Error
@@ -405,10 +630,11 @@ func (db *DB) SearchPhotos(query string, limit int, offset int) ([]DownloadedPho
 
 	searchPattern := "%" + query + "%"
 
-	// Get total count
+	// Get total count. Search is case-insensitive (ILIKE on Postgres).
+	op := db.caseInsensitiveLike()
 	countQuery := db.DB.Model(&DownloadedPhoto{}).
 		Where("status = ?", "downloaded").
-		Where("title LIKE ? OR artist LIKE ? OR file_name LIKE ?", searchPattern, searchPattern, searchPattern)
+		Where("title "+op+" ? OR artist "+op+" ? OR file_name "+op+" ?", searchPattern, searchPattern, searchPattern)
 
 	if err := countQuery.Count(&total).Error; err != nil {
 		return nil, 0, err
@@ -429,7 +655,7 @@ func (db *DB) SearchPhotos(query string, limit int, offset int) ([]DownloadedPho
 }
 
 // GetPhotoByID returns a single photo by ID
-func (db *DB) GetPhotoByID(id uint) (*DownloadedPhoto, error) {
+func (db *DB) GetPhotoByID(id uint64) (*DownloadedPhoto, error) {
 	var photo DownloadedPhoto
 	err := db.DB.Where("id = ?", id).First(&photo).Error
 	if err != nil {
@@ -439,7 +665,7 @@ func (db *DB) GetPhotoByID(id uint) (*DownloadedPhoto, error) {
 }
 
 // SetPhotoFavorite persists the local OK Folio favorite state for a photo.
-func (db *DB) SetPhotoFavorite(id uint, favorite bool) error {
+func (db *DB) SetPhotoFavorite(id uint64, favorite bool) error {
 	return db.DB.Model(&DownloadedPhoto{}).
 		Where("id = ?", id).
 		Update("favorite", favorite).Error
@@ -563,14 +789,38 @@ func (db *DB) GetGallerySourceStatsForFilters(filters GalleryCatalogFilters) ([]
 }
 
 // GetConnectorSourceStats returns per-source media counts for Streams status.
+// On Postgres MAX(downloaded_at) is a timestamptz that scans natively into
+// *time.Time, replacing the old CAST(... AS CHAR) + multi-layout parsing.
 func (db *DB) GetConnectorSourceStats() ([]ConnectorSourceStats, error) {
-	var rows []connectorSourceStatsRow
-	err := db.DB.Model(&DownloadedPhoto{}).
-		Select("source_page, url, status, COUNT(*) as count, CAST(MAX(downloaded_at) AS CHAR) as last_activity").
+	query := db.DB.Model(&DownloadedPhoto{}).
+		Select("source_page, url, status, COUNT(*) as count, MAX(downloaded_at) as last_activity").
 		Group("source_page, url, status").
-		Order("source_page ASC, url ASC, status ASC").
-		Scan(&rows).Error
-	if err != nil {
+		Order("source_page ASC, url ASC, status ASC")
+
+	if db.Dialector.Name() != "postgres" {
+		// The sqlite unit-test driver returns the aggregated time as a string
+		// (an expression has no declared column type). Read it as text and parse
+		// the single fixed layout gorm/sqlite writes; the native path above is
+		// what production (Postgres) exercises.
+		return scanConnectorSourceStatsSQLite(query)
+	}
+
+	var sources []ConnectorSourceStats
+	if err := query.Scan(&sources).Error; err != nil {
+		return nil, err
+	}
+	return sources, nil
+}
+
+func scanConnectorSourceStatsSQLite(query *gorm.DB) ([]ConnectorSourceStats, error) {
+	var rows []struct {
+		SourcePage   string  `gorm:"column:source_page"`
+		URL          string  `gorm:"column:url"`
+		Status       string  `gorm:"column:status"`
+		Count        int64   `gorm:"column:count"`
+		LastActivity *string `gorm:"column:last_activity"`
+	}
+	if err := query.Scan(&rows).Error; err != nil {
 		return nil, err
 	}
 
@@ -582,36 +832,16 @@ func (db *DB) GetConnectorSourceStats() ([]ConnectorSourceStats, error) {
 			Status:     row.Status,
 			Count:      row.Count,
 		}
-		if row.LastActivity.Valid {
-			lastActivity, err := parseDBTime(row.LastActivity.String)
+		if row.LastActivity != nil {
+			parsed, err := time.Parse("2006-01-02 15:04:05.999999999-07:00", *row.LastActivity)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("failed to parse sqlite test time %q: %w", *row.LastActivity, err)
 			}
-			stat.LastActivity = &lastActivity
+			stat.LastActivity = &parsed
 		}
 		sources = append(sources, stat)
 	}
-
 	return sources, nil
-}
-
-func parseDBTime(value string) (time.Time, error) {
-	layouts := []string{
-		time.RFC3339Nano,
-		"2006-01-02 15:04:05.999999999-07:00",
-		"2006-01-02 15:04:05.999999999Z07:00",
-		"2006-01-02 15:04:05.999999999",
-		"2006-01-02 15:04:05-07:00",
-		"2006-01-02 15:04:05Z07:00",
-		"2006-01-02 15:04:05",
-	}
-	for _, layout := range layouts {
-		parsed, err := time.Parse(layout, value)
-		if err == nil {
-			return parsed, nil
-		}
-	}
-	return time.Time{}, fmt.Errorf("failed to parse database time %q", value)
 }
 
 // GetRecentConnectorErrors returns failed media with operator-facing error details.
@@ -631,26 +861,36 @@ func (db *DB) GetRecentConnectorErrors(limit int) ([]ConnectorError, error) {
 	return errors, nil
 }
 
-// GetGalleryCategoryStats returns category facets inferred from source URLs.
+// galleryCategoryExpr resolves the category facet value from the stored
+// category column, mapping NULL/empty to "unknown" so the legacy derive-from-URL
+// fallback is no longer needed.
+const galleryCategoryExpr = "COALESCE(NULLIF(category, ''), 'unknown')"
+
+// GetGalleryCategoryStats returns category facets from the stored category column.
 func (db *DB) GetGalleryCategoryStats() ([]GalleryFacetStats, error) {
 	return db.GetGalleryCategoryStatsForFilters(GalleryCatalogFilters{})
 }
 
-// GetGalleryCategoryStatsForFilters returns category facets for the active gallery filter set.
+// GetGalleryCategoryStatsForFilters returns category facets for the active
+// gallery filter set, grouping on the indexed category column instead of the
+// previous N+1 derive-from-URL scan.
 func (db *DB) GetGalleryCategoryStatsForFilters(filters GalleryCatalogFilters) ([]GalleryFacetStats, error) {
-	sources, err := db.GetGallerySourceStatsForFilters(filters)
+	var categories []GalleryFacetStats
+
+	query := db.DB.Model(&DownloadedPhoto{}).
+		Select(galleryCategoryExpr+" as id, COUNT(*) as count").
+		Where("status = ?", "downloaded")
+	query, err := db.applyGalleryCatalogFilters(query, filters)
 	if err != nil {
 		return nil, err
 	}
 
-	byCategory := make(map[string]int64)
-	for _, source := range sources {
-		byCategory[categoryIDFromSourcePage(source.SourcePage)] += source.Count
-	}
-
-	categories := make([]GalleryFacetStats, 0, len(byCategory))
-	for id, count := range byCategory {
-		categories = append(categories, GalleryFacetStats{ID: id, Count: count})
+	err = query.
+		Group(galleryCategoryExpr).
+		Order("count DESC, id ASC").
+		Scan(&categories).Error
+	if err != nil {
+		return nil, err
 	}
 
 	return categories, nil
@@ -689,7 +929,9 @@ func (db *DB) GetGalleryFavoriteStats() ([]GalleryFavoriteStats, error) {
 	return db.GetGalleryFavoriteStatsForFilters(GalleryCatalogFilters{})
 }
 
-// GetGalleryFavoriteStatsForFilters returns favorite facets for the active gallery filter set.
+// GetGalleryFavoriteStatsForFilters returns favorite facets for the active
+// gallery filter set. The favorite column is guaranteed by AutoMigrate, so it
+// is referenced directly without the old runtime column probe.
 func (db *DB) GetGalleryFavoriteStatsForFilters(filters GalleryCatalogFilters) ([]GalleryFavoriteStats, error) {
 	var total int64
 	totalQuery := db.DB.Model(&DownloadedPhoto{}).Where("status = ?", "downloaded")
@@ -701,24 +943,13 @@ func (db *DB) GetGalleryFavoriteStatsForFilters(filters GalleryCatalogFilters) (
 		return nil, err
 	}
 
-	column, ok, err := db.galleryFavoriteColumn()
-	if err != nil {
-		return nil, err
-	}
-	if !ok {
-		return []GalleryFavoriteStats{
-			{Favorite: true, Count: 0},
-			{Favorite: false, Count: total},
-		}, nil
-	}
-
 	var favoriteCount int64
 	favoriteQuery := db.DB.Model(&DownloadedPhoto{}).Where("status = ?", "downloaded")
 	favoriteQuery, err = db.applyGalleryCatalogFilters(favoriteQuery, filters)
 	if err != nil {
 		return nil, err
 	}
-	if err := favoriteQuery.Where(column+" = ?", true).Count(&favoriteCount).Error; err != nil {
+	if err := favoriteQuery.Where("favorite = ?", true).Count(&favoriteCount).Error; err != nil {
 		return nil, err
 	}
 
@@ -749,31 +980,24 @@ func (db *DB) applyGalleryCatalogFilters(query *gorm.DB, filters GalleryCatalogF
 		query = query.Where("source_page = ?", filters.Source)
 	}
 	if filters.Category != "" {
-		var err error
-		query, err = db.applyGalleryCategoryFilter(query, filters.Category)
-		if err != nil {
-			return nil, err
-		}
+		// Match on the indexed category column (NULL/empty maps to "unknown"),
+		// replacing the previous N+1 derive-from-URL scan.
+		query = query.Where(galleryCategoryExpr+" = ?", filters.Category)
 	}
 	if filters.ArtistSet || filters.Artist != "" {
 		query = query.Where("artist = ?", filters.Artist)
 	}
 	if filters.Favorite != nil {
-		column, ok, err := db.galleryFavoriteColumn()
-		if err != nil {
-			return nil, err
-		}
-		if ok {
-			query = query.Where(column+" = ?", *filters.Favorite)
-		} else if *filters.Favorite {
-			query = query.Where("1 = 0")
-		}
+		query = query.Where("favorite = ?", *filters.Favorite)
 	}
 	if filters.Query != "" {
+		// Free-text search is case-insensitive (ILIKE on Postgres). The raw url
+		// is intentionally excluded: it carries no index, so url LIKE would force
+		// a full scan.
+		op := db.caseInsensitiveLike()
 		searchPattern := "%" + escapeSQLLike(filters.Query) + "%"
 		query = query.Where(
-			"title LIKE ? ESCAPE '\\' OR artist LIKE ? ESCAPE '\\' OR file_name LIKE ? ESCAPE '\\' OR url LIKE ? ESCAPE '\\' OR source_page LIKE ? ESCAPE '\\'",
-			searchPattern,
+			"title "+op+" ? ESCAPE '\\' OR artist "+op+" ? ESCAPE '\\' OR file_name "+op+" ? ESCAPE '\\' OR source_page "+op+" ? ESCAPE '\\'",
 			searchPattern,
 			searchPattern,
 			searchPattern,
@@ -783,30 +1007,18 @@ func (db *DB) applyGalleryCatalogFilters(query *gorm.DB, filters GalleryCatalogF
 	return query, nil
 }
 
-func escapeSQLLike(value string) string {
-	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(value)
+// caseInsensitiveLike returns the case-insensitive LIKE operator for the active
+// dialect: ILIKE on Postgres, plain LIKE on the sqlite test driver (whose LIKE
+// is already case-insensitive for ASCII).
+func (db *DB) caseInsensitiveLike() string {
+	if db.Dialector.Name() == "postgres" {
+		return "ILIKE"
+	}
+	return "LIKE"
 }
 
-func (db *DB) applyGalleryCategoryFilter(query *gorm.DB, category string) (*gorm.DB, error) {
-	var candidates []DownloadedPhoto
-	err := db.DB.Model(&DownloadedPhoto{}).
-		Select("id, source_page").
-		Where("status = ?", "downloaded").
-		Find(&candidates).Error
-	if err != nil {
-		return nil, err
-	}
-
-	ids := make([]uint, 0)
-	for _, candidate := range candidates {
-		if categoryIDFromSourcePage(candidate.SourcePage) == category {
-			ids = append(ids, candidate.ID)
-		}
-	}
-	if len(ids) == 0 {
-		return query.Where("1 = 0"), nil
-	}
-	return query.Where("id IN ?", ids), nil
+func escapeSQLLike(value string) string {
+	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(value)
 }
 
 func categoryIDFromSourcePage(sourcePage string) string {
@@ -835,28 +1047,8 @@ func categoryIDFromSourcePage(sourcePage string) string {
 	return "unknown"
 }
 
-func (db *DB) galleryFavoriteColumn() (string, bool, error) {
-	columnTypes, err := db.DB.Migrator().ColumnTypes(&DownloadedPhoto{})
-	if err != nil {
-		return "", false, err
-	}
-
-	available := make(map[string]string, len(columnTypes))
-	for _, columnType := range columnTypes {
-		name := strings.ToLower(columnType.Name())
-		available[name] = columnType.Name()
-	}
-
-	for _, candidate := range []string{"favorite", "favorites", "is_favorite", "is_favourite"} {
-		if column, ok := available[candidate]; ok {
-			return column, true, nil
-		}
-	}
-	return "", false, nil
-}
-
 // GetPhotosByRunID returns photos downloaded during a specific extraction run
-func (db *DB) GetPhotosByRunID(runID uint, limit int, offset int) ([]DownloadedPhoto, int64, error) {
+func (db *DB) GetPhotosByRunID(runID uint64, limit int, offset int) ([]DownloadedPhoto, int64, error) {
 	var photos []DownloadedPhoto
 	var total int64
 

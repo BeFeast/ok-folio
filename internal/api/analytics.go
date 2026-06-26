@@ -130,7 +130,7 @@ func (s *Server) handleRetryPhoto(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Reset the photo status to pending
-	if err := s.db.ResetPhotoStatus(uint(id)); err != nil {
+	if err := s.db.ResetPhotoStatus(id); err != nil {
 		s.logger.Error().Err(err).Uint64("photo_id", id).Msg("Failed to reset photo status")
 		s.writeError(w, http.StatusInternalServerError, "Failed to reset photo status")
 		return
@@ -146,7 +146,7 @@ func (s *Server) handleRetryPhoto(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleRunPhotos(w http.ResponseWriter, r *http.Request) {
 	// Get run ID from URL
 	runIDStr := chi.URLParam(r, "id")
-	runID, err := strconv.ParseUint(runIDStr, 10, 32)
+	runID, err := strconv.ParseUint(runIDStr, 10, 64)
 	if err != nil {
 		s.writeError(w, http.StatusBadRequest, "Invalid run ID")
 		return
@@ -154,9 +154,9 @@ func (s *Server) handleRunPhotos(w http.ResponseWriter, r *http.Request) {
 
 	limit, offset := s.parsePagination(r)
 
-	photos, total, err := s.db.GetPhotosByRunID(uint(runID), limit, offset)
+	photos, total, err := s.db.GetPhotosByRunID(runID, limit, offset)
 	if err != nil {
-		s.logger.Error().Err(err).Uint("run_id", uint(runID)).Msg("Failed to get photos for run")
+		s.logger.Error().Err(err).Uint64("run_id", runID).Msg("Failed to get photos for run")
 		s.writeError(w, http.StatusInternalServerError, "Failed to get photos for run")
 		return
 	}

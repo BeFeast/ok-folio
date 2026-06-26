@@ -10,6 +10,71 @@ import (
 	"ok-folio/internal/config"
 )
 
+// legacyDatabaseHostMarkers are substrings that identify the legacy MariaDB /
+// MySQL database container that OK Folio must never open. OK Folio owns a
+// dedicated Postgres; the ETL reads the legacy DB only via mariadb-dump on
+// stdin, never through a live GORM connection.
+var legacyDatabaseHostMarkers = []string{
+	"mariadb",
+	"mysql",
+	"photoprism-db",
+	"photoprism-mariadb",
+}
+
+// legacyDSNMarkers identify a legacy MySQL/MariaDB GORM DSN. A Postgres DSN
+// (URL or key/value) never contains these, so seeing one means a GORM Open()
+// is about to receive the legacy DSN.
+var legacyDSNMarkers = []string{
+	"@tcp(",
+	":3306",
+	"parsetime=true",
+	"loc=local",
+	"charset=utf8mb4",
+}
+
+// IsLegacyDatabaseHost reports whether host names the legacy MariaDB/MySQL
+// database. It honors an explicit LEGACY_DB_HOST override and a small set of
+// well-known container names. Matching is case-insensitive.
+func IsLegacyDatabaseHost(host string) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "" {
+		return false
+	}
+	if legacy := strings.ToLower(strings.TrimSpace(os.Getenv("LEGACY_DB_HOST"))); legacy != "" && host == legacy {
+		return true
+	}
+	for _, marker := range legacyDatabaseHostMarkers {
+		if strings.Contains(host, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// GuardAppDatabaseConfig refuses to start when the app database is pointed at
+// the legacy MariaDB/MySQL host. This is the runtime boot guard that keeps the
+// strictly separate DB_* (OK Folio Postgres) and LEGACY_DB_* (read-only ETL
+// source) keys from ever crossing.
+func GuardAppDatabaseConfig(cfg config.DatabaseConfig) error {
+	if IsLegacyDatabaseHost(cfg.Host) {
+		return fmt.Errorf("refusing to start: DB_HOST %q resolves to the legacy MariaDB/MySQL host; OK Folio must use its own Postgres", cfg.Host)
+	}
+	return nil
+}
+
+// AssertNonLegacyDSN refuses a connection string that looks like a legacy
+// MySQL/MariaDB GORM DSN. It backs the lint/CI guarantee that no GORM Open()
+// receives the legacy DSN.
+func AssertNonLegacyDSN(dsn string) error {
+	lower := strings.ToLower(dsn)
+	for _, marker := range legacyDSNMarkers {
+		if strings.Contains(lower, marker) {
+			return fmt.Errorf("refusing to open a legacy MySQL/MariaDB DSN (matched %q); OK Folio only opens its own Postgres", marker)
+		}
+	}
+	return nil
+}
+
 var unsafePathMarkers = []string{
 	"/data",
 	"/mnt",

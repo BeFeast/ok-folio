@@ -33,5 +33,54 @@ jobs:
           rm -rf internal/dashboard/dist
           cp -R dashboard/dist internal/dashboard/dist
 
+      - name: Lint - no legacy MySQL driver/DSN in production code
+        run: |
+          # The legacy MariaDB is only ever read via mariadb-dump; no live GORM
+          # MySQL connection exists. Production code must not import the mysql
+          # driver or call mysql.Open, so a legacy DSN can never reach gorm.Open.
+          # (The runtime testguard.AssertNonLegacyDSN also rejects @tcp(...) DSNs
+          # before every gorm.Open.) Test files may reference these markers to
+          # exercise the boot guard.
+          if grep -rEn "gorm\.io/driver/mysql|mysql\.Open\(" --include='*.go' . | grep -v '_test\.go'; then
+            echo "::error::Found a legacy MySQL driver reference in production code; OK Folio only opens its own Postgres."
+            exit 1
+          fi
+
       - name: Go tests
         run: go test ./...
+
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        # VectorChord/pgvector image so the vector extension exists for the
+        # post-migrate embedding column. The app never runs CREATE EXTENSION.
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: ok_folio
+          POSTGRES_PASSWORD: ci-testpass
+          POSTGRES_DB: ok_folio_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ok_folio"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Pre-create the vector extension (stack initdb owns this in prod)
+        run: |
+          PGPASSWORD=ci-testpass psql -h localhost -U ok_folio -d ok_folio_test \
+            -c "CREATE EXTENSION IF NOT EXISTS vector"
+
+      - name: Postgres-backed integration test
+        env:
+          OKFOLIO_TEST_POSTGRES_DSN: "host=localhost port=5432 user=ok_folio password=ci-testpass dbname=ok_folio_test sslmode=disable TimeZone=UTC"
+        run: go test ./internal/database/ -run TestPostgres -v

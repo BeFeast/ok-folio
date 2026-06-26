@@ -3,9 +3,20 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"time"
 
 	"gopkg.in/yaml.v3"
+)
+
+const (
+	// DefaultDatabaseHost is the OK Folio-owned Postgres service name. OK Folio
+	// runs its own dedicated Postgres and never touches the legacy MariaDB.
+	DefaultDatabaseHost = "postgres"
+	// DefaultDatabasePort is the standard Postgres port.
+	DefaultDatabasePort = 5432
+	// DefaultDatabaseSSLMode keeps TLS off for the private LAN/container network.
+	DefaultDatabaseSSLMode = "disable"
 )
 
 type Config struct {
@@ -37,6 +48,8 @@ type DatabaseConfig struct {
 	User            string        `yaml:"user"`
 	Password        string        `yaml:"password"`
 	Database        string        `yaml:"database"`
+	SSLMode         string        `yaml:"sslmode"`
+	URL             string        `yaml:"url"`
 	MaxOpenConns    int           `yaml:"max_open_conns"`
 	MaxIdleConns    int           `yaml:"max_idle_conns"`
 	ConnMaxLifetime time.Duration `yaml:"conn_max_lifetime"`
@@ -101,9 +114,17 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
 
-	// Apply environment variable overrides
+	// Apply environment variable overrides. DB_* keys configure OK Folio's own
+	// Postgres; they are intentionally kept separate from any LEGACY_DB_* keys.
 	if dbHost := os.Getenv("DB_HOST"); dbHost != "" {
 		cfg.Database.Host = dbHost
+	}
+	if dbPort := os.Getenv("DB_PORT"); dbPort != "" {
+		port, err := strconv.Atoi(dbPort)
+		if err != nil {
+			return nil, fmt.Errorf("invalid DB_PORT %q: %w", dbPort, err)
+		}
+		cfg.Database.Port = port
 	}
 	if dbUser := os.Getenv("DB_USER"); dbUser != "" {
 		cfg.Database.User = dbUser
@@ -113,6 +134,12 @@ func Load(path string) (*Config, error) {
 	}
 	if dbName := os.Getenv("DB_NAME"); dbName != "" {
 		cfg.Database.Database = dbName
+	}
+	if dbSSLMode := os.Getenv("DB_SSLMODE"); dbSSLMode != "" {
+		cfg.Database.SSLMode = dbSSLMode
+	}
+	if dbURL := os.Getenv("DATABASE_URL"); dbURL != "" {
+		cfg.Database.URL = dbURL
 	}
 	if photoPrismServiceURL := os.Getenv("PHOTOPRISM_SERVICE_URL"); photoPrismServiceURL != "" {
 		cfg.PhotoPrism.ServiceURL = photoPrismServiceURL
@@ -124,11 +151,39 @@ func Load(path string) (*Config, error) {
 		cfg.PhotoPrism.Password = photoPrismPassword
 	}
 
+	cfg.Database.applyDefaults()
+
 	return &cfg, nil
 }
 
-// DSN returns the database connection string
+// applyDefaults fills in the OK Folio Postgres defaults for any unset field so
+// the app points at its own private Postgres service out of the box.
+func (c *DatabaseConfig) applyDefaults() {
+	if c.Host == "" {
+		c.Host = DefaultDatabaseHost
+	}
+	if c.Port == 0 {
+		c.Port = DefaultDatabasePort
+	}
+	if c.SSLMode == "" {
+		c.SSLMode = DefaultDatabaseSSLMode
+	}
+}
+
+// DSN returns the Postgres connection string for the pgx stdlib driver.
+//
+// When URL is set it is returned verbatim (pgx accepts either a URL or a
+// key/value DSN). Otherwise a key/value DSN is built. TimeZone=UTC pins the
+// session zone so timestamptz round-trips are stable; it does NOT reinterpret
+// legacy timezone-naive values (that is the loader's responsibility).
 func (c *DatabaseConfig) DSN() string {
-	return fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local",
-		c.User, c.Password, c.Host, c.Port, c.Database)
+	if c.URL != "" {
+		return c.URL
+	}
+	sslMode := c.SSLMode
+	if sslMode == "" {
+		sslMode = DefaultDatabaseSSLMode
+	}
+	return fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s TimeZone=UTC",
+		c.Host, c.Port, c.User, c.Password, c.Database, sslMode)
 }

@@ -148,6 +148,98 @@ func TestRecordDownload_DuplicateURL(t *testing.T) {
 	}
 }
 
+func TestRecordDownloadRetryPersistsDerivedCategory(t *testing.T) {
+	db := setupTestDB(t)
+
+	const sharedURL = "https://example.com/retry-category.jpg"
+	const sourcePage = "https://webgallery/gallery/category/42/photo"
+
+	// A prior failed attempt; the BeforeSave hook derives category "42" from the
+	// source page on insert.
+	failed := &DownloadedPhoto{URL: sharedURL, SourcePage: sourcePage, FileName: "retry.jpg", Status: "failed"}
+	if err := db.Create(failed).Error; err != nil {
+		t.Fatalf("Failed to seed failed row: %v", err)
+	}
+
+	// The scraper retries with no Category set, relying on the hook to derive it.
+	// The conflict-update path must persist the derived category, not the caller's
+	// empty value, so the recovered download keeps matching its category facet.
+	retry := &DownloadedPhoto{URL: sharedURL, SourcePage: sourcePage, FileName: "retry.jpg", Status: "downloaded"}
+	if err := db.RecordDownload(retry); err != nil {
+		t.Fatalf("Retry RecordDownload failed: %v", err)
+	}
+
+	var stored DownloadedPhoto
+	if err := db.Where("url_hash = ?", HashURL(sharedURL)).First(&stored).Error; err != nil {
+		t.Fatalf("Failed to load retried row: %v", err)
+	}
+	if stored.Status != "downloaded" {
+		t.Fatalf("Expected retry to flip status to downloaded, got %q", stored.Status)
+	}
+	if stored.Category != "42" {
+		t.Fatalf("Expected retry update to persist derived category %q, got %q", "42", stored.Category)
+	}
+}
+
+func TestBeforeSaveHookPopulatesURLHash(t *testing.T) {
+	db := setupTestDB(t)
+
+	photo := &DownloadedPhoto{
+		URL:      "https://example.com/hash-me.jpg",
+		FileName: "hash-me.jpg",
+		Status:   "downloaded",
+	}
+	if err := db.Create(photo).Error; err != nil {
+		t.Fatalf("Failed to create photo: %v", err)
+	}
+
+	if len(photo.URLHash) != 32 {
+		t.Fatalf("Expected a 32-byte url_hash from the BeforeSave hook, got %d bytes", len(photo.URLHash))
+	}
+
+	var stored DownloadedPhoto
+	if err := db.Where("url_hash = ?", HashURL(photo.URL)).First(&stored).Error; err != nil {
+		t.Fatalf("Expected lookup by url_hash to find the row: %v", err)
+	}
+	if stored.ID != photo.ID {
+		t.Fatalf("Expected url_hash lookup to return the inserted row")
+	}
+}
+
+func TestRecordDownloadOrDuplicateRoutesLoserToInbox(t *testing.T) {
+	db := setupTestDB(t)
+
+	const sharedURL = "https://example.com/loser.jpg"
+	first := &DownloadedPhoto{URL: sharedURL, FileName: "loser.jpg", Status: "downloaded"}
+	kept, err := db.RecordDownloadOrDuplicate(first, nil)
+	if err != nil || !kept {
+		t.Fatalf("Expected first insert to win, kept=%v err=%v", kept, err)
+	}
+
+	second := &DownloadedPhoto{URL: sharedURL, FileName: "loser-2.jpg", Status: "downloaded"}
+	duplicate := &InboxItem{
+		ProviderID: "webgallery",
+		DedupeKey:  "webgallery:loser",
+		Status:     "duplicate",
+		Reason:     "url_hash already kept",
+	}
+	kept, err = db.RecordDownloadOrDuplicate(second, duplicate)
+	if err != nil {
+		t.Fatalf("Expected duplicate to be routed to inbox without error, got %v", err)
+	}
+	if kept {
+		t.Fatalf("Expected the second insert to lose the url_hash guard")
+	}
+
+	exceptions, total, err := db.GetInboxExceptions(10, 0)
+	if err != nil {
+		t.Fatalf("Failed to read inbox exceptions: %v", err)
+	}
+	if total != 1 || len(exceptions) != 1 || exceptions[0].Status != "duplicate" {
+		t.Fatalf("Expected one duplicate inbox exception, got total=%d items=%#v", total, exceptions)
+	}
+}
+
 func TestMarkPhotoFailed(t *testing.T) {
 	db := setupTestDB(t)
 
