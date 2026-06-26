@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"ok-folio/internal/api"
+	okfcache "ok-folio/internal/cache"
 	"ok-folio/internal/config"
 	"ok-folio/internal/database"
 	"ok-folio/internal/scheduler"
@@ -93,7 +94,11 @@ func main() {
 	// Create and start scheduler
 	var schedulerInstance *scheduler.Scheduler
 	if cfg.Scheduler.Enabled {
-		schedulerInstance = scheduler.New(cfg, db, scraperInstance, logger)
+		var cacheClient *okfcache.Client
+		if apiServer != nil {
+			cacheClient = apiServer.Cache()
+		}
+		schedulerInstance = scheduler.New(cfg, db, scraperInstance, cacheClient, logger)
 		if err := schedulerInstance.Start(); err != nil {
 			logger.Fatal().Err(err).Msg("Failed to start scheduler")
 		}

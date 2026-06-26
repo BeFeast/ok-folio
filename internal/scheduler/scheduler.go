@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	okfcache "ok-folio/internal/cache"
 	"ok-folio/internal/config"
 	"ok-folio/internal/database"
 	"ok-folio/internal/scraper"
@@ -16,15 +17,17 @@ type Scheduler struct {
 	cfg     *config.Config
 	db      *database.DB
 	scraper *scraper.Scraper
+	cache   *okfcache.Client
 	logger  zerolog.Logger
 	cron    *cron.Cron
 }
 
-func New(cfg *config.Config, db *database.DB, scraper *scraper.Scraper, logger zerolog.Logger) *Scheduler {
+func New(cfg *config.Config, db *database.DB, scraper *scraper.Scraper, cache *okfcache.Client, logger zerolog.Logger) *Scheduler {
 	return &Scheduler{
 		cfg:     cfg,
 		db:      db,
 		scraper: scraper,
+		cache:   cache,
 		logger:  logger,
 		cron:    cron.New(cron.WithSeconds()),
 	}
@@ -105,6 +108,9 @@ func (s *Scheduler) runExtraction() {
 
 	// Trigger PhotoPrism indexing if photos were downloaded
 	if totalDownloaded > 0 {
+		_ = s.cache.BumpEpoch(ctx)
+		s.logger.Debug().Msg("Catalog cache epoch bumped after scheduled downloads")
+
 		if err := s.scraper.TriggerPhotoprismIndex(ctx); err != nil {
 			s.logger.Warn().Err(err).Msg("Failed to trigger PhotoPrism indexing")
 		}

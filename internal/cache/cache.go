@@ -12,6 +12,7 @@ import (
 	mathrand "math/rand/v2"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"ok-folio/internal/config"
@@ -41,7 +42,7 @@ var ErrMiss = errors.New("cache miss")
 type Client struct {
 	r           redis.Cmdable
 	logger      zerolog.Logger
-	passthrough bool
+	passthrough atomic.Bool
 }
 
 type envelope struct {
@@ -63,7 +64,7 @@ func New(ctx context.Context, cfg config.CacheConfig, logger zerolog.Logger) *Cl
 
 	c := &Client{r: rdb, logger: logger}
 	if err := rdb.Ping(ctx).Err(); err != nil {
-		c.passthrough = true
+		c.passthrough.Store(true)
 		logger.Warn().Err(err).Str("addr", cfg.Addr()).Msg("Valkey unavailable; cache passthrough enabled")
 		return c
 	}
@@ -77,7 +78,7 @@ func NewForRedis(r redis.Cmdable, logger zerolog.Logger) *Client {
 }
 
 func (c *Client) Passthrough() bool {
-	return c == nil || c.passthrough || c.r == nil
+	return c == nil || c.passthrough.Load() || c.r == nil
 }
 
 // GetOrCompute implements cache-aside reads with a short per-key SET NX PX lock.
@@ -93,7 +94,7 @@ func GetOrCompute[T any](ctx context.Context, c *Client, key string, ttl time.Du
 	if value, fresh, err := getEnvelope[T](ctx, c, key, now); err == nil && fresh {
 		return value, nil
 	} else if err != nil && !errors.Is(err, ErrMiss) {
-		c.passthrough = true
+		c.passthrough.Store(true)
 		c.logger.Warn().Err(err).Str("key", key).Msg("Cache read failed; using passthrough")
 		return fn(ctx)
 	}
@@ -101,7 +102,7 @@ func GetOrCompute[T any](ctx context.Context, c *Client, key string, ttl time.Du
 	token := randomToken()
 	locked, err := c.r.SetNX(ctx, lockKey(key), token, lockTTL).Result()
 	if err != nil {
-		c.passthrough = true
+		c.passthrough.Store(true)
 		c.logger.Warn().Err(err).Str("key", key).Msg("Cache lock failed; using passthrough")
 		return fn(ctx)
 	}
@@ -113,7 +114,7 @@ func GetOrCompute[T any](ctx context.Context, c *Client, key string, ttl time.Du
 			return zero, err
 		}
 		if err := setEnvelope(ctx, c, key, value, ttl); err != nil {
-			c.passthrough = true
+			c.passthrough.Store(true)
 			c.logger.Warn().Err(err).Str("key", key).Msg("Cache write failed; using passthrough")
 		}
 		return value, nil
@@ -143,7 +144,7 @@ func (c *Client) BumpEpoch(ctx context.Context) error {
 		return nil
 	}
 	if err := c.r.Incr(ctx, EpochKey).Err(); err != nil {
-		c.passthrough = true
+		c.passthrough.Store(true)
 		c.logger.Warn().Err(err).Msg("Cache epoch bump failed; using passthrough")
 	}
 	return nil
@@ -154,7 +155,7 @@ func (c *Client) Delete(ctx context.Context, keys ...string) error {
 		return nil
 	}
 	if err := c.r.Del(ctx, keys...).Err(); err != nil {
-		c.passthrough = true
+		c.passthrough.Store(true)
 		c.logger.Warn().Err(err).Strs("keys", keys).Msg("Cache delete failed; using passthrough")
 	}
 	return nil
@@ -169,7 +170,7 @@ func (c *Client) Epoch(ctx context.Context) int64 {
 		return 0
 	}
 	if err != nil {
-		c.passthrough = true
+		c.passthrough.Store(true)
 		c.logger.Warn().Err(err).Msg("Cache epoch read failed; using passthrough")
 		return 0
 	}

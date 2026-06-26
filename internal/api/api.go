@@ -75,6 +75,10 @@ func New(cfg *config.Config, db *database.DB, scraper *scraper.Scraper, logger z
 	return s
 }
 
+func (s *Server) Cache() *okfcache.Client {
+	return s.cache
+}
+
 // extractionWorker processes extraction jobs from the queue
 func (s *Server) extractionWorker(id int) {
 	s.logger.Info().Int("worker_id", id).Msg("Extraction worker started")
