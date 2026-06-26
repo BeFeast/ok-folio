@@ -10,4 +10,5 @@ if [ -f dashboard/package.json ]; then
   cp -R dashboard/dist internal/dashboard/dist
 fi
 
+./scripts/check-ok-folio-stack-template.sh
 go test ./...
