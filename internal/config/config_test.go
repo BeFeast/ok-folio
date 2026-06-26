@@ -57,6 +57,11 @@ database:
   max_idle_conns: 5
   conn_max_lifetime: 1h
 
+cache:
+  host: "valkey"
+  port: 6379
+  password: "cachepass"
+
 api:
   enabled: true
   port: 8080
@@ -135,6 +140,15 @@ download:
 	}
 	if cfg.Database.ConnMaxLifetime != 1*time.Hour {
 		t.Errorf("Expected ConnMaxLifetime 1h, got %v", cfg.Database.ConnMaxLifetime)
+	}
+	if cfg.Cache.Host != "valkey" {
+		t.Errorf("Expected Cache Host 'valkey', got '%s'", cfg.Cache.Host)
+	}
+	if cfg.Cache.Port != 6379 {
+		t.Errorf("Expected Cache Port 6379, got %d", cfg.Cache.Port)
+	}
+	if cfg.Cache.Password != "cachepass" {
+		t.Errorf("Expected Cache Password 'cachepass', got '%s'", cfg.Cache.Password)
 	}
 
 	// Test API config
@@ -236,11 +250,17 @@ database:
 	os.Setenv("DB_USER", "override-user")
 	os.Setenv("DB_PASSWORD", "override-pass")
 	os.Setenv("DB_NAME", "override-db")
+	os.Setenv("CACHE_HOST", "override-valkey")
+	os.Setenv("CACHE_PORT", "6380")
+	os.Setenv("CACHE_PASSWORD", "override-cache-pass")
 	defer func() {
 		os.Unsetenv("DB_HOST")
 		os.Unsetenv("DB_USER")
 		os.Unsetenv("DB_PASSWORD")
 		os.Unsetenv("DB_NAME")
+		os.Unsetenv("CACHE_HOST")
+		os.Unsetenv("CACHE_PORT")
+		os.Unsetenv("CACHE_PASSWORD")
 	}()
 
 	cfg, err := Load(configPath)
@@ -260,6 +280,15 @@ database:
 	}
 	if cfg.Database.Database != "override-db" {
 		t.Errorf("Expected DB Database 'override-db', got '%s'", cfg.Database.Database)
+	}
+	if cfg.Cache.Host != "override-valkey" {
+		t.Errorf("Expected Cache Host 'override-valkey', got '%s'", cfg.Cache.Host)
+	}
+	if cfg.Cache.Port != 6380 {
+		t.Errorf("Expected Cache Port 6380, got %d", cfg.Cache.Port)
+	}
+	if cfg.Cache.Password != "override-cache-pass" {
+		t.Errorf("Expected Cache Password override, got '%s'", cfg.Cache.Password)
 	}
 }
 
@@ -440,6 +469,26 @@ func TestLoad_DefaultsPointAtPostgresService(t *testing.T) {
 	}
 }
 
+func TestLoad_DefaultsPointAtValkeyService(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte("source:\n  base_url: \"https://example.com\"\n"), 0644); err != nil {
+		t.Fatalf("Failed to write config: %v", err)
+	}
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Failed to load config: %v", err)
+	}
+	if cfg.Cache.Host != "valkey" || cfg.Cache.Port != 6379 {
+		t.Fatalf("Expected cache defaults host=valkey port=6379, got host=%q port=%d",
+			cfg.Cache.Host, cfg.Cache.Port)
+	}
+	if cfg.Cache.Addr() != "valkey:6379" {
+		t.Fatalf("Expected cache addr valkey:6379, got %q", cfg.Cache.Addr())
+	}
+}
+
 func TestLoad_InvalidDBPort(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.yaml")
@@ -450,6 +499,19 @@ func TestLoad_InvalidDBPort(t *testing.T) {
 	t.Setenv("DB_PORT", "not-a-number")
 	if _, err := Load(configPath); err == nil {
 		t.Fatal("Expected error for invalid DB_PORT, got nil")
+	}
+}
+
+func TestLoad_InvalidCachePort(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte("source:\n  base_url: \"https://example.com\"\n"), 0644); err != nil {
+		t.Fatalf("Failed to write config: %v", err)
+	}
+
+	t.Setenv("CACHE_PORT", "not-a-number")
+	if _, err := Load(configPath); err == nil {
+		t.Fatal("Expected error for invalid CACHE_PORT, got nil")
 	}
 }
 

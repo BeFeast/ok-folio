@@ -17,12 +17,17 @@ const (
 	DefaultDatabasePort = 5432
 	// DefaultDatabaseSSLMode keeps TLS off for the private LAN/container network.
 	DefaultDatabaseSSLMode = "disable"
+	// DefaultCacheHost is the private stack service name for Valkey.
+	DefaultCacheHost = "valkey"
+	// DefaultCachePort is Valkey's private service port, not a published host port.
+	DefaultCachePort = 6379
 )
 
 type Config struct {
 	Source     SourceConfig     `yaml:"source"`
 	Storage    StorageConfig    `yaml:"storage"`
 	Database   DatabaseConfig   `yaml:"database"`
+	Cache      CacheConfig      `yaml:"cache"`
 	API        APIConfig        `yaml:"api"`
 	Scheduler  SchedulerConfig  `yaml:"scheduler"`
 	Retry      RetryConfig      `yaml:"retry"`
@@ -53,6 +58,12 @@ type DatabaseConfig struct {
 	MaxOpenConns    int           `yaml:"max_open_conns"`
 	MaxIdleConns    int           `yaml:"max_idle_conns"`
 	ConnMaxLifetime time.Duration `yaml:"conn_max_lifetime"`
+}
+
+type CacheConfig struct {
+	Host     string `yaml:"host"`
+	Port     int    `yaml:"port"`
+	Password string `yaml:"password"`
 }
 
 type APIConfig struct {
@@ -141,6 +152,19 @@ func Load(path string) (*Config, error) {
 	if dbURL := os.Getenv("DATABASE_URL"); dbURL != "" {
 		cfg.Database.URL = dbURL
 	}
+	if cacheHost := os.Getenv("CACHE_HOST"); cacheHost != "" {
+		cfg.Cache.Host = cacheHost
+	}
+	if cachePort := os.Getenv("CACHE_PORT"); cachePort != "" {
+		port, err := strconv.Atoi(cachePort)
+		if err != nil {
+			return nil, fmt.Errorf("invalid CACHE_PORT %q: %w", cachePort, err)
+		}
+		cfg.Cache.Port = port
+	}
+	if cachePassword := os.Getenv("CACHE_PASSWORD"); cachePassword != "" {
+		cfg.Cache.Password = cachePassword
+	}
 	if photoPrismServiceURL := os.Getenv("PHOTOPRISM_SERVICE_URL"); photoPrismServiceURL != "" {
 		cfg.PhotoPrism.ServiceURL = photoPrismServiceURL
 	}
@@ -152,6 +176,7 @@ func Load(path string) (*Config, error) {
 	}
 
 	cfg.Database.applyDefaults()
+	cfg.Cache.applyDefaults()
 
 	return &cfg, nil
 }
@@ -168,6 +193,27 @@ func (c *DatabaseConfig) applyDefaults() {
 	if c.SSLMode == "" {
 		c.SSLMode = DefaultDatabaseSSLMode
 	}
+}
+
+func (c *CacheConfig) applyDefaults() {
+	if c.Host == "" {
+		c.Host = DefaultCacheHost
+	}
+	if c.Port == 0 {
+		c.Port = DefaultCachePort
+	}
+}
+
+func (c *CacheConfig) Addr() string {
+	port := c.Port
+	if port == 0 {
+		port = DefaultCachePort
+	}
+	host := c.Host
+	if host == "" {
+		host = DefaultCacheHost
+	}
+	return fmt.Sprintf("%s:%d", host, port)
 }
 
 // DSN returns the Postgres connection string for the pgx stdlib driver.

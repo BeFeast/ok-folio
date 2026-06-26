@@ -1,11 +1,14 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"net/url"
 	"sort"
 	"strings"
+	"time"
 
+	okfcache "ok-folio/internal/cache"
 	"ok-folio/internal/database"
 	"ok-folio/internal/gallery"
 )
@@ -43,71 +46,122 @@ type galleryCatalogFacets struct {
 	Favorites  []galleryFavoriteFacet `json:"favorites"`
 }
 
+type galleryCatalogResponse struct {
+	Photos    []database.DownloadedPhoto `json:"photos"`
+	Total     int64                      `json:"total"`
+	Limit     int                        `json:"limit"`
+	Offset    int                        `json:"offset"`
+	Provider  string                     `json:"provider"`
+	Source    string                     `json:"source"`
+	Category  string                     `json:"category"`
+	Artist    string                     `json:"artist"`
+	Favorite  *bool                      `json:"favorite"`
+	Query     string                     `json:"query"`
+	Providers []galleryProviderFacet     `json:"providers"`
+	Facets    galleryCatalogFacets       `json:"facets"`
+}
+
+type cacheQueryValue struct {
+	Set   bool   `json:"set"`
+	Value string `json:"value"`
+}
+
+type cacheGalleryCatalogFilters struct {
+	Provider cacheQueryValue `json:"provider"`
+	Source   cacheQueryValue `json:"source"`
+	Category cacheQueryValue `json:"category"`
+	Artist   cacheQueryValue `json:"artist"`
+	Favorite cacheQueryValue `json:"favorite"`
+	Query    cacheQueryValue `json:"query"`
+}
+
 func (s *Server) handleGalleryCatalog(w http.ResponseWriter, r *http.Request) {
 	limit, offset := s.parsePagination(r)
+	values := r.URL.Query()
 	filters := database.GalleryCatalogFilters{
-		Provider:  strings.TrimSpace(r.URL.Query().Get("provider")),
-		Source:    strings.TrimSpace(r.URL.Query().Get("source")),
-		Category:  strings.TrimSpace(r.URL.Query().Get("category")),
-		Artist:    strings.TrimSpace(r.URL.Query().Get("artist")),
-		ArtistSet: queryHasKey(r.URL.Query(), "artist"),
-		Favorite:  parseOptionalBool(r.URL.Query().Get("favorite")),
-		Query:     strings.TrimSpace(r.URL.Query().Get("q")),
+		Provider:  strings.TrimSpace(values.Get("provider")),
+		Source:    strings.TrimSpace(values.Get("source")),
+		Category:  strings.TrimSpace(values.Get("category")),
+		Artist:    strings.TrimSpace(values.Get("artist")),
+		ArtistSet: queryHasKey(values, "artist"),
+		Favorite:  parseOptionalBool(values.Get("favorite")),
+		Query:     strings.TrimSpace(values.Get("q")),
 	}
 
-	photos, total, err := s.db.GetGalleryCatalog(limit, offset, filters)
+	key, err := okfcache.CatalogKey(s.cache.Epoch(r.Context()), cacheFiltersFromQuery(values), limit, offset)
+	if err != nil {
+		s.logger.Error().Err(err).Msg("Failed to build gallery cache key")
+		s.writeError(w, http.StatusInternalServerError, "Failed to fetch gallery catalog")
+		return
+	}
+
+	response, err := okfcache.GetOrCompute(r.Context(), s.cache, key, 2*time.Minute, func(ctx context.Context) (galleryCatalogResponse, error) {
+		return s.galleryCatalogResponse(ctx, limit, offset, filters)
+	})
 	if err != nil {
 		s.logger.Error().Err(err).Msg("Failed to fetch gallery catalog")
 		s.writeError(w, http.StatusInternalServerError, "Failed to fetch gallery catalog")
 		return
 	}
 
+	s.writeJSON(w, http.StatusOK, response)
+}
+
+func (s *Server) galleryCatalogResponse(_ context.Context, limit int, offset int, filters database.GalleryCatalogFilters) (galleryCatalogResponse, error) {
+	photos, total, err := s.db.GetGalleryCatalog(limit, offset, filters)
+	if err != nil {
+		return galleryCatalogResponse{}, err
+	}
+
 	sourceStats, err := s.db.GetGallerySourceStatsForFilters(filters)
 	if err != nil {
-		s.logger.Error().Err(err).Msg("Failed to fetch gallery source facets")
-		s.writeError(w, http.StatusInternalServerError, "Failed to fetch gallery sources")
-		return
+		return galleryCatalogResponse{}, err
 	}
 	categoryStats, err := s.db.GetGalleryCategoryStatsForFilters(filters)
 	if err != nil {
-		s.logger.Error().Err(err).Msg("Failed to fetch gallery category facets")
-		s.writeError(w, http.StatusInternalServerError, "Failed to fetch gallery categories")
-		return
+		return galleryCatalogResponse{}, err
 	}
 	artistStats, err := s.db.GetGalleryArtistStatsForFilters(filters)
 	if err != nil {
-		s.logger.Error().Err(err).Msg("Failed to fetch gallery artist facets")
-		s.writeError(w, http.StatusInternalServerError, "Failed to fetch gallery artists")
-		return
+		return galleryCatalogResponse{}, err
 	}
 	favoriteStats, err := s.db.GetGalleryFavoriteStatsForFilters(filters)
 	if err != nil {
-		s.logger.Error().Err(err).Msg("Failed to fetch gallery favorite facets")
-		s.writeError(w, http.StatusInternalServerError, "Failed to fetch gallery favorites")
-		return
+		return galleryCatalogResponse{}, err
 	}
 
 	providerFacets := galleryProviderFacets(sourceStats)
 
-	s.writeJSON(w, http.StatusOK, map[string]interface{}{
-		"photos":    photos,
-		"total":     total,
-		"limit":     limit,
-		"offset":    offset,
-		"provider":  filters.Provider,
-		"source":    filters.Source,
-		"category":  filters.Category,
-		"artist":    filters.Artist,
-		"favorite":  filters.Favorite,
-		"query":     filters.Query,
-		"providers": providerFacets,
-		"facets": galleryCatalogFacets{
+	return galleryCatalogResponse{
+		Photos:    photos,
+		Total:     total,
+		Limit:     limit,
+		Offset:    offset,
+		Provider:  filters.Provider,
+		Source:    filters.Source,
+		Category:  filters.Category,
+		Artist:    filters.Artist,
+		Favorite:  filters.Favorite,
+		Query:     filters.Query,
+		Providers: providerFacets,
+		Facets: galleryCatalogFacets{
 			Sources:    flattenGallerySourceFacets(providerFacets),
 			Categories: galleryCategoryFacets(categoryStats),
 			Artists:    galleryFacets(artistStats),
 			Favorites:  galleryFavoriteFacets(favoriteStats),
 		},
-	})
+	}, nil
+}
+
+func cacheFiltersFromQuery(values url.Values) cacheGalleryCatalogFilters {
+	return cacheGalleryCatalogFilters{
+		Provider: cacheQueryValue{Set: queryHasKey(values, "provider"), Value: strings.TrimSpace(values.Get("provider"))},
+		Source:   cacheQueryValue{Set: queryHasKey(values, "source"), Value: strings.TrimSpace(values.Get("source"))},
+		Category: cacheQueryValue{Set: queryHasKey(values, "category"), Value: strings.TrimSpace(values.Get("category"))},
+		Artist:   cacheQueryValue{Set: queryHasKey(values, "artist"), Value: strings.TrimSpace(values.Get("artist"))},
+		Favorite: cacheQueryValue{Set: queryHasKey(values, "favorite"), Value: strings.TrimSpace(values.Get("favorite"))},
+		Query:    cacheQueryValue{Set: queryHasKey(values, "q"), Value: strings.TrimSpace(values.Get("q"))},
+	}
 }
 
 func (s *Server) handleGalleryDecision(w http.ResponseWriter, r *http.Request) {

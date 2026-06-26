@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strconv"
 
+	okfcache "ok-folio/internal/cache"
 	"ok-folio/internal/database"
 
 	"github.com/go-chi/chi/v5"
@@ -41,6 +42,8 @@ func (s *Server) handleSetFavorite(w http.ResponseWriter, r *http.Request, favor
 		s.writeError(w, http.StatusInternalServerError, "Failed to update favorite")
 		return
 	}
+	_ = s.cache.Delete(r.Context(), okfcache.PhotoKey(photo.ID))
+	_ = s.cache.BumpEpoch(r.Context())
 
 	s.writeJSON(w, http.StatusOK, map[string]interface{}{
 		"id":        photo.ID,
