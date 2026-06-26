@@ -61,15 +61,22 @@ if [ -z "$registry" ] || [ "$registry" != "${registry%%/*}" ] || [[ "$registry" 
   echo "registry must contain only the registry host, without a repository name or path component" >&2
   exit 1
 fi
+if [[ "$registry" =~ [[:space:]] || ! "$registry" =~ ^[A-Za-z0-9._-]+(:[0-9]+)?$ ]]; then
+  echo "registry must be a valid registry host, optionally with a numeric port" >&2
+  exit 1
+fi
 image="$registry/ok-folio"
 sha="$(git rev-parse HEAD)"
-container_name="ok-folio-smoke"
+container_name="ok-folio-smoke-$sha-$$"
 health_log="$(mktemp)"
 inspect_log=""
+container_started=0
 logged_in=0
 
 cleanup() {
-  docker rm -f "$container_name" >/dev/null 2>&1 || true
+  if [ "$container_started" -eq 1 ]; then
+    docker rm -f "$container_name" >/dev/null 2>&1 || true
+  fi
   if [ "$logged_in" -eq 1 ]; then
     docker logout "$registry" >/dev/null 2>&1 || true
   fi
@@ -88,6 +95,7 @@ fi
 
 docker buildx build --load -t "$image:smoke-$sha" .
 docker run -d --name "$container_name" --network host -v "$PWD/config.smoke.yaml:/config/config.yaml:ro" "$image:smoke-$sha"
+container_started=1
 for _ in $(seq 1 30); do
   if curl -fsS http://127.0.0.1:18080/health >"$health_log" &&
     jq -e '.status == "healthy" and .database == "connected"' "$health_log" >/dev/null; then

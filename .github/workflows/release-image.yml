@@ -58,6 +58,10 @@ jobs:
             echo "REGISTRY_URL secret must contain only the registry host" >&2
             exit 1
           fi
+          if [[ "$registry" =~ [[:space:]] || ! "$registry" =~ ^[A-Za-z0-9._-]+(:[0-9]+)?$ ]]; then
+            echo "REGISTRY_URL secret must be a valid registry host, optionally with a numeric port" >&2
+            exit 1
+          fi
           image="$registry/${IMAGE_NAME}"
           sha_tag="${GITHUB_SHA}"
           smoke_tag="smoke-${GITHUB_SHA}"
