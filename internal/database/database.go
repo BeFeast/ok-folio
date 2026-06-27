@@ -606,6 +606,41 @@ func (db *DB) GetConnectorStates() ([]ConnectorState, error) {
 	return states, err
 }
 
+// LoadConnectorState returns the durable cursor and status for a provider.
+func (db *DB) LoadConnectorState(providerID string) (*ConnectorState, error) {
+	if strings.TrimSpace(providerID) == "" {
+		return nil, fmt.Errorf("provider ID is required")
+	}
+
+	var state ConnectorState
+	err := db.Where("provider_id = ?", providerID).First(&state).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &state, nil
+}
+
+// SaveConnectorState upserts the durable cursor and last run outcome for a
+// provider connector.
+func (db *DB) SaveConnectorState(state ConnectorState) error {
+	if strings.TrimSpace(state.ProviderID) == "" {
+		return fmt.Errorf("provider ID is required")
+	}
+
+	return db.Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "provider_id"}},
+		DoUpdates: clause.Assignments(map[string]interface{}{
+			"cursor":        state.Cursor,
+			"last_run_at":   state.LastRunAt,
+			"last_status":   state.LastStatus,
+			"error_message": state.ErrorMessage,
+		}),
+	}).Create(&state).Error
+}
+
 // GetDownloadStats returns download statistics using a single optimized query
 func (db *DB) GetDownloadStats() (map[string]interface{}, error) {
 	type StatsResult struct {

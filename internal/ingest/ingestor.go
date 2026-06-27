@@ -32,6 +32,7 @@ type Result struct {
 	PhotosFailed     int
 	Halted           bool
 	ErrorMessage     string
+	Cursor           string
 }
 
 type RunOptions struct {
@@ -55,19 +56,31 @@ func (i *Ingestor) RunConnector(ctx context.Context, connector provider.Connecto
 
 func (i *Ingestor) RunConnectorWithOptions(ctx context.Context, connector provider.Connector, opts RunOptions) (Result, error) {
 	providerID := connector.Provider().ID
+	state, err := i.db.LoadConnectorState(providerID)
+	if err != nil {
+		return Result{}, err
+	}
+
 	run, err := i.db.StartExtractionRun(providerID)
 	if err != nil {
 		return Result{}, err
 	}
 
-	result, runErr := i.ingestPages(ctx, connector, run, normalizeRunOptions(opts))
+	startCursor := ""
+	if state != nil {
+		startCursor = state.Cursor
+	}
+	result, runErr := i.ingestPages(ctx, connector, run, normalizeRunOptions(opts), startCursor)
 	status := "completed"
+	stateStatus := "completed"
 	message := result.ErrorMessage
 	if result.Halted {
 		status = "failed"
+		stateStatus = "permission_halt"
 	}
 	if runErr != nil {
 		status = "failed"
+		stateStatus = "failed"
 		if message == "" {
 			message = safeErrorMessage(runErr)
 		}
@@ -75,13 +88,16 @@ func (i *Ingestor) RunConnectorWithOptions(ctx context.Context, connector provid
 	if finishErr := i.db.FinishExtractionRun(run.ID, status, message); finishErr != nil && runErr == nil {
 		runErr = finishErr
 	}
+	if stateErr := i.saveConnectorState(providerID, result.Cursor, stateStatus, message); stateErr != nil && runErr == nil {
+		runErr = stateErr
+	}
 	return result, runErr
 }
 
-func (i *Ingestor) ingestPages(ctx context.Context, connector provider.Connector, run *database.ExtractionRun, opts RunOptions) (Result, error) {
-	var result Result
+func (i *Ingestor) ingestPages(ctx context.Context, connector provider.Connector, run *database.ExtractionRun, opts RunOptions, startCursor string) (Result, error) {
+	result := Result{Cursor: startCursor}
 	providerID := connector.Provider().ID
-	req := provider.PageRequest{Page: opts.StartPage}
+	req := provider.PageRequest{Page: opts.StartPage, Cursor: startCursor}
 
 	for {
 		select {
@@ -199,6 +215,13 @@ func (i *Ingestor) ingestPages(ctx context.Context, connector provider.Connector
 			return result, err
 		}
 
+		if page.Pagination.NextCursor != "" {
+			result.Cursor = page.Pagination.NextCursor
+		}
+		if err := i.saveConnectorState(providerID, result.Cursor, "running", result.ErrorMessage); err != nil {
+			return result, err
+		}
+
 		if !page.Pagination.HasNext {
 			return result, nil
 		}
@@ -216,6 +239,17 @@ func (i *Ingestor) ingestPages(ctx context.Context, connector provider.Connector
 			req.Cursor = ""
 		}
 	}
+}
+
+func (i *Ingestor) saveConnectorState(providerID string, cursor string, status string, message string) error {
+	now := time.Now()
+	return i.db.SaveConnectorState(database.ConnectorState{
+		ProviderID:   providerID,
+		Cursor:       cursor,
+		LastRunAt:    &now,
+		LastStatus:   status,
+		ErrorMessage: message,
+	})
 }
 
 func (i *Ingestor) handleProviderError(ctx context.Context, providerID string, dedupeKey string, err error, run *database.ExtractionRun, result *Result) (bool, error) {
