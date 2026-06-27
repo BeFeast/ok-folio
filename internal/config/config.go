@@ -25,6 +25,10 @@ const (
 	DefaultDerivativesDirectory = "/derivatives"
 	// DefaultDerivativesMaxBytes bounds generated thumbnails at 20 GiB.
 	DefaultDerivativesMaxBytes int64 = 20 * 1024 * 1024 * 1024
+	// DefaultLoggingLevel keeps logs visible when no logging section is configured.
+	DefaultLoggingLevel = "info"
+	// DefaultLoggingFormat is machine-readable for container logs.
+	DefaultLoggingFormat = "json"
 )
 
 type Config struct {
@@ -216,6 +220,7 @@ func Load(path string) (*Config, error) {
 	cfg.Storage.applyDefaults()
 	cfg.Database.applyDefaults()
 	cfg.Cache.applyDefaults()
+	cfg.Logging.applyDefaults()
 
 	return &cfg, nil
 }
@@ -249,6 +254,15 @@ func (c *CacheConfig) applyDefaults() {
 	}
 	if c.Port == 0 {
 		c.Port = DefaultCachePort
+	}
+}
+
+func (c *LoggingConfig) applyDefaults() {
+	if c.Level == "" {
+		c.Level = DefaultLoggingLevel
+	}
+	if c.Format == "" {
+		c.Format = DefaultLoggingFormat
 	}
 }
 

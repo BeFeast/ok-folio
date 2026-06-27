@@ -517,6 +517,25 @@ func TestLoad_DefaultsPointAtValkeyService(t *testing.T) {
 	}
 }
 
+func TestLoad_DefaultsLogging(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte("source:\n  base_url: \"https://example.com\"\n"), 0644); err != nil {
+		t.Fatalf("Failed to write config: %v", err)
+	}
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Failed to load config: %v", err)
+	}
+	if cfg.Logging.Level != DefaultLoggingLevel {
+		t.Fatalf("Expected default logging level %q, got %q", DefaultLoggingLevel, cfg.Logging.Level)
+	}
+	if cfg.Logging.Format != DefaultLoggingFormat {
+		t.Fatalf("Expected default logging format %q, got %q", DefaultLoggingFormat, cfg.Logging.Format)
+	}
+}
+
 func TestLoad_DefaultsThumbnailDerivatives(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.yaml")

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -179,8 +180,8 @@ func buildConnectors(cfg *config.Config, logger zerolog.Logger) []provider.Conne
 
 func setupLogger(cfg *config.Config) zerolog.Logger {
 	// Set log level
-	level, err := zerolog.ParseLevel(cfg.Logging.Level)
-	if err != nil {
+	level, err := zerolog.ParseLevel(strings.TrimSpace(cfg.Logging.Level))
+	if err != nil || level == zerolog.NoLevel {
 		level = zerolog.InfoLevel
 	}
 	zerolog.SetGlobalLevel(level)
