@@ -240,7 +240,7 @@ func FillMissingContentHashes(db *database.DB, originalsRoot string, limit int) 
 	if err := db.Raw(`
 		SELECT id, file_path
 		FROM downloaded_photos
-		WHERE content_hash IS NULL AND file_path <> ''
+		WHERE content_hash IS NULL AND file_path <> '' AND COALESCE(status, '') <> 'deleted'
 		ORDER BY id
 		LIMIT ?`, limit).Scan(&rows).Error; err != nil {
 		return HashResult{}, err
@@ -256,6 +256,9 @@ func FillMissingContentHashes(db *database.DB, originalsRoot string, limit int) 
 		sum := sha256.Sum256(data)
 		if err := db.Exec("UPDATE downloaded_photos SET content_hash = ? WHERE id = ? AND content_hash IS NULL", sum[:], row.ID).Error; err != nil {
 			if database.IsUniqueViolation(err) {
+				if markErr := markContentHashDuplicateLoser(db, row.ID); markErr != nil {
+					return result, markErr
+				}
 				result.Skipped++
 				continue
 			}
@@ -264,6 +267,15 @@ func FillMissingContentHashes(db *database.DB, originalsRoot string, limit int) 
 		result.Updated++
 	}
 	return result, nil
+}
+
+func markContentHashDuplicateLoser(db *database.DB, id uint64) error {
+	return db.Exec(`
+		UPDATE downloaded_photos
+		SET
+			status = 'deleted',
+			error_message = 'quarantined as exact content hash duplicate during backfill'
+		WHERE id = ? AND content_hash IS NULL`, id).Error
 }
 
 func resolveOriginalPath(root, storedPath string) string {
