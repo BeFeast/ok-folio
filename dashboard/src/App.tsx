@@ -1,24 +1,29 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-  BrowserRouter,
-  Routes,
-  Route,
-  Link,
-  useLocation,
-} from "react-router-dom";
-import HealthIndicator from "./components/HealthIndicator";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
+
+import { FolioProvider } from "./folio/context";
+import Nav from "./folio/Nav";
+import Gallery from "./folio/Gallery";
+import Folios from "./folio/Folios";
+import Inbox from "./folio/Inbox";
+import Streams from "./folio/Streams";
+import Settings from "./folio/Settings";
+import PieceViewer from "./folio/PieceViewer";
+import AddPieceModal from "./folio/AddPieceModal";
+
+// Legacy operations surfaces — kept reachable by direct URL (not in the
+// primary navigation) so existing deep links and tooling still work.
+import ExtractorOperations from "./pages/ExtractorOperations";
+import TodayImages from "./pages/TodayImages";
+import WeeklyImages from "./pages/WeeklyImages";
+import RunDetail from "./pages/RunDetail";
+import PieceDetail from "./pages/PieceDetail";
 import TimelineChart from "./components/TimelineChart";
 import TopArtistsChart from "./components/TopArtistsChart";
 import FailedPhotos from "./components/FailedPhotos";
 import Search from "./components/Search";
 import ArtistList from "./components/ArtistList";
 import ArtistDetail from "./components/ArtistDetail";
-import ExtractorOperations from "./pages/ExtractorOperations";
-import Gallery from "./pages/Gallery";
-import TodayImages from "./pages/TodayImages";
-import WeeklyImages from "./pages/WeeklyImages";
-import RunDetail from "./pages/RunDetail";
-import PieceDetail from "./pages/PieceDetail";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -29,136 +34,29 @@ const queryClient = new QueryClient({
   },
 });
 
-function Navigation() {
-  const location = useLocation();
-  const navItems = [
-    { label: "Gallery", path: "/" },
-    { label: "Folios", path: "/folios" },
-    { label: "Inbox", path: "/inbox" },
-    { label: "Streams", path: "/streams" },
-    { label: "Settings", path: "/settings" },
-  ];
-
-  const isActive = (path: string) => {
-    if (path === "/") {
-      return location.pathname === "/";
-    }
-    return location.pathname.startsWith(path);
-  };
-
-  const navLinkClass = (path: string) =>
-    `${
-      isActive(path)
-        ? "border-[color:var(--folio-accent)] text-[color:var(--folio-ink)]"
-        : "border-transparent text-[color:var(--folio-graphite)] hover:border-[color:var(--folio-line)] hover:text-[color:var(--folio-ink)]"
-    } whitespace-nowrap py-3 px-1 border-b-2 text-sm font-medium transition-colors`;
-
-  return (
-    <div className="mt-5 overflow-x-auto border-b border-[color:var(--folio-line)]">
-      <nav className="-mb-px flex gap-8">
-        {navItems.map((item) => (
-          <Link key={item.path} to={item.path} className={navLinkClass(item.path)}>
-            {item.label}
-          </Link>
-        ))}
-      </nav>
-    </div>
-  );
-}
-
-function BrandMark() {
+function FolioShell() {
   return (
     <div
-      aria-hidden="true"
-      className="relative h-10 w-10 shrink-0 border border-[color:var(--folio-accent)] bg-[color:var(--folio-surface)]"
+      style={{
+        minHeight: "100vh",
+        background: "var(--bg)",
+        color: "var(--ink)",
+        fontFamily: "var(--sans)",
+        WebkitFontSmoothing: "antialiased",
+        textRendering: "optimizeLegibility",
+      }}
     >
-      <div className="absolute inset-1 border border-[color:var(--folio-line)]" />
-      <div className="absolute bottom-0 right-0 h-5 w-4 border-l border-t border-[color:var(--folio-accent)] bg-[color:var(--folio-paper)]" />
-    </div>
-  );
-}
-
-function PlaceholderSurface({ title, copy }: { title: string; copy: string }) {
-  return (
-    <section className="border border-[color:var(--folio-line)] bg-[color:var(--folio-surface)] p-8 shadow-[var(--folio-shadow)]">
-      <p className="text-xs font-medium uppercase tracking-[0.18em] text-[color:var(--folio-accent)]">
-        OK Folio
-      </p>
-      <h2 className="mt-3 font-serif text-3xl text-[color:var(--folio-ink)]">
-        {title}
-      </h2>
-      <p className="mt-3 max-w-2xl text-sm leading-6 text-[color:var(--folio-graphite)]">
-        {copy}
-      </p>
-    </section>
-  );
-}
-
-function AppContent() {
-  return (
-    <div className="min-h-screen bg-[color:var(--folio-paper)] text-[color:var(--folio-ink)]">
-      <header className="border-b border-[color:var(--folio-line)] bg-[color:var(--folio-surface)]">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <BrandMark />
-              <div>
-                <h1 className="font-serif text-3xl text-[color:var(--folio-ink)]">
-                  OK Folio
-                </h1>
-                <p className="text-sm text-[color:var(--folio-graphite)] mt-1">
-                  A beautiful folio for visual discoveries.
-                </p>
-              </div>
-            </div>
-            <HealthIndicator />
-          </div>
-
-          <Navigation />
-        </div>
-      </header>
-
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <Nav />
+      <main style={{ maxWidth: 1340, margin: "0 auto", padding: "0 30px 110px" }}>
         <Routes>
-          <Route
-            path="/"
-            element={<Gallery />}
-          />
-          <Route
-            path="/folios"
-            element={
-              <PlaceholderSurface
-                title="Folios"
-                copy="Curated groups will live here. Gallery remains the primary aggregator surface while folio workflows are built out."
-              />
-            }
-          />
-          <Route
-            path="/inbox"
-            element={
-              <PlaceholderSurface
-                title="Inbox"
-                copy="Exceptions, duplicates, and ambiguous arrivals will be reviewed here without turning every incoming piece into manual work."
-              />
-            }
-          />
-          <Route
-            path="/streams"
-            element={<ExtractorOperations />}
-          />
-          <Route
-            path="/settings"
-            element={
-              <PlaceholderSurface
-                title="Settings"
-                copy="Product and connector settings will collect here as OK Folio moves beyond the legacy operations dashboard."
-              />
-            }
-          />
-          <Route
-            path="/operations"
-            element={<ExtractorOperations />}
-          />
+          <Route path="/" element={<Gallery />} />
+          <Route path="/folios" element={<Folios />} />
+          <Route path="/inbox" element={<Inbox />} />
+          <Route path="/streams" element={<Streams />} />
+          <Route path="/settings" element={<Settings />} />
+
+          {/* Legacy / deep-link routes */}
+          <Route path="/operations" element={<ExtractorOperations />} />
           <Route path="/today" element={<TodayImages />} />
           <Route path="/week" element={<WeeklyImages />} />
           <Route
@@ -179,13 +77,8 @@ function AppContent() {
         </Routes>
       </main>
 
-      <footer className="bg-[color:var(--folio-surface)] border-t border-[color:var(--folio-line)] mt-12">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-          <p className="text-center text-sm text-[color:var(--folio-graphite)]">
-            OK Folio
-          </p>
-        </div>
-      </footer>
+      <PieceViewer />
+      <AddPieceModal />
     </div>
   );
 }
@@ -194,7 +87,9 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
-        <AppContent />
+        <FolioProvider>
+          <FolioShell />
+        </FolioProvider>
       </BrowserRouter>
     </QueryClientProvider>
   );
