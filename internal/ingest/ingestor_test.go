@@ -344,7 +344,7 @@ func setupIngestorTest(t *testing.T, connector provider.Connector) (*database.DB
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
-	if err := gormDB.AutoMigrate(&database.DownloadedPhoto{}, &database.ExtractionRun{}, &database.InboxItem{}); err != nil {
+	if err := gormDB.AutoMigrate(&database.DownloadedPhoto{}, &database.ExtractionRun{}, &database.InboxItem{}, &database.ConnectorState{}); err != nil {
 		t.Fatalf("migrate sqlite: %v", err)
 	}
 	db := &database.DB{DB: gormDB}

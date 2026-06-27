@@ -22,7 +22,7 @@ func setupTestDB(t *testing.T) *DB {
 	}
 
 	// Auto-migrate schemas
-	if err := gormDB.AutoMigrate(&DownloadedPhoto{}, &ExtractionRun{}, &InboxItem{}); err != nil {
+	if err := gormDB.AutoMigrate(&DownloadedPhoto{}, &ExtractionRun{}, &InboxItem{}, &ConnectorState{}); err != nil {
 		t.Fatalf("Failed to migrate test database: %v", err)
 	}
 
@@ -520,6 +520,77 @@ func TestGetRecentRuns_Empty(t *testing.T) {
 	}
 }
 
+func TestGetRecentConnectorRunsReturnsLimitPerProvider(t *testing.T) {
+	db := setupTestDB(t)
+
+	base := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+	fixtures := []ExtractionRun{
+		{StartTime: base.Add(1 * time.Minute), Provider: "webgallery", Status: "completed"},
+		{StartTime: base.Add(2 * time.Minute), Provider: "webgallery", Status: "failed"},
+		{StartTime: base.Add(3 * time.Minute), Provider: "webgallery", Status: "completed"},
+		{StartTime: base.Add(4 * time.Minute), Provider: "telegram", Status: "completed"},
+		{StartTime: base.Add(5 * time.Minute), Provider: "telegram", Status: "failed"},
+		{StartTime: base.Add(6 * time.Minute), Status: "completed"},
+	}
+	for i := range fixtures {
+		if err := db.Create(&fixtures[i]).Error; err != nil {
+			t.Fatalf("Failed to create run: %v", err)
+		}
+	}
+
+	runs, err := db.GetRecentConnectorRuns(2)
+	if err != nil {
+		t.Fatalf("Failed to get connector runs: %v", err)
+	}
+
+	counts := map[string]int{}
+	for _, run := range runs {
+		provider := run.Provider
+		if provider == "" {
+			provider = "webgallery"
+		}
+		counts[provider]++
+	}
+	if counts["webgallery"] != 2 || counts["telegram"] != 2 {
+		t.Fatalf("Expected two runs per provider, got counts=%#v runs=%#v", counts, runs)
+	}
+	for i := 1; i < len(runs); i++ {
+		if runs[i].StartTime.After(runs[i-1].StartTime) {
+			t.Fatalf("Expected connector runs in descending order, got %#v", runs)
+		}
+	}
+}
+
+func TestGetConnectorStates(t *testing.T) {
+	db := setupTestDB(t)
+
+	webLastRun := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+	telegramLastRun := time.Date(2026, 6, 25, 13, 0, 0, 0, time.UTC)
+	states := []ConnectorState{
+		{ProviderID: "telegram", LastRunAt: &telegramLastRun, LastStatus: "completed"},
+		{ProviderID: "webgallery", LastRunAt: &webLastRun, LastStatus: "permission_halt"},
+	}
+	for i := range states {
+		if err := db.Create(&states[i]).Error; err != nil {
+			t.Fatalf("Failed to create connector state: %v", err)
+		}
+	}
+
+	retrieved, err := db.GetConnectorStates()
+	if err != nil {
+		t.Fatalf("Failed to get connector states: %v", err)
+	}
+	if len(retrieved) != 2 {
+		t.Fatalf("Expected two connector states, got %#v", retrieved)
+	}
+	if retrieved[0].ProviderID != "telegram" || retrieved[0].LastStatus != "completed" || !retrieved[0].LastRunAt.Equal(telegramLastRun) {
+		t.Fatalf("Unexpected first connector state: %#v", retrieved[0])
+	}
+	if retrieved[1].ProviderID != "webgallery" || retrieved[1].LastStatus != "permission_halt" || !retrieved[1].LastRunAt.Equal(webLastRun) {
+		t.Fatalf("Unexpected second connector state: %#v", retrieved[1])
+	}
+}
+
 func TestGetDownloadStats_Empty(t *testing.T) {
 	db := setupTestDB(t)
 
@@ -860,7 +931,7 @@ func TestGalleryFavoriteColumnPrefersCanonicalFavorite(t *testing.T) {
 	`).Error; err != nil {
 		t.Fatalf("Failed to create legacy photos table: %v", err)
 	}
-	if err := gormDB.AutoMigrate(&DownloadedPhoto{}, &ExtractionRun{}); err != nil {
+	if err := gormDB.AutoMigrate(&DownloadedPhoto{}, &ExtractionRun{}, &ConnectorState{}); err != nil {
 		t.Fatalf("Failed to migrate test database: %v", err)
 	}
 

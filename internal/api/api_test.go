@@ -41,7 +41,7 @@ func setupTestServer(t *testing.T) (*Server, *database.DB) {
 		t.Fatalf("Failed to create test database: %v", err)
 	}
 
-	if err := gormDB.AutoMigrate(&database.DownloadedPhoto{}, &database.ExtractionRun{}, &database.InboxItem{}); err != nil {
+	if err := gormDB.AutoMigrate(&database.DownloadedPhoto{}, &database.ExtractionRun{}, &database.InboxItem{}, &database.ConnectorState{}); err != nil {
 		t.Fatalf("Failed to migrate test database: %v", err)
 	}
 
@@ -476,8 +476,30 @@ func TestHandleConnectorStatus(t *testing.T) {
 		}
 	}
 
-	run := database.ExtractionRun{
+	webLastRun := time.Date(2026, 6, 25, 12, 10, 0, 0, time.UTC)
+	telegramLastRun := time.Date(2026, 6, 25, 12, 8, 0, 0, time.UTC)
+	states := []database.ConnectorState{
+		{
+			ProviderID: "webgallery",
+			LastRunAt:  &webLastRun,
+			LastStatus: "permission_halt",
+		},
+		{
+			ProviderID: "telegram",
+			LastRunAt:  &telegramLastRun,
+			LastStatus: "completed_with_errors",
+		},
+	}
+	for _, state := range states {
+		if err := db.Create(&state).Error; err != nil {
+			t.Fatalf("Failed to create connector state: %v", err)
+		}
+	}
+
+	webRun := database.ExtractionRun{
 		StartTime:        time.Date(2026, 6, 25, 12, 1, 0, 0, time.UTC),
+		EndTime:          &webLastRun,
+		Provider:         "webgallery",
 		Status:           "failed",
 		PagesProcessed:   1,
 		PhotosFound:      2,
@@ -485,12 +507,28 @@ func TestHandleConnectorStatus(t *testing.T) {
 		PhotosFailed:     1,
 		ErrorMessage:     "connector failed",
 	}
-	if err := db.Create(&run).Error; err != nil {
-		t.Fatalf("Failed to create run: %v", err)
+	telegramRun := database.ExtractionRun{
+		StartTime:        time.Date(2026, 6, 25, 12, 2, 0, 0, time.UTC),
+		EndTime:          &telegramLastRun,
+		Provider:         "telegram",
+		Status:           "completed",
+		PagesProcessed:   1,
+		PhotosFound:      2,
+		PhotosDownloaded: 1,
+		PhotosFailed:     1,
+	}
+	if err := db.Create(&webRun).Error; err != nil {
+		t.Fatalf("Failed to create webgallery run: %v", err)
+	}
+	if err := db.Create(&telegramRun).Error; err != nil {
+		t.Fatalf("Failed to create telegram run: %v", err)
 	}
 
 	if _, err := db.GetConnectorSourceStats(); err != nil {
 		t.Fatalf("Failed to get connector source stats: %v", err)
+	}
+	if _, err := db.GetConnectorStates(); err != nil {
+		t.Fatalf("Failed to get connector states: %v", err)
 	}
 	if _, err := db.GetRecentConnectorErrors(10); err != nil {
 		t.Fatalf("Failed to get connector errors: %v", err)
@@ -512,12 +550,15 @@ func TestHandleConnectorStatus(t *testing.T) {
 	if len(response.Connectors) == 0 {
 		t.Fatalf("Expected at least webgallery connector, got none")
 	}
+	if len(response.Connectors) != 2 {
+		t.Fatalf("Expected webgallery and telegram connectors, got %#v", response.Connectors)
+	}
 	connector := response.Connectors[0]
 	if connector.ID != "webgallery" || connector.DisplayName != "Web Gallery" {
 		t.Fatalf("Expected webgallery connector first, got %#v", connector)
 	}
 	if connector.Health != "error" || connector.State != "Needs review" {
-		t.Fatalf("Expected failed run to mark connector unhealthy, got health=%q state=%q", connector.Health, connector.State)
+		t.Fatalf("Expected permission halt state to mark connector unhealthy, got health=%q state=%q", connector.Health, connector.State)
 	}
 	if connector.Counts.Downloaded != 1 || connector.Counts.Failed != 1 || connector.Counts.Total != 2 {
 		t.Fatalf("Expected per-source media counts, got %#v", connector.Counts)
@@ -531,11 +572,14 @@ func TestHandleConnectorStatus(t *testing.T) {
 	if len(connector.RecentRuns) != 1 || connector.RecentRuns[0].Status != "failed" {
 		t.Fatalf("Expected recent failed run, got %#v", connector.RecentRuns)
 	}
+	if connector.RecentRuns[0].ID == telegramRun.ID {
+		t.Fatalf("Expected telegram run to stay under telegram connector, got %#v", connector.RecentRuns)
+	}
 	if len(connector.RecentErrors) != 1 || connector.RecentErrors[0].Message != "upstream returned 500" {
 		t.Fatalf("Expected recent failed media error, got %#v", connector.RecentErrors)
 	}
-	if connector.LastSync == nil || !connector.LastSync.Equal(photos[1].DownloadedAt) {
-		t.Fatalf("Expected last sync from latest connector activity, got %v", connector.LastSync)
+	if connector.LastSync == nil || !connector.LastSync.Equal(webLastRun) {
+		t.Fatalf("Expected last sync from connector_state, got %v", connector.LastSync)
 	}
 	for _, item := range response.Connectors {
 		if item.ID == "example.com" {
@@ -556,8 +600,123 @@ func TestHandleConnectorStatus(t *testing.T) {
 	if telegram.Counts.Downloaded != 1 || telegram.Counts.Failed != 1 || telegram.Health != "degraded" {
 		t.Fatalf("Expected degraded Telegram counts from source URL and dedupe-key failure, got %#v", telegram)
 	}
+	if telegram.State != "Degraded" || telegram.LastSync == nil || !telegram.LastSync.Equal(telegramLastRun) {
+		t.Fatalf("Expected Telegram state from connector_state, got %#v", telegram)
+	}
+	if len(telegram.RecentRuns) != 1 || telegram.RecentRuns[0].ID != telegramRun.ID || telegram.RecentRuns[0].Status != "completed" {
+		t.Fatalf("Expected Telegram run under Telegram connector, got %#v", telegram.RecentRuns)
+	}
 	if len(telegram.RecentErrors) != 1 || telegram.RecentErrors[0].Message != "telegram media expired" {
 		t.Fatalf("Expected Telegram dedupe-key failure under Telegram connector, got %#v", telegram.RecentErrors)
+	}
+}
+
+func TestHandleConnectorStatusRendersKnownConnectorsWithoutCatalogRows(t *testing.T) {
+	server, _ := setupTestServer(t)
+	defer safeShutdown(server)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/streams/connectors/status", nil)
+	w := httptest.NewRecorder()
+
+	server.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d", w.Code)
+	}
+
+	var response connectorStatusResponse
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode connector status: %v", err)
+	}
+	if len(response.Connectors) != 2 {
+		t.Fatalf("Expected both known connectors without catalog rows, got %#v", response.Connectors)
+	}
+	for _, connector := range response.Connectors {
+		if connector.LastSync != nil || connector.Health != "idle" || connector.State != "Not synced" {
+			t.Fatalf("Expected unsynced idle connector without state row, got %#v", connector)
+		}
+	}
+}
+
+func TestBuildConnectorStatusesUsesRunLastSyncWhenStateMissing(t *testing.T) {
+	runEnd := time.Date(2026, 6, 25, 12, 10, 0, 0, time.UTC)
+	run := database.ExtractionRun{
+		ID:        7,
+		Provider:  "telegram",
+		StartTime: time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC),
+		EndTime:   &runEnd,
+		Status:    "completed",
+	}
+
+	connectors := buildConnectorStatuses(nil, []database.ExtractionRun{run}, nil, nil)
+
+	var telegram *connectorStatus
+	for i := range connectors {
+		if connectors[i].ID == "telegram" {
+			telegram = &connectors[i]
+			break
+		}
+	}
+	if telegram == nil {
+		t.Fatalf("Expected Telegram connector, got %#v", connectors)
+	}
+	if telegram.LastSync == nil || !telegram.LastSync.Equal(runEnd) {
+		t.Fatalf("Expected last sync fallback from extraction run, got %v", telegram.LastSync)
+	}
+	if telegram.Health != "healthy" || telegram.State != "Healthy" {
+		t.Fatalf("Expected completed run without state to mark connector healthy, got health=%q state=%q", telegram.Health, telegram.State)
+	}
+}
+
+func TestConnectorHealth(t *testing.T) {
+	syncingRun := connectorStatus{
+		RecentRuns: []connectorRunStatus{{Status: "running"}},
+	}
+	failedRun := connectorStatus{
+		RecentRuns: []connectorRunStatus{{Status: "failed"}},
+	}
+	completedState := connectorStatus{
+		hasState:   true,
+		lastStatus: "completed",
+	}
+	degradedState := connectorStatus{
+		hasState:   true,
+		lastStatus: "completed_with_errors",
+	}
+	permissionHaltState := connectorStatus{
+		hasState:   true,
+		lastStatus: "permission_halt",
+	}
+	runningRunWithStaleState := connectorStatus{
+		hasState:   true,
+		lastStatus: "completed",
+		RecentRuns: []connectorRunStatus{{Status: "running"}},
+	}
+	noState := connectorStatus{}
+
+	tests := []struct {
+		name       string
+		connector  connectorStatus
+		wantHealth string
+		wantState  string
+	}{
+		{name: "running run", connector: syncingRun, wantHealth: "syncing", wantState: "Syncing"},
+		{name: "failed run", connector: failedRun, wantHealth: "error", wantState: "Needs review"},
+		{name: "completed state", connector: completedState, wantHealth: "healthy", wantState: "Healthy"},
+		{name: "completed state with failed rows", connector: connectorStatus{hasState: true, lastStatus: "completed", Counts: connectorCounts{Failed: 1}}, wantHealth: "degraded", wantState: "Degraded"},
+		{name: "degraded state", connector: degradedState, wantHealth: "degraded", wantState: "Degraded"},
+		{name: "permission halt state", connector: permissionHaltState, wantHealth: "error", wantState: "Needs review"},
+		{name: "running run with stale state", connector: runningRunWithStaleState, wantHealth: "syncing", wantState: "Syncing"},
+		{name: "no state", connector: noState, wantHealth: "idle", wantState: "Not synced"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			health, state := connectorHealth(tt.connector)
+			if health != tt.wantHealth || state != tt.wantState {
+				t.Fatalf("connectorHealth() = %q, %q; want %q, %q", health, state, tt.wantHealth, tt.wantState)
+			}
+		})
 	}
 }
 

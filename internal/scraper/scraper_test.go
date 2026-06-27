@@ -248,7 +248,7 @@ func setupScraperTestDB(t *testing.T) *database.DB {
 	if err != nil {
 		t.Fatalf("Failed to open test database: %v", err)
 	}
-	if err := gormDB.AutoMigrate(&database.DownloadedPhoto{}, &database.ExtractionRun{}, &database.InboxItem{}); err != nil {
+	if err := gormDB.AutoMigrate(&database.DownloadedPhoto{}, &database.ExtractionRun{}, &database.InboxItem{}, &database.ConnectorState{}); err != nil {
 		t.Fatalf("Failed to migrate test database: %v", err)
 	}
 	return &database.DB{DB: gormDB}

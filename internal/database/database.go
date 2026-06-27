@@ -110,6 +110,22 @@ type ExtractionRun struct {
 	ErrorMessage     string `gorm:"type:text"`
 }
 
+// ConnectorState stores the latest durable sync state for one provider
+// connector. It is keyed by provider_id so Streams can render connector status
+// even when that connector has no catalog rows yet.
+type ConnectorState struct {
+	ProviderID   string     `gorm:"column:provider_id;primaryKey;type:text"`
+	LastRunAt    *time.Time `gorm:"column:last_run_at"`
+	LastStatus   string     `gorm:"column:last_status;type:text;index"`
+	Cursor       string     `gorm:"column:cursor;type:text"`
+	ErrorMessage string     `gorm:"column:error_message;type:text"`
+	UpdatedAt    time.Time  `gorm:"autoUpdateTime"`
+}
+
+func (ConnectorState) TableName() string {
+	return "connector_state"
+}
+
 // ETLWatermark stores legacy import progress in OK Folio Postgres. The legacy
 // source remains read-only; incremental runs advance this row only after the
 // loader transaction commits.
@@ -298,11 +314,11 @@ func New(cfg *config.DatabaseConfig) (*DB, error) {
 	return &DB{db}, nil
 }
 
-// Migrate runs AutoMigrate on the three owned models and, on Postgres, the
+// Migrate runs AutoMigrate on the owned models and, on Postgres, the
 // non-destructive post-migrate steps (identity PK, embedding column). It is the
 // single migration entry point so tests exercise the same path as boot.
 func Migrate(db *gorm.DB) error {
-	if err := db.AutoMigrate(&DownloadedPhoto{}, &ExtractionRun{}, &InboxItem{}, &ETLWatermark{}); err != nil {
+	if err := db.AutoMigrate(&DownloadedPhoto{}, &ExtractionRun{}, &InboxItem{}, &ConnectorState{}, &ETLWatermark{}); err != nil {
 		return fmt.Errorf("failed to migrate database: %w", err)
 	}
 	if db.Dialector.Name() == "postgres" {
@@ -555,6 +571,39 @@ func (db *DB) GetRecentRuns(limit int) ([]ExtractionRun, error) {
 	var runs []ExtractionRun
 	err := db.Order("start_time DESC").Limit(limit).Find(&runs).Error
 	return runs, err
+}
+
+// GetRecentConnectorRuns returns the most recent extraction runs per provider.
+// Empty legacy providers are grouped under webgallery so historical runs remain
+// visible on the legacy connector while provider-attributed runs stay separate.
+func (db *DB) GetRecentConnectorRuns(limitPerProvider int) ([]ExtractionRun, error) {
+	if limitPerProvider <= 0 {
+		return []ExtractionRun{}, nil
+	}
+
+	var runs []ExtractionRun
+	err := db.Raw(`
+		SELECT id, start_time, end_time, provider, status, pages_processed, photos_found,
+			photos_downloaded, photos_skipped, photos_failed, error_message
+		FROM (
+			SELECT extraction_runs.*,
+				ROW_NUMBER() OVER (
+					PARTITION BY COALESCE(NULLIF(provider, ''), 'webgallery')
+					ORDER BY start_time DESC, id DESC
+				) AS row_num
+			FROM extraction_runs
+		) recent_runs
+		WHERE row_num <= ?
+		ORDER BY start_time DESC, id DESC
+	`, limitPerProvider).Scan(&runs).Error
+	return runs, err
+}
+
+// GetConnectorStates returns the latest durable state row for each connector.
+func (db *DB) GetConnectorStates() ([]ConnectorState, error) {
+	var states []ConnectorState
+	err := db.Order("provider_id ASC").Find(&states).Error
+	return states, err
 }
 
 // GetDownloadStats returns download statistics using a single optimized query
