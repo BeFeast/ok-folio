@@ -836,7 +836,19 @@ func TestImageHandlersUseImmutableETagAndConditional304(t *testing.T) {
 
 	thumbURL := "/api/v1/photos/" + strconv.Itoa(int(photo.ID)) + "/thumbnail"
 	req = httptest.NewRequest(http.MethodGet, thumbURL, nil)
+	expectedThumbETag := `"` + "thumb-w400-" + strconv.FormatUint(photo.ID, 10) + "-" + hex.EncodeToString(contentHash[:]) + `"`
 	req.Header.Set("If-None-Match", expectedETag)
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code == http.StatusNotModified {
+		t.Fatalf("Expected full image ETag not to validate thumbnail width")
+	}
+	if w.Header().Get("ETag") != expectedThumbETag {
+		t.Fatalf("Expected width-qualified thumbnail ETag %q, got %q", expectedThumbETag, w.Header().Get("ETag"))
+	}
+
+	req = httptest.NewRequest(http.MethodGet, thumbURL, nil)
+	req.Header.Set("If-None-Match", expectedThumbETag)
 	w = httptest.NewRecorder()
 	server.router.ServeHTTP(w, req)
 	if w.Code != http.StatusNotModified {

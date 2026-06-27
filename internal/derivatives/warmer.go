@@ -18,7 +18,13 @@ import (
 
 var ErrNoWidths = errors.New("at least one thumbnail width is required")
 
-const warmPruneEveryWrites = 1000
+const (
+	MaxWarmConcurrency = 8
+
+	warmPruneEveryWrites = 1000
+	tempSweepAge         = time.Hour
+	tempSweepInterval    = time.Hour
+)
 
 type WarmOptions struct {
 	Widths      []int
@@ -78,9 +84,7 @@ func WarmThumbnails(ctx context.Context, db *database.DB, cfg config.StorageConf
 		return WarmResult{}, err
 	}
 	concurrency := opts.Concurrency
-	if concurrency <= 0 {
-		concurrency = 2
-	}
+	concurrency = normalizeWarmConcurrency(concurrency, logger)
 	batchSize := opts.BatchSize
 	if batchSize <= 0 {
 		batchSize = 500
@@ -91,6 +95,13 @@ func WarmThumbnails(ctx context.Context, db *database.DB, cfg config.StorageConf
 	}
 
 	cache := NewCache(cfg)
+	if err := cache.SweepTempFiles(tempSweepAge); err != nil {
+		return WarmResult{}, err
+	}
+	sweepCtx, stopSweep := context.WithCancel(ctx)
+	defer stopSweep()
+	go sweepTempFilesPeriodically(sweepCtx, cache, tempSweepAge, tempSweepInterval, logger)
+
 	cacheWriter := &warmCacheWriter{cache: cache, pruneEvery: warmPruneEveryWrites}
 	jobs := make(chan warmJob)
 	results := make(chan WarmResult, concurrency)
@@ -143,6 +154,32 @@ func WarmThumbnails(ctx context.Context, db *database.DB, cfg config.StorageConf
 		Int("failed", result.Failed).
 		Msg("Thumbnail warm completed")
 	return result, nil
+}
+
+func normalizeWarmConcurrency(concurrency int, logger zerolog.Logger) int {
+	if concurrency <= 0 {
+		return 2
+	}
+	if concurrency > MaxWarmConcurrency {
+		logger.Warn().Int("requested", concurrency).Int("max", MaxWarmConcurrency).Msg("Thumbnail warm concurrency clamped")
+		return MaxWarmConcurrency
+	}
+	return concurrency
+}
+
+func sweepTempFilesPeriodically(ctx context.Context, cache *Cache, maxAge time.Duration, interval time.Duration, logger zerolog.Logger) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := cache.SweepTempFiles(maxAge); err != nil {
+				logger.Warn().Err(err).Msg("Thumbnail temp sweep failed")
+			}
+		}
+	}
 }
 
 func enqueueWarmJobs(

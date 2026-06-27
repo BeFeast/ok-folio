@@ -31,6 +31,8 @@ const (
 	URLHashUniqueIndex     = "idx_downloaded_photos_url_hash"
 	ContentHashUniqueIndex = "idx_downloaded_photos_content_hash_unique"
 	CatalogSortIndex       = "idx_downloaded_photos_catalog_sort"
+
+	downloadedStatusPredicate = "status = 'downloaded'"
 )
 
 // DownloadedPhoto represents a photo that has been downloaded.
@@ -974,7 +976,7 @@ func (db *DB) GetGalleryCatalog(limit int, offset int, filters GalleryCatalogFil
 	var total int64
 
 	query := db.DB.Model(&DownloadedPhoto{}).
-		Where("status = ?", "downloaded")
+		Where(downloadedStatusPredicate)
 	query, err := db.applyGalleryCatalogFilters(query, filters)
 	if err != nil {
 		return nil, 0, err
@@ -1010,7 +1012,7 @@ func (db *DB) GetGallerySourceStatsForFilters(filters GalleryCatalogFilters) ([]
 
 	query := db.DB.Model(&DownloadedPhoto{}).
 		Select("source_page, COUNT(*) as count").
-		Where("status = ?", "downloaded")
+		Where(downloadedStatusPredicate)
 	query, err := db.applyGalleryCatalogFilters(query, filters)
 	if err != nil {
 		return nil, err
@@ -1117,8 +1119,8 @@ func (db *DB) GetGalleryCategoryStatsForFilters(filters GalleryCatalogFilters) (
 	var categories []GalleryFacetStats
 
 	query := db.DB.Model(&DownloadedPhoto{}).
-		Select(galleryCategoryExpr+" as id, COUNT(*) as count").
-		Where("status = ?", "downloaded")
+		Select(galleryCategoryExpr + " as id, COUNT(*) as count").
+		Where(downloadedStatusPredicate)
 	query, err := db.applyGalleryCatalogFilters(query, filters)
 	if err != nil {
 		return nil, err
@@ -1146,7 +1148,7 @@ func (db *DB) GetGalleryArtistStatsForFilters(filters GalleryCatalogFilters) ([]
 
 	query := db.DB.Model(&DownloadedPhoto{}).
 		Select("artist as id, COUNT(*) as count").
-		Where("status = ?", "downloaded")
+		Where(downloadedStatusPredicate)
 	query, err := db.applyGalleryCatalogFilters(query, filters)
 	if err != nil {
 		return nil, err
@@ -1173,7 +1175,7 @@ func (db *DB) GetGalleryFavoriteStats() ([]GalleryFavoriteStats, error) {
 // is referenced directly without the old runtime column probe.
 func (db *DB) GetGalleryFavoriteStatsForFilters(filters GalleryCatalogFilters) ([]GalleryFavoriteStats, error) {
 	var total int64
-	totalQuery := db.DB.Model(&DownloadedPhoto{}).Where("status = ?", "downloaded")
+	totalQuery := db.DB.Model(&DownloadedPhoto{}).Where(downloadedStatusPredicate)
 	totalQuery, err := db.applyGalleryCatalogFilters(totalQuery, filters)
 	if err != nil {
 		return nil, err
@@ -1183,7 +1185,7 @@ func (db *DB) GetGalleryFavoriteStatsForFilters(filters GalleryCatalogFilters) (
 	}
 
 	var favoriteCount int64
-	favoriteQuery := db.DB.Model(&DownloadedPhoto{}).Where("status = ?", "downloaded")
+	favoriteQuery := db.DB.Model(&DownloadedPhoto{}).Where(downloadedStatusPredicate)
 	favoriteQuery, err = db.applyGalleryCatalogFilters(favoriteQuery, filters)
 	if err != nil {
 		return nil, err

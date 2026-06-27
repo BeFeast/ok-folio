@@ -105,6 +105,18 @@ func TestNormalizeWidthsDedupesSortsAndClamps(t *testing.T) {
 	}
 }
 
+func TestNormalizeWarmConcurrencyClampsUpperBound(t *testing.T) {
+	if got := normalizeWarmConcurrency(0, zerolog.Nop()); got != 2 {
+		t.Fatalf("expected default concurrency 2, got %d", got)
+	}
+	if got := normalizeWarmConcurrency(MaxWarmConcurrency+10, zerolog.Nop()); got != MaxWarmConcurrency {
+		t.Fatalf("expected concurrency clamp to %d, got %d", MaxWarmConcurrency, got)
+	}
+	if got := normalizeWarmConcurrency(3, zerolog.Nop()); got != 3 {
+		t.Fatalf("expected concurrency 3, got %d", got)
+	}
+}
+
 func setupWarmDB(t *testing.T) *database.DB {
 	t.Helper()
 	gormDB, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{
