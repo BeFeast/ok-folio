@@ -52,7 +52,7 @@ export default function RunDetail() {
 
   return (
     <div className="space-y-6">
-      <div className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
+      <div className="rounded-lg border border-gray-200 bg-white p-5 shadow-xs">
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center space-x-4">
             <button

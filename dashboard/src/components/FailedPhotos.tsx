@@ -55,11 +55,11 @@ export default function FailedPhotos({ compact = false }: FailedPhotosProps) {
 
   if (isLoading) {
     return (
-      <section className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
+      <section className="rounded-lg border border-gray-200 bg-white p-5 shadow-xs">
         <h2 className="text-xl font-semibold text-gray-950">Failed downloads</h2>
         <div className="animate-pulse space-y-3">
           {[...Array(3)].map((_, i) => (
-            <div key={i} className="h-16 bg-gray-200 rounded"></div>
+            <div key={i} className="h-16 bg-gray-200 rounded-sm"></div>
           ))}
         </div>
       </section>
@@ -68,9 +68,9 @@ export default function FailedPhotos({ compact = false }: FailedPhotosProps) {
 
   if (error) {
     return (
-      <section className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
+      <section className="rounded-lg border border-gray-200 bg-white p-5 shadow-xs">
         <h2 className="text-xl font-semibold text-gray-950">Failed downloads</h2>
-        <div className="bg-red-50 border border-red-200 rounded p-4">
+        <div className="bg-red-50 border border-red-200 rounded-sm p-4">
           <p className="text-red-800">
             Error loading failed photos: {error.message}
           </p>
@@ -83,7 +83,7 @@ export default function FailedPhotos({ compact = false }: FailedPhotosProps) {
 
   if (photos.length === 0) {
     return (
-      <section className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
+      <section className="rounded-lg border border-gray-200 bg-white p-5 shadow-xs">
         <h2 className="text-xl font-semibold text-gray-950">Failed downloads</h2>
         <div className="mt-4 rounded-md border border-dashed border-gray-300 p-6 text-center text-gray-600">
           No failed downloads are reported by the API.
@@ -95,7 +95,7 @@ export default function FailedPhotos({ compact = false }: FailedPhotosProps) {
   const visiblePhotos = compact ? photos.slice(0, 6) : photos;
 
   return (
-    <section className="rounded-lg border border-gray-200 bg-white shadow-sm">
+    <section className="rounded-lg border border-gray-200 bg-white shadow-xs">
       <div className="flex flex-col gap-4 border-b border-gray-200 p-5 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
@@ -135,7 +135,7 @@ export default function FailedPhotos({ compact = false }: FailedPhotosProps) {
                       setSelectedPhotos(new Set());
                     }
                   }}
-                  className="rounded"
+                  className="rounded-sm"
                 />
               </th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -166,7 +166,7 @@ export default function FailedPhotos({ compact = false }: FailedPhotosProps) {
                     type="checkbox"
                     checked={selectedPhotos.has(photo.ID)}
                     onChange={() => togglePhoto(photo.ID)}
-                    className="rounded"
+                    className="rounded-sm"
                   />
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">

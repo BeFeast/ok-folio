@@ -83,7 +83,7 @@ export default function PieceDetail() {
         </div>
         <button
           type="button"
-          className={`w-fit rounded border px-4 py-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50 ${
+          className={`w-fit rounded-sm border px-4 py-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50 ${
             piece.favorite
               ? "border-[color:var(--folio-accent)] bg-[color:var(--folio-accent)] text-white hover:bg-[color:var(--folio-accent-strong)]"
               : "border-[color:var(--folio-line)] bg-[color:var(--folio-surface)] text-[color:var(--folio-ink)] hover:bg-[color:var(--folio-surface-muted)]"

@@ -16,7 +16,7 @@ export default function TopArtistsChart({ limit = 10 }: TopArtistsChartProps) {
 
   if (isLoading) {
     return (
-      <div className="bg-white rounded-lg shadow p-6">
+      <div className="bg-white rounded-lg shadow-sm p-6">
         <h2 className="text-xl font-bold mb-4">Top Artists</h2>
         <div className="h-64 flex items-center justify-center">
           <div className="animate-pulse text-gray-500">Loading chart...</div>
@@ -27,9 +27,9 @@ export default function TopArtistsChart({ limit = 10 }: TopArtistsChartProps) {
 
   if (error) {
     return (
-      <div className="bg-white rounded-lg shadow p-6">
+      <div className="bg-white rounded-lg shadow-sm p-6">
         <h2 className="text-xl font-bold mb-4">Top Artists</h2>
-        <div className="bg-red-50 border border-red-200 rounded p-4">
+        <div className="bg-red-50 border border-red-200 rounded-sm p-4">
           <p className="text-red-800">Error loading artists: {error.message}</p>
         </div>
       </div>
@@ -40,7 +40,7 @@ export default function TopArtistsChart({ limit = 10 }: TopArtistsChartProps) {
 
   if (artists.length === 0) {
     return (
-      <div className="bg-white rounded-lg shadow p-6">
+      <div className="bg-white rounded-lg shadow-sm p-6">
         <h2 className="text-xl font-bold mb-4">Top Artists</h2>
         <div className="h-64 flex items-center justify-center text-gray-500">
           No artist data available
@@ -50,7 +50,7 @@ export default function TopArtistsChart({ limit = 10 }: TopArtistsChartProps) {
   }
 
   return (
-    <div className="bg-white rounded-lg shadow p-6">
+    <div className="bg-white rounded-lg shadow-sm p-6">
       <h2 className="text-xl font-bold mb-4">Top Artists by Photo Count</h2>
       <ResponsiveContainer width="100%" height={300}>
         <BarChart data={artists} layout="vertical">

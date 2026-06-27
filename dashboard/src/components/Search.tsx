@@ -34,7 +34,7 @@ export default function Search() {
 
   return (
     <div className="space-y-6">
-      <div className="bg-white rounded-lg shadow p-6">
+      <div className="bg-white rounded-lg shadow-sm p-6">
         <h2 className="text-2xl font-bold mb-4">Search Photos</h2>
 
         {/* Search Input */}
@@ -76,7 +76,7 @@ export default function Search() {
         )}
 
         {error && (
-          <div className="bg-red-50 border border-red-200 rounded p-4">
+          <div className="bg-red-50 border border-red-200 rounded-sm p-4">
             <p className="text-red-800">Error searching photos</p>
           </div>
         )}

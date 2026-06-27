@@ -67,7 +67,7 @@ function ProviderStatus() {
 
   return (
     <section className="grid gap-4 lg:grid-cols-[1.2fr_1fr]">
-      <div className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
+      <div className="rounded-lg border border-gray-200 bg-white p-5 shadow-xs">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
@@ -216,7 +216,7 @@ function ProviderStatus() {
         ) : null}
       </div>
 
-      <div className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
+      <div className="rounded-lg border border-gray-200 bg-white p-5 shadow-xs">
         <div className="flex items-center justify-between">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
@@ -281,7 +281,7 @@ function LiveProgress() {
 
   if (!latestRun) {
     return (
-      <section className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
+      <section className="rounded-lg border border-gray-200 bg-white p-5 shadow-xs">
         <h2 className="text-xl font-semibold text-gray-950">Live progress</h2>
         <p className="mt-2 text-sm text-gray-600">
           No provider runs have been recorded yet.
@@ -298,7 +298,7 @@ function LiveProgress() {
   const failedWidth = (latestRun.PhotosFailed / progressTotal) * 100;
 
   return (
-    <section className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
+    <section className="rounded-lg border border-gray-200 bg-white p-5 shadow-xs">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
@@ -389,7 +389,7 @@ function RecentMedia() {
   }, [todayData?.photos, weekData?.photos]);
 
   return (
-    <section className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
+    <section className="rounded-lg border border-gray-200 bg-white p-5 shadow-xs">
       <div className="flex items-start justify-between gap-4">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">

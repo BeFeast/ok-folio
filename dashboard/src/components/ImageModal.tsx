@@ -118,14 +118,14 @@ export default function ImageModal({ photoId, photoIds = [], onClose, onNavigate
 
   return (
     <div
-      className="fixed inset-0 bg-black bg-opacity-90 z-50 flex items-center justify-center p-4"
+      className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4"
       onClick={onClose}
     >
       <div className="relative max-w-7xl max-h-full w-full h-full flex items-center justify-center">
         {/* Close button */}
         <button
           onClick={onClose}
-          className="absolute top-4 right-4 text-white bg-black bg-opacity-50 hover:bg-opacity-75 rounded-full p-2 z-10"
+          className="absolute top-4 right-4 text-white bg-black/50 hover:bg-black/75 rounded-full p-2 z-10"
           title="Close (Esc)"
         >
           <svg
@@ -147,7 +147,7 @@ export default function ImageModal({ photoId, photoIds = [], onClose, onNavigate
         {hasPrev && (
           <button
             onClick={(e) => { e.stopPropagation(); goToPrev(); }}
-            className="absolute left-4 top-1/2 -translate-y-1/2 text-white bg-black bg-opacity-50 hover:bg-opacity-75 rounded-full p-3 z-10"
+            className="absolute left-4 top-1/2 -translate-y-1/2 text-white bg-black/50 hover:bg-black/75 rounded-full p-3 z-10"
             title="Previous (Left Arrow)"
           >
             <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -160,7 +160,7 @@ export default function ImageModal({ photoId, photoIds = [], onClose, onNavigate
         {hasNext && (
           <button
             onClick={(e) => { e.stopPropagation(); goToNext(); }}
-            className="absolute right-4 top-1/2 -translate-y-1/2 text-white bg-black bg-opacity-50 hover:bg-opacity-75 rounded-full p-3 z-10"
+            className="absolute right-4 top-1/2 -translate-y-1/2 text-white bg-black/50 hover:bg-black/75 rounded-full p-3 z-10"
             title="Next (Right Arrow)"
           >
             <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
