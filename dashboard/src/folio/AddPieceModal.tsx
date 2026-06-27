@@ -1,0 +1,173 @@
+import { useRef, useState, type CSSProperties } from "react";
+import { useFolio } from "./context";
+import { BrandMark, CloseIcon, Hov } from "./ui";
+
+const FIELD_LABEL: CSSProperties = {
+  fontFamily: "var(--sans)",
+  fontSize: 11,
+  letterSpacing: "0.1em",
+  textTransform: "uppercase",
+  color: "var(--muted)",
+  marginBottom: 7,
+};
+const FIELD_BASE: CSSProperties = {
+  width: "100%",
+  appearance: "none",
+  border: 0,
+  borderBottom: "1px solid var(--line-2)",
+  background: "transparent",
+  outline: "none",
+  padding: "6px 0",
+  color: "var(--ink)",
+};
+
+function Field({
+  label,
+  placeholder,
+  value,
+  onChange,
+  serif,
+  textarea,
+}: {
+  label: string;
+  placeholder: string;
+  value: string;
+  onChange: (v: string) => void;
+  serif?: boolean;
+  textarea?: boolean;
+}) {
+  const style: CSSProperties = {
+    ...FIELD_BASE,
+    fontFamily: serif ? "var(--serif)" : "var(--sans)",
+    fontStyle: textarea ? "italic" : undefined,
+    fontSize: serif ? (textarea ? 15 : 17) : 14,
+    resize: textarea ? "none" : undefined,
+  };
+  return (
+    <label style={{ display: "block" }}>
+      <div style={FIELD_LABEL}>{label}</div>
+      {textarea ? (
+        <Hov as="textarea" rows={2} placeholder={placeholder} value={value} onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => onChange(e.target.value)} style={style} focus={{ borderColor: "var(--accent)" }} />
+      ) : (
+        <Hov as="input" placeholder={placeholder} value={value} onChange={(e: React.ChangeEvent<HTMLInputElement>) => onChange(e.target.value)} style={style} focus={{ borderColor: "var(--accent)" }} />
+      )}
+    </label>
+  );
+}
+
+export default function AddPieceModal() {
+  const { addOpen, closeAdd } = useFolio();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [fileName, setFileName] = useState("");
+  const [title, setTitle] = useState("");
+  const [source, setSource] = useState("");
+  const [artist, setArtist] = useState("");
+  const [date, setDate] = useState("");
+  const [notes, setNotes] = useState("");
+
+  if (!addOpen) return null;
+
+  return (
+    <div
+      onClick={closeAdd}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 100,
+        background: "rgba(12,9,6,0.7)",
+        backdropFilter: "blur(7px)",
+        WebkitBackdropFilter: "blur(7px)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 34,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{ width: "min(780px, 95vw)", maxHeight: "90vh", overflow: "auto", background: "var(--surface)", boxShadow: "0 50px 130px rgba(0,0,0,0.5)" }}
+      >
+        <div style={{ padding: "26px 32px", borderBottom: "1px solid var(--line)", display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
+          <div>
+            <div style={{ fontFamily: "var(--sans)", fontSize: 11, letterSpacing: "0.2em", textTransform: "uppercase", color: "var(--accent)" }}>Add Piece</div>
+            <h2 style={{ margin: "9px 0 0", fontFamily: "var(--serif)", fontWeight: 300, fontSize: 27, color: "var(--ink)", letterSpacing: "-0.01em" }}>Bring in a new piece</h2>
+          </div>
+          <Hov
+            as="button"
+            onClick={closeAdd}
+            aria-label="Close"
+            style={{ appearance: "none", cursor: "pointer", width: 34, height: 34, borderRadius: 99, border: "1px solid var(--line)", background: "transparent", color: "var(--muted)", display: "flex", alignItems: "center", justifyContent: "center" }}
+            hover={{ color: "var(--ink)", borderColor: "var(--line-2)" }}
+          >
+            <CloseIcon size={15} />
+          </Hov>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "0.92fr 1.08fr", gap: 0 }}>
+          <div style={{ padding: "26px 16px 26px 26px" }}>
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/*"
+              style={{ display: "none" }}
+              onChange={(e) => setFileName(e.target.files?.[0]?.name ?? "")}
+            />
+            <Hov
+              onClick={() => fileRef.current?.click()}
+              style={{ height: "100%", minHeight: 300, border: "1.5px dashed var(--line-2)", borderRadius: 8, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 15, padding: "34px 22px", textAlign: "center", background: "var(--surface-2)", cursor: "pointer" }}
+              hover={{ borderColor: "var(--accent-line)" }}
+            >
+              <BrandMark width={40} height={44} />
+              <div style={{ fontFamily: "var(--serif)", fontStyle: "italic", fontSize: 18, color: "var(--ink)" }}>
+                {fileName || "Drag an image here"}
+              </div>
+              <Hov
+                as="button"
+                onClick={(e: React.MouseEvent) => {
+                  e.stopPropagation();
+                  fileRef.current?.click();
+                }}
+                style={{ appearance: "none", cursor: "pointer", fontFamily: "var(--sans)", fontSize: 13, fontWeight: 500, padding: "9px 18px", borderRadius: 99, border: "1px solid var(--line-2)", background: "var(--surface)", color: "var(--ink)" }}
+                hover={{ borderColor: "var(--accent-line)", color: "var(--accent)" }}
+              >
+                Choose a file
+              </Hov>
+              <div style={{ fontFamily: "var(--sans)", fontSize: 11, color: "var(--faint)", letterSpacing: "0.04em" }}>JPEG · PNG · TIFF · WebP · HEIC</div>
+            </Hov>
+          </div>
+          <div style={{ padding: "26px 28px 26px 16px", display: "flex", flexDirection: "column", gap: 18 }}>
+            <Field label="Title" placeholder="Untitled piece" value={title} onChange={setTitle} serif />
+            <Field label="Source" placeholder="Where it came from" value={source} onChange={setSource} />
+            <Field label="Author / artist" placeholder="Unknown" value={artist} onChange={setArtist} />
+            <Field label="Date" placeholder="When it was made" value={date} onChange={setDate} />
+            <Field label="Notes" placeholder="Why you kept it." value={notes} onChange={setNotes} serif textarea />
+          </div>
+        </div>
+
+        <div style={{ padding: "18px 32px", borderTop: "1px solid var(--line)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 18 }}>
+          <div style={{ fontFamily: "var(--sans)", fontSize: 11.5, color: "var(--faint)", maxWidth: 300, lineHeight: 1.5 }}>
+            Dimensions, colour, and similar pieces are filled in quietly after import.
+          </div>
+          <div style={{ display: "flex", gap: 11, flex: "none" }}>
+            <Hov
+              as="button"
+              onClick={closeAdd}
+              style={{ appearance: "none", cursor: "pointer", fontFamily: "var(--sans)", fontSize: 13.5, padding: "10px 18px", borderRadius: 99, border: 0, background: "transparent", color: "var(--muted)" }}
+              hover={{ color: "var(--ink)" }}
+            >
+              Cancel
+            </Hov>
+            <Hov
+              as="button"
+              onClick={closeAdd}
+              style={{ appearance: "none", cursor: "pointer", fontFamily: "var(--sans)", fontSize: 13.5, fontWeight: 500, padding: "10px 22px", borderRadius: 99, border: 0, background: "var(--accent)", color: "var(--on-accent)" }}
+              hover={{ filter: "brightness(1.06)" }}
+            >
+              Add Piece
+            </Hov>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

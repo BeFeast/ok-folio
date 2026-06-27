@@ -2,36 +2,117 @@
 
 :root {
   color-scheme: light;
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --folio-paper: #f7f1e7;
-  --folio-surface: #fffdf8;
-  --folio-surface-muted: #efe6d8;
-  --folio-ink: #171412;
-  --folio-graphite: #5f5953;
-  --folio-line: #ded2c2;
-  --folio-accent: #9f3f32;
-  --folio-accent-strong: #7f2f27;
-  --folio-shadow: 0 24px 70px rgb(54 42 32 / 0.12);
+
+  /* OK Folio design tokens (light defaults).
+     The runtime theme applier overrides these inline on <html> for theme
+     switching; these values keep first paint correct before JS runs. */
+  --bg: #f3efe7;
+  --surface: #fbf9f3;
+  --surface-2: #ffffff;
+  --wall: #e7e1d5;
+  --ink: #1c1a16;
+  --graphite: #57534b;
+  --muted: #8b847a;
+  --faint: #b6ae9f;
+  --line: #e6dfd2;
+  --line-2: #d8cfbe;
+  --accent: #7c2420;
+  --accent-soft: rgba(124, 36, 32, 0.08);
+  --accent-line: rgba(124, 36, 32, 0.34);
+  --on-accent: #fbf6ee;
+  --shadow: rgba(48, 40, 28, 0.1);
+  --shadow-2: rgba(48, 40, 28, 0.2);
+  --serif: "Newsreader", Georgia, "Times New Roman", serif;
+  --sans: "Instrument Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  /* Legacy operations surfaces reference --folio-* — alias them onto the new
+     tokens so those pages follow the active theme automatically. */
+  --folio-paper: var(--bg);
+  --folio-surface: var(--surface);
+  --folio-surface-muted: var(--wall);
+  --folio-ink: var(--ink);
+  --folio-graphite: var(--graphite);
+  --folio-line: var(--line);
+  --folio-accent: var(--accent);
+  --folio-accent-strong: var(--accent);
+  --folio-shadow: 0 24px 70px var(--shadow);
+
+  font-family: var(--sans);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
 }
 
 body {
-  margin: 0;
   min-height: 100vh;
-  background-color: var(--folio-paper);
-  color: var(--folio-ink);
+  background: var(--bg);
+  color: var(--ink);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    color-scheme: dark;
-    --folio-paper: #171412;
-    --folio-surface: #211d19;
-    --folio-surface-muted: #2f2923;
-    --folio-ink: #f7f1e7;
-    --folio-graphite: #c4b8aa;
-    --folio-line: #463b33;
-    --folio-accent: #c45a48;
-    --folio-accent-strong: #e07761;
-    --folio-shadow: 0 24px 70px rgb(0 0 0 / 0.34);
+::selection {
+  background: rgba(124, 36, 32, 0.16);
+}
+
+img {
+  -webkit-user-drag: none;
+  user-select: none;
+}
+
+::-webkit-scrollbar {
+  width: 11px;
+  height: 11px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--line-2);
+  border-radius: 99px;
+  border: 3px solid var(--bg);
+}
+
+@keyframes okf-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
   }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes okf-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes okf-pop {
+  0% {
+    transform: scale(1);
+  }
+  38% {
+    transform: scale(1.35);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* Honor the Reduce-motion preference toggled in Settings. */
+:root[data-reduce-motion="1"] *,
+:root[data-reduce-motion="1"] *::before,
+:root[data-reduce-motion="1"] *::after {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
 }

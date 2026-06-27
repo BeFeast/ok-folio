@@ -5,6 +5,53 @@
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>OK Folio</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,200..600;1,6..72,200..500&family=Instrument+Sans:ital,wght@0,400..700;1,400..600&display=swap"
+      rel="stylesheet"
+    />
+    <script>
+      // Apply the saved theme tokens before first paint to avoid a flash.
+      (function () {
+        var SERIF = "'Newsreader', Georgia, 'Times New Roman', serif";
+        var SANS =
+          "'Instrument Sans', system-ui, -apple-system, 'Segoe UI', sans-serif";
+        var T = {
+          light: {
+            "--bg": "#F3EFE7", "--surface": "#FBF9F3", "--surface-2": "#FFFFFF",
+            "--wall": "#E7E1D5", "--ink": "#1C1A16", "--graphite": "#57534B",
+            "--muted": "#8B847A", "--faint": "#B6AE9F", "--line": "#E6DFD2",
+            "--line-2": "#D8CFBE", "--accent": "#7C2420",
+            "--accent-soft": "rgba(124,36,32,0.08)",
+            "--accent-line": "rgba(124,36,32,0.34)", "--on-accent": "#FBF6EE",
+            "--shadow": "rgba(48,40,28,0.10)", "--shadow-2": "rgba(48,40,28,0.20)",
+            "--serif": SERIF, "--sans": SANS,
+          },
+          dark: {
+            "--bg": "#141210", "--surface": "#1C1915", "--surface-2": "#232019",
+            "--wall": "#0C0B09", "--ink": "#F0EBE0", "--graphite": "#ABA495",
+            "--muted": "#7E7768", "--faint": "#5C5648", "--line": "#2B2720",
+            "--line-2": "#3A352B", "--accent": "#C75D49",
+            "--accent-soft": "rgba(199,93,73,0.15)",
+            "--accent-line": "rgba(199,93,73,0.5)", "--on-accent": "#15110D",
+            "--shadow": "rgba(0,0,0,0.5)", "--shadow-2": "rgba(0,0,0,0.66)",
+            "--serif": SERIF, "--sans": SANS,
+          },
+        };
+        function apply(name) {
+          var t = T[name] || T.light;
+          var r = document.documentElement;
+          for (var k in t) r.style.setProperty(k, t[k]);
+          r.style.colorScheme = name === "dark" ? "dark" : "light";
+        }
+        var saved;
+        try {
+          saved = localStorage.getItem("okfolio-theme");
+        } catch (e) {}
+        apply(saved === "dark" ? "dark" : "light");
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

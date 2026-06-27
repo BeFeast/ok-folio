@@ -1,0 +1,155 @@
+import { useQuery } from "@tanstack/react-query";
+import { fetchConnectorStatus } from "../api";
+import type { ConnectorStatus } from "../types";
+import { DotsIcon, OutlineButton, PageHeader } from "./ui";
+
+function formatAgo(iso: string | null): string {
+  if (!iso) return "never";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "never";
+  const s = Math.floor((Date.now() - d.getTime()) / 1000);
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)} min ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)} hours ago`;
+  const days = Math.floor(s / 86400);
+  if (days === 1) return "yesterday";
+  if (days < 30) return `${days} days ago`;
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function weekCount(s: ConnectorStatus): number {
+  const cutoff = Date.now() - 7 * 86_400_000;
+  return (s.recent_runs ?? []).reduce((sum, r) => {
+    const t = new Date(r.start_time).getTime();
+    return !Number.isNaN(t) && t >= cutoff ? sum + (r.photos_downloaded || 0) : sum;
+  }, 0);
+}
+
+function statusView(health: ConnectorStatus["health"]): {
+  label: string;
+  dot: string;
+  color: string;
+} {
+  switch (health) {
+    case "healthy":
+      return { label: "Active", dot: "var(--accent)", color: "var(--graphite)" };
+    case "syncing":
+      return { label: "Syncing", dot: "var(--accent)", color: "var(--graphite)" };
+    case "degraded":
+      return { label: "Degraded", dot: "var(--accent)", color: "var(--graphite)" };
+    case "error":
+      return { label: "Error", dot: "var(--accent)", color: "var(--graphite)" };
+    default:
+      return { label: "Idle", dot: "var(--faint)", color: "var(--muted)" };
+  }
+}
+
+function StreamRow({ s }: { s: ConnectorStatus }) {
+  const sv = statusView(s.health);
+  const initial = (s.display_name || "?").trim().charAt(0).toUpperCase() || "?";
+  const sourceCount = s.sources?.length ?? 0;
+  const kind = sourceCount > 1 ? `Connector · ${sourceCount} sources` : "Connector";
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 20,
+        padding: "18px 22px",
+        border: "1px solid var(--line)",
+        borderRadius: 6,
+        background: "var(--surface)",
+      }}
+    >
+      <div
+        style={{
+          flex: "none",
+          width: 46,
+          height: 46,
+          borderRadius: 8,
+          background: "var(--surface-2)",
+          border: "1px solid var(--line)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontFamily: "var(--serif)",
+          fontSize: 19,
+          color: "var(--graphite)",
+        }}
+      >
+        {initial}
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontFamily: "var(--sans)", fontSize: 15, fontWeight: 500, color: "var(--ink)" }}>{s.display_name}</div>
+        <div style={{ fontFamily: "var(--sans)", fontSize: 12.5, color: "var(--muted)", marginTop: 3 }}>
+          {kind} · last gathered {formatAgo(s.last_sync)}
+        </div>
+      </div>
+      <div style={{ flex: "none", display: "flex", alignItems: "center", gap: 8, width: 104 }}>
+        <span style={{ width: 7, height: 7, borderRadius: 99, background: sv.dot }} />
+        <span style={{ fontFamily: "var(--sans)", fontSize: 13, color: sv.color }}>{sv.label}</span>
+      </div>
+      <div style={{ flex: "none", textAlign: "right", width: 96 }}>
+        <div style={{ fontFamily: "var(--serif)", fontSize: 22, color: "var(--ink)", lineHeight: 1 }}>{weekCount(s)}</div>
+        <div style={{ fontFamily: "var(--sans)", fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--faint)", marginTop: 4 }}>this week</div>
+      </div>
+      <button
+        aria-label="Stream settings"
+        style={{
+          flex: "none",
+          appearance: "none",
+          cursor: "pointer",
+          width: 34,
+          height: 34,
+          borderRadius: 99,
+          border: "1px solid var(--line)",
+          background: "transparent",
+          color: "var(--muted)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <DotsIcon />
+      </button>
+    </div>
+  );
+}
+
+export default function Streams() {
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ["folio-connectors"],
+    queryFn: fetchConnectorStatus,
+  });
+  const connectors = data?.connectors ?? [];
+
+  return (
+    <div>
+      <PageHeader
+        eyebrow="Streams · backstage"
+        title="Where pieces come in"
+        subcopy="The quiet machinery behind the gallery. Tend it when you need to."
+        action={<OutlineButton>Add a stream</OutlineButton>}
+      />
+      <section style={{ maxWidth: 920, padding: "34px 0 0", display: "flex", flexDirection: "column", gap: 12 }}>
+        {isError ? (
+          <div style={{ padding: "60px 0", fontFamily: "var(--serif)", fontStyle: "italic", fontSize: 20, color: "var(--graphite)" }}>
+            The streams could not be reached.
+          </div>
+        ) : isLoading ? (
+          <div style={{ padding: "60px 0", fontFamily: "var(--sans)", fontSize: 14, color: "var(--muted)" }}>Loading streams…</div>
+        ) : connectors.length === 0 ? (
+          <div style={{ padding: "60px 0", fontFamily: "var(--serif)", fontStyle: "italic", fontSize: 20, color: "var(--graphite)" }}>
+            No streams yet.
+          </div>
+        ) : (
+          connectors.map((s) => <StreamRow key={s.id} s={s} />)
+        )}
+        <p style={{ fontFamily: "var(--sans)", fontSize: 12.5, color: "var(--faint)", margin: "14px 2px 0", lineHeight: 1.6 }}>
+          Streams run on their own schedule. New pieces land in your Inbox for review before they settle into the Gallery. No
+          source defines the collection — it is yours.
+        </p>
+      </section>
+    </div>
+  );
+}

@@ -982,10 +982,13 @@ func (db *DB) GetGalleryCatalog(limit int, offset int, filters GalleryCatalogFil
 		return nil, 0, err
 	}
 
+	// NULLS LAST: backfilled/seeded rows can have a NULL downloaded_at, and
+	// Postgres sorts NULLs first under DESC — which would float the entire
+	// undated backlog above genuinely-recent pieces. Keep real arrivals on top.
 	err = query.
 		Limit(limit).
 		Offset(offset).
-		Order("downloaded_at DESC, id DESC").
+		Order("downloaded_at DESC NULLS LAST, id DESC").
 		Find(&photos).Error
 	if err != nil {
 		return nil, 0, err

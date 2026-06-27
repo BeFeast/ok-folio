@@ -19,11 +19,14 @@ import (
 )
 
 const (
-	// Thumbnail dimensions
-	ThumbnailWidth  = 128
-	ThumbnailHeight = 96
+	// DefaultThumbnailSize is the bounding box (longest side, px) when no size
+	// is requested. Sized up from the original 128px so grid tiles stay crisp
+	// on HiDPI displays. Callers may request a size via ?w= (clamped below).
+	DefaultThumbnailSize = 400
+	MinThumbnailSize     = 64
+	MaxThumbnailSize     = 1024
 	// JPEG quality for thumbnails
-	ThumbnailQuality = 80
+	ThumbnailQuality = 82
 
 	immutableImageCacheControl = "public, max-age=31536000, immutable"
 )
@@ -50,6 +53,11 @@ func (s *Server) handleImageThumbnail(w http.ResponseWriter, r *http.Request) {
 		filePath = filepath.Join(s.cfg.Storage.BaseDirectory, filePath)
 	}
 
+	size := thumbnailSize(r)
+
+	// The validator is the content-hash ETag (shared with the full image).
+	// Each requested size is a distinct URL (?w=), so HTTP caches key on the
+	// URL and never serve one size's bytes for another.
 	etag, err := imageETag(photo, filePath)
 	if err != nil {
 		s.logger.Error().Err(err).Str("file_path", photo.FilePath).Msg("Failed to build image validator")
@@ -82,8 +90,8 @@ func (s *Server) handleImageThumbnail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create thumbnail (fit into 128x96 rectangle)
-	thumbnail := imaging.Fit(img, ThumbnailWidth, ThumbnailHeight, imaging.Lanczos)
+	// Create thumbnail (fit into a size×size box, preserving aspect ratio)
+	thumbnail := imaging.Fit(img, size, size, imaging.Lanczos)
 
 	// Encode and send thumbnail
 	if err := jpeg.Encode(w, thumbnail, &jpeg.Options{Quality: ThumbnailQuality}); err != nil {
@@ -182,6 +190,24 @@ func imageETag(photo *database.DownloadedPhoto, filePath string) (string, error)
 
 func quoteETag(value string) string {
 	return `"` + value + `"`
+}
+
+// thumbnailSize returns the requested thumbnail bounding size (longest side),
+// clamped to a safe range. Defaults to DefaultThumbnailSize when ?w= is absent.
+func thumbnailSize(r *http.Request) int {
+	size := DefaultThumbnailSize
+	if v := r.URL.Query().Get("w"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			size = n
+		}
+	}
+	if size < MinThumbnailSize {
+		size = MinThumbnailSize
+	}
+	if size > MaxThumbnailSize {
+		size = MaxThumbnailSize
+	}
+	return size
 }
 
 func requestETagMatches(r *http.Request, etag string) bool {
