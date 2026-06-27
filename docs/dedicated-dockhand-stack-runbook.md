@@ -9,6 +9,7 @@ vault copy or any rendered `.env` file.
 
 - Compose template: `deploy/dockhand/ok-folio/compose.yaml`
 - Valkey config template: `deploy/dockhand/ok-folio/valkey.conf.template`
+- OK Folio runtime config template: `deploy/dockhand/ok-folio/config.yaml.template`
 - Postgres initdb: `deploy/dockhand/ok-folio/initdb/010-vector-extensions.sh`
 - Static template check: `scripts/check-ok-folio-stack-template.sh`
 - Rendered legacy mount assertion: `scripts/assert-rendered-legacy-mounts-ro.sh`
@@ -113,6 +114,7 @@ PHOTO_ORIGINALS_HOST_PATH=<photo-originals-host-path>
 PHOTO_DAILY_HOST_PATH=<photo-daily-host-path>
 PHOTOPRISM_STORAGE_HOST_PATH=<photoprism-storage-host-path>
 TELEGRAM_BOT_TOKEN=<telegram-bot-token>
+TELEGRAM_CHAT_ID=<telegram-chat-id>
 TELEGRAM_USERNAME=<telegram-username>
 REGISTRY_URL=<registry-host>
 REGISTRY_USERNAME=<push-scoped-ci-user>
@@ -176,6 +178,10 @@ envsubst '$VALKEY_PASSWORD $VALKEY_MAXMEMORY $VALKEY_MAXMEMORY_POLICY' \
   < valkey.conf.template > "$OK_FOLIO_VALKEY_CONFIG_HOST_PATH"
 chown 999:1000 "$OK_FOLIO_VALKEY_CONFIG_HOST_PATH"
 chmod 0400 "$OK_FOLIO_VALKEY_CONFIG_HOST_PATH"
+envsubst '$DB_USER $DB_PASSWORD $DB_NAME $VALKEY_PASSWORD $TELEGRAM_BOT_TOKEN $TELEGRAM_CHAT_ID $TELEGRAM_USERNAME' \
+  < config.yaml.template > "$OK_FOLIO_CONFIG_HOST_PATH"
+chown 1000:1000 "$OK_FOLIO_CONFIG_HOST_PATH"
+chmod 0400 "$OK_FOLIO_CONFIG_HOST_PATH"
 envsubst '$PHOTO_ORIGINALS_HOST_PATH $PHOTO_DAILY_HOST_PATH $PHOTOPRISM_STORAGE_HOST_PATH' \
   < compose.yaml > compose.mounts.rendered.yaml
 ./assert-rendered-legacy-mounts-ro.sh compose.mounts.rendered.yaml
