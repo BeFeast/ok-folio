@@ -110,6 +110,13 @@ func TestUpsertDownloadedPhotoCoercesLegacyEmptyDatetimesToNull(t *testing.T) {
 	}
 	assertNullTimeColumn(t, db.DB, DownloadedPhotosTable, "upload_date", 6044)
 	assertNullTimeColumn(t, db.DB, DownloadedPhotosTable, "downloaded_at", 6044)
+	var stored database.DownloadedPhoto
+	if err := db.First(&stored, 6044).Error; err != nil {
+		t.Fatalf("load nullable downloaded_photo model: %v", err)
+	}
+	if stored.UploadDate != nil || stored.DownloadedAt != nil {
+		t.Fatalf("expected nullable model times to scan as nil, got upload_date=%v downloaded_at=%v", stored.UploadDate, stored.DownloadedAt)
+	}
 }
 
 func TestUpsertExtractionRunCoercesLegacyZeroDatetimesToNull(t *testing.T) {
@@ -132,6 +139,13 @@ func TestUpsertExtractionRunCoercesLegacyZeroDatetimesToNull(t *testing.T) {
 	}
 	assertNullTimeColumn(t, db.DB, ExtractionRunsTable, "start_time", 7)
 	assertNullTimeColumn(t, db.DB, ExtractionRunsTable, "end_time", 7)
+	var stored database.ExtractionRun
+	if err := db.First(&stored, 7).Error; err != nil {
+		t.Fatalf("load nullable extraction_run model: %v", err)
+	}
+	if stored.StartTime != nil || stored.EndTime != nil {
+		t.Fatalf("expected nullable model times to scan as nil, got start_time=%v end_time=%v", stored.StartTime, stored.EndTime)
+	}
 }
 
 func TestFillMissingContentHashesReadsOriginalsAndIsIdempotent(t *testing.T) {

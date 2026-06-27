@@ -29,6 +29,10 @@ func setupTestDB(t *testing.T) *DB {
 	return &DB{gormDB}
 }
 
+func ptrTime(t time.Time) *time.Time {
+	return &t
+}
+
 func TestIsPhotoDownloaded_NotDownloaded(t *testing.T) {
 	db := setupTestDB(t)
 
@@ -96,7 +100,7 @@ func TestRecordDownload_Success(t *testing.T) {
 		SourcePage: "https://example.com/page/1",
 		Title:      "Beautiful Landscape",
 		Artist:     "John Doe",
-		UploadDate: time.Now(),
+		UploadDate: ptrTime(time.Now()),
 		FilePath:   filepath.Join(t.TempDir(), "photos", "john-doe", "photo1.jpg"),
 		FileName:   "photo1.jpg",
 		FileSize:   1024000,
@@ -443,7 +447,7 @@ func TestStartExtractionRun(t *testing.T) {
 	if run.Status != "running" {
 		t.Errorf("Expected status 'running', got '%s'", run.Status)
 	}
-	if run.StartTime.IsZero() {
+	if run.StartTime == nil || run.StartTime.IsZero() {
 		t.Error("Expected start time to be set")
 	}
 }
@@ -549,7 +553,7 @@ func TestGetRecentRuns(t *testing.T) {
 
 	// Verify they're in descending order by start time
 	for i := 1; i < len(runs); i++ {
-		if runs[i].StartTime.After(runs[i-1].StartTime) {
+		if runs[i].StartTime == nil || runs[i-1].StartTime == nil || runs[i].StartTime.After(*runs[i-1].StartTime) {
 			t.Error("Runs are not in descending order by start time")
 		}
 	}
@@ -573,12 +577,12 @@ func TestGetRecentConnectorRunsReturnsLimitPerProvider(t *testing.T) {
 
 	base := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
 	fixtures := []ExtractionRun{
-		{StartTime: base.Add(1 * time.Minute), Provider: "webgallery", Status: "completed"},
-		{StartTime: base.Add(2 * time.Minute), Provider: "webgallery", Status: "failed"},
-		{StartTime: base.Add(3 * time.Minute), Provider: "webgallery", Status: "completed"},
-		{StartTime: base.Add(4 * time.Minute), Provider: "telegram", Status: "completed"},
-		{StartTime: base.Add(5 * time.Minute), Provider: "telegram", Status: "failed"},
-		{StartTime: base.Add(6 * time.Minute), Status: "completed"},
+		{StartTime: ptrTime(base.Add(1 * time.Minute)), Provider: "webgallery", Status: "completed"},
+		{StartTime: ptrTime(base.Add(2 * time.Minute)), Provider: "webgallery", Status: "failed"},
+		{StartTime: ptrTime(base.Add(3 * time.Minute)), Provider: "webgallery", Status: "completed"},
+		{StartTime: ptrTime(base.Add(4 * time.Minute)), Provider: "telegram", Status: "completed"},
+		{StartTime: ptrTime(base.Add(5 * time.Minute)), Provider: "telegram", Status: "failed"},
+		{StartTime: ptrTime(base.Add(6 * time.Minute)), Status: "completed"},
 	}
 	for i := range fixtures {
 		if err := db.Create(&fixtures[i]).Error; err != nil {
@@ -603,7 +607,7 @@ func TestGetRecentConnectorRunsReturnsLimitPerProvider(t *testing.T) {
 		t.Fatalf("Expected two runs per provider, got counts=%#v runs=%#v", counts, runs)
 	}
 	for i := 1; i < len(runs); i++ {
-		if runs[i].StartTime.After(runs[i-1].StartTime) {
+		if runs[i].StartTime == nil || runs[i-1].StartTime == nil || runs[i].StartTime.After(*runs[i-1].StartTime) {
 			t.Fatalf("Expected connector runs in descending order, got %#v", runs)
 		}
 	}
@@ -838,7 +842,7 @@ func TestGetGalleryCatalog(t *testing.T) {
 			Artist:       "Artist A",
 			FilePath:     filepath.Join(t.TempDir(), "old.jpg"),
 			FileName:     "old.jpg",
-			DownloadedAt: baseTime.Add(-2 * time.Hour),
+			DownloadedAt: ptrTime(baseTime.Add(-2 * time.Hour)),
 			Status:       "downloaded",
 		},
 		{
@@ -848,7 +852,7 @@ func TestGetGalleryCatalog(t *testing.T) {
 			Artist:       "Artist B",
 			FilePath:     filepath.Join(t.TempDir(), "new.jpg"),
 			FileName:     "new.jpg",
-			DownloadedAt: baseTime,
+			DownloadedAt: ptrTime(baseTime),
 			Status:       "downloaded",
 		},
 		{
@@ -857,7 +861,7 @@ func TestGetGalleryCatalog(t *testing.T) {
 			Title:        "Failed Download",
 			FilePath:     filepath.Join(t.TempDir(), "failed.jpg"),
 			FileName:     "failed.jpg",
-			DownloadedAt: baseTime.Add(time.Hour),
+			DownloadedAt: ptrTime(baseTime.Add(time.Hour)),
 			Status:       "failed",
 		},
 	}
@@ -955,7 +959,7 @@ func TestGetGalleryCatalogFiltersCategoryArtistAndFavorites(t *testing.T) {
 			Artist:       "Artist A",
 			FilePath:     filepath.Join(t.TempDir(), "favorite.jpg"),
 			FileName:     "favorite.jpg",
-			DownloadedAt: baseTime,
+			DownloadedAt: ptrTime(baseTime),
 			Status:       "downloaded",
 		},
 		{
@@ -965,7 +969,7 @@ func TestGetGalleryCatalogFiltersCategoryArtistAndFavorites(t *testing.T) {
 			Artist:       "Artist B",
 			FilePath:     filepath.Join(t.TempDir(), "plain.jpg"),
 			FileName:     "plain.jpg",
-			DownloadedAt: baseTime.Add(-time.Minute),
+			DownloadedAt: ptrTime(baseTime.Add(-time.Minute)),
 			Status:       "downloaded",
 		},
 		{
@@ -975,7 +979,7 @@ func TestGetGalleryCatalogFiltersCategoryArtistAndFavorites(t *testing.T) {
 			Artist:       "Artist A",
 			FilePath:     filepath.Join(t.TempDir(), "other.jpg"),
 			FileName:     "other.jpg",
-			DownloadedAt: baseTime.Add(-2 * time.Minute),
+			DownloadedAt: ptrTime(baseTime.Add(-2 * time.Minute)),
 			Status:       "downloaded",
 		},
 	}
@@ -1078,7 +1082,7 @@ func TestGetGalleryCatalogCategoryFilterMatchesFacetParser(t *testing.T) {
 			Title:        "Cat One Download",
 			FilePath:     filepath.Join(t.TempDir(), "cat-one.jpg"),
 			FileName:     "cat-one.jpg",
-			DownloadedAt: baseTime,
+			DownloadedAt: ptrTime(baseTime),
 			Status:       "downloaded",
 		},
 		{
@@ -1087,7 +1091,7 @@ func TestGetGalleryCatalogCategoryFilterMatchesFacetParser(t *testing.T) {
 			Title:        "Category Ten Download",
 			FilePath:     filepath.Join(t.TempDir(), "category-ten.jpg"),
 			FileName:     "category-ten.jpg",
-			DownloadedAt: baseTime.Add(-time.Minute),
+			DownloadedAt: ptrTime(baseTime.Add(-time.Minute)),
 			Status:       "downloaded",
 		},
 		{
@@ -1096,7 +1100,7 @@ func TestGetGalleryCatalogCategoryFilterMatchesFacetParser(t *testing.T) {
 			Title:        "Category ID Two Download",
 			FilePath:     filepath.Join(t.TempDir(), "category-id-two.jpg"),
 			FileName:     "category-id-two.jpg",
-			DownloadedAt: baseTime.Add(-2 * time.Minute),
+			DownloadedAt: ptrTime(baseTime.Add(-2 * time.Minute)),
 			Status:       "downloaded",
 		},
 	}
@@ -1147,7 +1151,7 @@ func TestGetGalleryCatalogFiltersEmptyArtistWhenSet(t *testing.T) {
 			Title:        "Unknown Artist Download",
 			FilePath:     filepath.Join(t.TempDir(), "unknown-artist.jpg"),
 			FileName:     "unknown-artist.jpg",
-			DownloadedAt: baseTime,
+			DownloadedAt: ptrTime(baseTime),
 			Status:       "downloaded",
 		},
 		{
@@ -1157,7 +1161,7 @@ func TestGetGalleryCatalogFiltersEmptyArtistWhenSet(t *testing.T) {
 			Artist:       "Artist A",
 			FilePath:     filepath.Join(t.TempDir(), "known-artist.jpg"),
 			FileName:     "known-artist.jpg",
-			DownloadedAt: baseTime.Add(-time.Minute),
+			DownloadedAt: ptrTime(baseTime.Add(-time.Minute)),
 			Status:       "downloaded",
 		},
 	}
@@ -1187,7 +1191,7 @@ func TestGetGalleryCatalogUnknownProviderIncludesEmptySource(t *testing.T) {
 			Title:        "Legacy Download",
 			FilePath:     filepath.Join(t.TempDir(), "legacy.jpg"),
 			FileName:     "legacy.jpg",
-			DownloadedAt: baseTime,
+			DownloadedAt: ptrTime(baseTime),
 			Status:       "downloaded",
 		},
 		{
@@ -1196,7 +1200,7 @@ func TestGetGalleryCatalogUnknownProviderIncludesEmptySource(t *testing.T) {
 			Title:        "Web Download",
 			FilePath:     filepath.Join(t.TempDir(), "sight.jpg"),
 			FileName:     "sight.jpg",
-			DownloadedAt: baseTime.Add(time.Minute),
+			DownloadedAt: ptrTime(baseTime.Add(time.Minute)),
 			Status:       "downloaded",
 		},
 	}
@@ -1227,7 +1231,7 @@ func TestGetGalleryCatalogProviderEscapesLikeWildcards(t *testing.T) {
 			Title:        "Exact Provider Download",
 			FilePath:     filepath.Join(t.TempDir(), "exact.jpg"),
 			FileName:     "exact.jpg",
-			DownloadedAt: baseTime,
+			DownloadedAt: ptrTime(baseTime),
 			Status:       "downloaded",
 		},
 		{
@@ -1236,7 +1240,7 @@ func TestGetGalleryCatalogProviderEscapesLikeWildcards(t *testing.T) {
 			Title:        "Wildcard Lookalike Download",
 			FilePath:     filepath.Join(t.TempDir(), "wildcard.jpg"),
 			FileName:     "wildcard.jpg",
-			DownloadedAt: baseTime.Add(time.Minute),
+			DownloadedAt: ptrTime(baseTime.Add(time.Minute)),
 			Status:       "downloaded",
 		},
 	}
@@ -1271,7 +1275,7 @@ func TestDownloadedPhoto_AutoCreateTime(t *testing.T) {
 		t.Fatalf("Failed to record download: %v", err)
 	}
 
-	if photo.DownloadedAt.IsZero() {
+	if photo.DownloadedAt == nil || photo.DownloadedAt.IsZero() {
 		t.Error("Expected DownloadedAt to be automatically set")
 	}
 }
@@ -1284,7 +1288,7 @@ func TestExtractionRun_AutoCreateTime(t *testing.T) {
 		t.Fatalf("Failed to start run: %v", err)
 	}
 
-	if run.StartTime.IsZero() {
+	if run.StartTime == nil || run.StartTime.IsZero() {
 		t.Error("Expected StartTime to be automatically set")
 	}
 }

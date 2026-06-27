@@ -174,7 +174,7 @@ jobs:
           IMAGE_REF: ${{ steps.image.outputs.image }}:${{ steps.image.outputs.smoke_tag }}
         run: |
           set -euo pipefail
-          docker run --rm --entrypoint /app/ok-folio-etl "$IMAGE_REF" --help
+          docker run --rm --entrypoint /app/ok-folio-etl "$IMAGE_REF" print-legacy-checks --legacy-database ok_folio_smoke >/dev/null
 
       - name: Log in to registry
         uses: docker/login-action@v3

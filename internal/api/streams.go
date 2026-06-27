@@ -46,7 +46,7 @@ type connectorSourceStatus struct {
 
 type connectorRunStatus struct {
 	ID               uint64     `json:"id"`
-	StartTime        time.Time  `json:"start_time"`
+	StartTime        *time.Time `json:"start_time"`
 	EndTime          *time.Time `json:"end_time"`
 	Status           string     `json:"status"`
 	PagesProcessed   int        `json:"pages_processed"`
@@ -350,9 +350,8 @@ func extractionRunLastSync(run database.ExtractionRun) *time.Time {
 	if run.EndTime != nil && !run.EndTime.IsZero() {
 		return run.EndTime
 	}
-	if !run.StartTime.IsZero() {
-		value := run.StartTime
-		return &value
+	if run.StartTime != nil && !run.StartTime.IsZero() {
+		return run.StartTime
 	}
 	return nil
 }
