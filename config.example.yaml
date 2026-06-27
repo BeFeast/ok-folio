@@ -64,6 +64,16 @@ photoprism:
   username: "admin"
   password: "change-me"
 
+telegram:
+  # Supply the real token through the deployment secret store as
+  # TELEGRAM_BOT_TOKEN, never in this file.
+  bot_token: ""
+  base_url: "https://api.telegram.org"
+  file_base_url: "https://api.telegram.org/file"
+  chat_id: ""
+  display_name: "Telegram"
+  limit: 100
+
 logging:
   level: "info"
   format: "json"

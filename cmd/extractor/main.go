@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -12,8 +14,13 @@ import (
 	okfcache "ok-folio/internal/cache"
 	"ok-folio/internal/config"
 	"ok-folio/internal/database"
+	"ok-folio/internal/ingest"
+	"ok-folio/internal/provider"
+	"ok-folio/internal/provider/telegram"
+	"ok-folio/internal/provider/webgallery"
 	"ok-folio/internal/scheduler"
 	"ok-folio/internal/scraper"
+	"ok-folio/pkg/retry"
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
@@ -79,6 +86,7 @@ func main() {
 
 	// Create scraper
 	scraperInstance := scraper.New(cfg, db, logger)
+	connectors := buildConnectors(cfg, logger)
 
 	// Create and start API server
 	var apiServer *api.Server
@@ -98,7 +106,11 @@ func main() {
 		if apiServer != nil {
 			cacheClient = apiServer.Cache()
 		}
-		schedulerInstance = scheduler.New(cfg, db, scraperInstance, cacheClient, logger)
+		if cacheClient == nil {
+			cacheClient = okfcache.New(context.Background(), cfg.Cache, logger)
+		}
+		ingestor := ingest.New(db, cacheClient, scraperInstance, logger.With().Str("component", "ingestor").Logger())
+		schedulerInstance = scheduler.New(cfg, ingestor, connectors, cacheClient, scraperInstance, logger)
 		if err := schedulerInstance.Start(); err != nil {
 			logger.Fatal().Err(err).Msg("Failed to start scheduler")
 		}
@@ -132,6 +144,34 @@ func main() {
 	}
 
 	logger.Info().Msg("Shutdown complete")
+}
+
+func buildConnectors(cfg *config.Config, logger zerolog.Logger) []provider.Connector {
+	client := &http.Client{Timeout: cfg.Download.Timeout}
+	retryConfig := retry.Config{
+		MaxAttempts:  cfg.Retry.MaxAttempts,
+		InitialDelay: cfg.Retry.InitialDelay,
+		MaxDelay:     cfg.Retry.MaxDelay,
+		Multiplier:   cfg.Retry.Multiplier,
+	}
+	return []provider.Connector{
+		webgallery.New(webgallery.Config{
+			BaseURL:          cfg.Source.BaseURL,
+			UserAgent:        cfg.Download.UserAgent,
+			RateLimitBackoff: cfg.Download.RateLimitBackoff,
+			Retry:            retryConfig,
+		}, client, logger.With().Str("provider", webgallery.ProviderID).Logger()),
+		telegram.New(telegram.Config{
+			BotToken:         cfg.Telegram.BotToken,
+			BaseURL:          cfg.Telegram.BaseURL,
+			FileBaseURL:      cfg.Telegram.FileBaseURL,
+			ChatID:           cfg.Telegram.ChatID,
+			DisplayName:      cfg.Telegram.DisplayName,
+			Limit:            cfg.Telegram.Limit,
+			RateLimitBackoff: cfg.Download.RateLimitBackoff,
+			Retry:            retryConfig,
+		}, client, logger.With().Str("provider", telegram.ProviderID).Logger()),
+	}
 }
 
 func setupLogger(cfg *config.Config) zerolog.Logger {
