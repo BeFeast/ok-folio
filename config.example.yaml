@@ -9,6 +9,12 @@ source:
 storage:
   base_directory: "./data/originals"
   daily_directory: "./data/_daily"
+  # Generated thumbnails are stored here and keyed by photo id, requested width,
+  # and content_hash. This directory is rebuildable but persistent across app
+  # container recreates. The API prunes least-recently-used files when the byte
+  # cap is exceeded; set to -1 only for local experiments with no pruning.
+  derivatives_directory: "/derivatives"
+  derivatives_max_bytes: 21474836480
 
 database:
   # OK Folio owns its own dedicated Postgres. These DB_* settings must never

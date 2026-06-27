@@ -88,10 +88,12 @@ services:
       LEGACY_DB_PASSWORD: ${LEGACY_DB_PASSWORD:?LEGACY_DB_PASSWORD is required}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?TELEGRAM_BOT_TOKEN is required}
       TELEGRAM_USERNAME: ${TELEGRAM_USERNAME:?TELEGRAM_USERNAME is required}
+      OK_FOLIO_DERIVATIVES_DIR: /derivatives
     ports:
       - "${OK_FOLIO_APP_PORT:?OK_FOLIO_APP_PORT is required}:8080"
     volumes:
       - ${OK_FOLIO_CONFIG_HOST_PATH:?OK_FOLIO_CONFIG_HOST_PATH is required}:/config/config.yaml:ro
+      - ${OK_FOLIO_DERIVATIVES_HOST_PATH:?OK_FOLIO_DERIVATIVES_HOST_PATH is required}:/derivatives
       - ${PHOTO_ORIGINALS_HOST_PATH:?PHOTO_ORIGINALS_HOST_PATH is required}:/photoprism/originals:ro
       - ${PHOTO_DAILY_HOST_PATH:?PHOTO_DAILY_HOST_PATH is required}:/photoprism/_daily:ro
       - ${PHOTOPRISM_STORAGE_HOST_PATH:?PHOTOPRISM_STORAGE_HOST_PATH is required}:/photoprism/storage:ro

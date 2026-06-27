@@ -46,6 +46,7 @@ type Server struct {
 	limiter    *rate.Limiter
 	statsCache *StatsCache
 	cache      *okfcache.Client
+	thumbCache *thumbnailCache
 }
 
 func New(cfg *config.Config, db *database.DB, scraper *scraper.Scraper, logger zerolog.Logger) *Server {
@@ -64,6 +65,7 @@ func New(cfg *config.Config, db *database.DB, scraper *scraper.Scraper, logger z
 		limiter:    rate.NewLimiter(RateLimitPerSecond, RateLimitBurst),
 		statsCache: NewStatsCache(5 * time.Minute), // Cache stats for 5 minutes
 		cache:      cacheClient,
+		thumbCache: newThumbnailCache(cfg.Storage),
 	}
 
 	// Start worker pool for extraction jobs

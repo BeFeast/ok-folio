@@ -212,6 +212,32 @@ func (c *Client) Delete(ctx context.Context, keys ...string) error {
 	return nil
 }
 
+func (c *Client) GetBytes(ctx context.Context, key string) ([]byte, bool) {
+	if c == nil || c.Passthrough() || key == "" {
+		return nil, false
+	}
+	value, err := c.r.Get(ctx, key).Bytes()
+	if errors.Is(err, redis.Nil) {
+		return nil, false
+	}
+	if err != nil {
+		c.passthrough.Store(true)
+		c.logger.Warn().Err(err).Str("key", key).Msg("Cache byte read failed; using passthrough")
+		return nil, false
+	}
+	return value, true
+}
+
+func (c *Client) SetBytes(ctx context.Context, key string, value []byte, ttl time.Duration) {
+	if c == nil || c.Passthrough() || key == "" || len(value) == 0 {
+		return
+	}
+	if err := c.r.Set(ctx, key, value, ttl).Err(); err != nil {
+		c.passthrough.Store(true)
+		c.logger.Warn().Err(err).Str("key", key).Msg("Cache byte write failed; using passthrough")
+	}
+}
+
 func (c *Client) Epoch(ctx context.Context) int64 {
 	if c == nil || c.Passthrough() {
 		return 0

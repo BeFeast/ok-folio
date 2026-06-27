@@ -74,6 +74,7 @@ require_grep 'valkey-cli.*ping' "$compose_file" "valkey must have a ping healthc
 require_grep 'ok-folio:\$\{OK_FOLIO_IMAGE_SHA:\?' "$compose_file" "app image must be pinned by OK_FOLIO_IMAGE_SHA"
 require_grep 'condition: service_healthy' "$compose_file" "app must depend on healthy services"
 require_grep 'external: true' "$compose_file" "legacy network must be external"
+require_grep 'OK_FOLIO_DERIVATIVES_HOST_PATH.*:/derivatives[[:space:]]*$' "$compose_file" "app must mount the writable derivatives cache at /derivatives"
 
 if grep -Eq 'DATABASE_URL' "$compose_file"; then
   fail "compose must not render DATABASE_URL alongside discrete DB_* settings"

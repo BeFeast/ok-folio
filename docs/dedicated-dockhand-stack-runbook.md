@@ -89,6 +89,7 @@ OK_FOLIO_PGDATA_HOST_PATH=<postgres-pgdata-host-path>
 OK_FOLIO_VALKEY_HOST_PATH=<valkey-host-path>
 OK_FOLIO_VALKEY_CONFIG_HOST_PATH=<rendered-valkey-conf-host-path>
 OK_FOLIO_CONFIG_HOST_PATH=<config-yaml-host-path>
+OK_FOLIO_DERIVATIVES_HOST_PATH=<thumbnail-derivatives-host-path>
 POSTGRES_SHARED_BUFFERS=<host-budget-placeholder>
 POSTGRES_EFFECTIVE_CACHE_SIZE=<host-budget-placeholder>
 POSTGRES_ADMIN_USER=<ok-folio-postgres-bootstrap-user>
@@ -151,6 +152,11 @@ All legacy mounts are kernel-enforced read-only:
 - originals: `/photoprism/originals:ro`
 - daily export: `/photoprism/_daily:ro`
 - PhotoPrism storage/thumb tier: `/photoprism/storage:ro`
+
+The app also has one writable, rebuildable mount at `/derivatives` for
+generated thumbnails. Its growth is bounded by `storage.derivatives_max_bytes`
+in `config.yaml`; the API evicts least-recently-used derivative files when the
+configured byte cap is exceeded.
 
 ## Render And Assert
 

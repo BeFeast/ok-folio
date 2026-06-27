@@ -14,10 +14,14 @@ func TestLoad_ValidConfig(t *testing.T) {
 	oldDBUser := os.Getenv("DB_USER")
 	oldDBPass := os.Getenv("DB_PASSWORD")
 	oldDBName := os.Getenv("DB_NAME")
+	oldDerivativesDir := os.Getenv("OK_FOLIO_DERIVATIVES_DIR")
+	oldDerivativesMaxBytes := os.Getenv("OK_FOLIO_DERIVATIVES_MAX_BYTES")
 	os.Unsetenv("DB_HOST")
 	os.Unsetenv("DB_USER")
 	os.Unsetenv("DB_PASSWORD")
 	os.Unsetenv("DB_NAME")
+	os.Unsetenv("OK_FOLIO_DERIVATIVES_DIR")
+	os.Unsetenv("OK_FOLIO_DERIVATIVES_MAX_BYTES")
 	defer func() {
 		if oldDBHost != "" {
 			os.Setenv("DB_HOST", oldDBHost)
@@ -30,6 +34,12 @@ func TestLoad_ValidConfig(t *testing.T) {
 		}
 		if oldDBName != "" {
 			os.Setenv("DB_NAME", oldDBName)
+		}
+		if oldDerivativesDir != "" {
+			os.Setenv("OK_FOLIO_DERIVATIVES_DIR", oldDerivativesDir)
+		}
+		if oldDerivativesMaxBytes != "" {
+			os.Setenv("OK_FOLIO_DERIVATIVES_MAX_BYTES", oldDerivativesMaxBytes)
 		}
 	}()
 
@@ -46,6 +56,8 @@ source:
 storage:
   base_directory: %q
   daily_directory: %q
+  derivatives_directory: %q
+  derivatives_max_bytes: 1048576
 
 database:
   host: "localhost"
@@ -97,7 +109,7 @@ download:
   concurrent_limit: 5
   timeout: 30s
   user_agent: "PhotoExtractor/1.0"
-`, filepath.Join(storageDir, "photos"), filepath.Join(storageDir, "daily"))
+`, filepath.Join(storageDir, "photos"), filepath.Join(storageDir, "daily"), filepath.Join(storageDir, "derivatives"))
 
 	err := os.WriteFile(configPath, []byte(configContent), 0644)
 	if err != nil {
@@ -120,6 +132,12 @@ download:
 	// Test storage config
 	if cfg.Storage.BaseDirectory != filepath.Join(storageDir, "photos") {
 		t.Errorf("Expected BaseDirectory under temp storage, got '%s'", cfg.Storage.BaseDirectory)
+	}
+	if cfg.Storage.DerivativesDirectory != filepath.Join(storageDir, "derivatives") {
+		t.Errorf("Expected DerivativesDirectory under temp storage, got '%s'", cfg.Storage.DerivativesDirectory)
+	}
+	if cfg.Storage.DerivativesMaxBytes != 1048576 {
+		t.Errorf("Expected DerivativesMaxBytes 1048576, got %d", cfg.Storage.DerivativesMaxBytes)
 	}
 
 	// Test database config
@@ -253,6 +271,8 @@ database:
 	os.Setenv("CACHE_HOST", "override-valkey")
 	os.Setenv("CACHE_PORT", "6380")
 	os.Setenv("CACHE_PASSWORD", "override-cache-pass")
+	os.Setenv("OK_FOLIO_DERIVATIVES_DIR", filepath.Join(tmpDir, "override-derivatives"))
+	os.Setenv("OK_FOLIO_DERIVATIVES_MAX_BYTES", "2048")
 	defer func() {
 		os.Unsetenv("DB_HOST")
 		os.Unsetenv("DB_USER")
@@ -261,6 +281,8 @@ database:
 		os.Unsetenv("CACHE_HOST")
 		os.Unsetenv("CACHE_PORT")
 		os.Unsetenv("CACHE_PASSWORD")
+		os.Unsetenv("OK_FOLIO_DERIVATIVES_DIR")
+		os.Unsetenv("OK_FOLIO_DERIVATIVES_MAX_BYTES")
 	}()
 
 	cfg, err := Load(configPath)
@@ -289,6 +311,12 @@ database:
 	}
 	if cfg.Cache.Password != "override-cache-pass" {
 		t.Errorf("Expected Cache Password override, got '%s'", cfg.Cache.Password)
+	}
+	if cfg.Storage.DerivativesDirectory != filepath.Join(tmpDir, "override-derivatives") {
+		t.Errorf("Expected derivative dir override, got '%s'", cfg.Storage.DerivativesDirectory)
+	}
+	if cfg.Storage.DerivativesMaxBytes != 2048 {
+		t.Errorf("Expected derivative max bytes override, got %d", cfg.Storage.DerivativesMaxBytes)
 	}
 }
 
@@ -489,6 +517,25 @@ func TestLoad_DefaultsPointAtValkeyService(t *testing.T) {
 	}
 }
 
+func TestLoad_DefaultsThumbnailDerivatives(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte("source:\n  base_url: \"https://example.com\"\n"), 0644); err != nil {
+		t.Fatalf("Failed to write config: %v", err)
+	}
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Failed to load config: %v", err)
+	}
+	if cfg.Storage.DerivativesDirectory != DefaultDerivativesDirectory {
+		t.Fatalf("Expected default derivatives directory %q, got %q", DefaultDerivativesDirectory, cfg.Storage.DerivativesDirectory)
+	}
+	if cfg.Storage.DerivativesMaxBytes != DefaultDerivativesMaxBytes {
+		t.Fatalf("Expected default derivatives max bytes %d, got %d", DefaultDerivativesMaxBytes, cfg.Storage.DerivativesMaxBytes)
+	}
+}
+
 func TestLoad_InvalidDBPort(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.yaml")
@@ -512,6 +559,19 @@ func TestLoad_InvalidCachePort(t *testing.T) {
 	t.Setenv("CACHE_PORT", "not-a-number")
 	if _, err := Load(configPath); err == nil {
 		t.Fatal("Expected error for invalid CACHE_PORT, got nil")
+	}
+}
+
+func TestLoad_InvalidDerivativesMaxBytes(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte("source:\n  base_url: \"https://example.com\"\n"), 0644); err != nil {
+		t.Fatalf("Failed to write config: %v", err)
+	}
+
+	t.Setenv("OK_FOLIO_DERIVATIVES_MAX_BYTES", "not-a-number")
+	if _, err := Load(configPath); err == nil {
+		t.Fatal("Expected error for invalid OK_FOLIO_DERIVATIVES_MAX_BYTES, got nil")
 	}
 }
 
