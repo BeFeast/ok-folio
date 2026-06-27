@@ -3,8 +3,6 @@ package api
 import (
 	"encoding/hex"
 	"fmt"
-	"image"
-	"image/jpeg"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -12,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/disintegration/imaging"
 	"github.com/go-chi/chi/v5"
 
 	"ok-folio/internal/database"
@@ -72,32 +69,26 @@ func (s *Server) handleImageThumbnail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Open the image file
-	imgFile, err := os.Open(filePath)
-	if err != nil {
-		s.logger.Error().Err(err).Str("file_path", photo.FilePath).Msg("Failed to open image file")
+	if _, err := os.Stat(filePath); err != nil {
+		s.logger.Error().Err(err).Str("file_path", photo.FilePath).Msg("Failed to stat image file")
 		s.writeError(w, http.StatusNotFound, "Image file not found")
 		return
 	}
-	defer imgFile.Close()
 
-	// Cache misses still decode the full original on each thumbnail request.
-	// The wave-3 derivative cache/warmer is expected to remove that first-paint cost.
-	img, _, err := image.Decode(imgFile)
+	entry := s.thumbCache.entry(photo, size, etag)
+	if s.serveThumbnailFromCache(w, r, entry) {
+		return
+	}
+	w.Header().Set("X-OK-Folio-Thumbnail-Cache", "miss")
+
+	data, err := s.generateThumbnail(r.Context(), filePath, size)
 	if err != nil {
-		s.logger.Error().Err(err).Str("file_path", photo.FilePath).Msg("Failed to decode image")
-		s.writeError(w, http.StatusInternalServerError, "Failed to decode image")
+		s.logger.Error().Err(err).Str("file_path", photo.FilePath).Msg("Failed to generate thumbnail")
+		s.writeError(w, http.StatusNotFound, "Image file not found")
 		return
 	}
-
-	// Create thumbnail (fit into a size×size box, preserving aspect ratio)
-	thumbnail := imaging.Fit(img, size, size, imaging.Lanczos)
-
-	// Encode and send thumbnail
-	if err := jpeg.Encode(w, thumbnail, &jpeg.Options{Quality: ThumbnailQuality}); err != nil {
-		s.logger.Error().Err(err).Msg("Failed to encode thumbnail")
-		return
-	}
+	s.storeThumbnail(entry, data)
+	_, _ = w.Write(data)
 }
 
 // handleImageFull serves the full-size image

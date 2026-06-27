@@ -21,6 +21,10 @@ const (
 	DefaultCacheHost = "valkey"
 	// DefaultCachePort is Valkey's private service port, not a published host port.
 	DefaultCachePort = 6379
+	// DefaultDerivativesDirectory is the in-container writable derivative mount.
+	DefaultDerivativesDirectory = "/derivatives"
+	// DefaultDerivativesMaxBytes bounds generated thumbnails at 20 GiB.
+	DefaultDerivativesMaxBytes int64 = 20 * 1024 * 1024 * 1024
 )
 
 type Config struct {
@@ -44,8 +48,10 @@ type SourceConfig struct {
 }
 
 type StorageConfig struct {
-	BaseDirectory  string `yaml:"base_directory"`
-	DailyDirectory string `yaml:"daily_directory"`
+	BaseDirectory        string `yaml:"base_directory"`
+	DailyDirectory       string `yaml:"daily_directory"`
+	DerivativesDirectory string `yaml:"derivatives_directory"`
+	DerivativesMaxBytes  int64  `yaml:"derivatives_max_bytes"`
 }
 
 type DatabaseConfig struct {
@@ -196,11 +202,31 @@ func Load(path string) (*Config, error) {
 	if telegramFileBaseURL := os.Getenv("TELEGRAM_FILE_BASE_URL"); telegramFileBaseURL != "" {
 		cfg.Telegram.FileBaseURL = telegramFileBaseURL
 	}
+	if derivativesDir := os.Getenv("OK_FOLIO_DERIVATIVES_DIR"); derivativesDir != "" {
+		cfg.Storage.DerivativesDirectory = derivativesDir
+	}
+	if derivativesMaxBytes := os.Getenv("OK_FOLIO_DERIVATIVES_MAX_BYTES"); derivativesMaxBytes != "" {
+		maxBytes, err := strconv.ParseInt(derivativesMaxBytes, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid OK_FOLIO_DERIVATIVES_MAX_BYTES %q: %w", derivativesMaxBytes, err)
+		}
+		cfg.Storage.DerivativesMaxBytes = maxBytes
+	}
 
+	cfg.Storage.applyDefaults()
 	cfg.Database.applyDefaults()
 	cfg.Cache.applyDefaults()
 
 	return &cfg, nil
+}
+
+func (c *StorageConfig) applyDefaults() {
+	if c.DerivativesDirectory == "" {
+		c.DerivativesDirectory = DefaultDerivativesDirectory
+	}
+	if c.DerivativesMaxBytes == 0 {
+		c.DerivativesMaxBytes = DefaultDerivativesMaxBytes
+	}
 }
 
 // applyDefaults fills in the OK Folio Postgres defaults for any unset field so

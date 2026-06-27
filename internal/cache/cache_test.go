@@ -152,6 +152,24 @@ func TestInvalidation(t *testing.T) {
 	}
 }
 
+func TestByteCache(t *testing.T) {
+	ctx := context.Background()
+	c, _ := testClient(t)
+	key := ThumbKey(7, 320, 320) + ":content"
+
+	if _, ok := c.GetBytes(ctx, key); ok {
+		t.Fatalf("Expected empty byte cache miss")
+	}
+	c.SetBytes(ctx, key, []byte("thumbnail-bytes"), time.Minute)
+	value, ok := c.GetBytes(ctx, key)
+	if !ok {
+		t.Fatalf("Expected byte cache hit")
+	}
+	if string(value) != "thumbnail-bytes" {
+		t.Fatalf("Expected cached thumbnail bytes, got %q", string(value))
+	}
+}
+
 func TestKeySchemeAndFilterHash(t *testing.T) {
 	empty := ""
 	withAbsentArtist := struct {

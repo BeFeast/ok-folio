@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -57,8 +58,10 @@ func setupTestServer(t *testing.T) (*Server, *database.DB) {
 			Pages: []int{1, 2, 3},
 		},
 		Storage: config.StorageConfig{
-			BaseDirectory:  filepath.Join(storageDir, "originals"),
-			DailyDirectory: filepath.Join(storageDir, "daily"),
+			BaseDirectory:        filepath.Join(storageDir, "originals"),
+			DailyDirectory:       filepath.Join(storageDir, "daily"),
+			DerivativesDirectory: filepath.Join(storageDir, "derivatives"),
+			DerivativesMaxBytes:  50 * 1024 * 1024,
 		},
 	}
 	if err := testguard.ValidateConfig(cfg); err != nil {
@@ -882,6 +885,167 @@ func TestImageHandlersUseFallbackETagWithoutContentHash(t *testing.T) {
 	}
 }
 
+func TestImageThumbnailUsesDiskCacheAfterMiss(t *testing.T) {
+	server, db := setupTestServer(t)
+	defer safeShutdown(server)
+
+	filePath := filepath.Join(server.cfg.Storage.BaseDirectory, "thumbnail-cache.jpg")
+	createTestJPEG(t, filePath)
+	contentHash := sha256.Sum256([]byte("thumbnail-cache-v1"))
+	photo := database.DownloadedPhoto{
+		URL:          "https://example.com/thumbnail-cache.jpg",
+		Title:        "Thumbnail Cache",
+		FilePath:     filePath,
+		FileName:     "thumbnail-cache.jpg",
+		FileSize:     1234,
+		ContentHash:  contentHash[:],
+		Status:       "downloaded",
+		DownloadedAt: ptrTime(time.Now()),
+	}
+	if err := db.Create(&photo).Error; err != nil {
+		t.Fatalf("Failed to create photo: %v", err)
+	}
+
+	thumbURL := "/api/v1/photos/" + strconv.Itoa(int(photo.ID)) + "/thumbnail?w=320"
+	req := httptest.NewRequest(http.MethodGet, thumbURL, nil)
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected first thumbnail status 200, got %d body=%q", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("X-OK-Folio-Thumbnail-Cache"); got != "miss" {
+		t.Fatalf("Expected first thumbnail cache miss, got %q", got)
+	}
+	firstBody := append([]byte(nil), w.Body.Bytes()...)
+
+	if err := os.WriteFile(filePath, []byte("not a decodable image"), 0o644); err != nil {
+		t.Fatalf("Failed to replace original with corrupt bytes: %v", err)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, thumbURL, nil)
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected cached thumbnail status 200, got %d body=%q", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("X-OK-Folio-Thumbnail-Cache"); got != "disk-hit" {
+		t.Fatalf("Expected disk cache hit, got %q", got)
+	}
+	if !bytes.Equal(w.Body.Bytes(), firstBody) {
+		t.Fatalf("Expected cached thumbnail bytes to match first response")
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/photos/"+strconv.Itoa(int(photo.ID))+"/thumbnail?w=321", nil)
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("Expected corrupt uncached original to return 404, got %d body=%q", w.Code, w.Body.String())
+	}
+}
+
+func TestImageThumbnailCacheInvalidatesByContentHash(t *testing.T) {
+	server, db := setupTestServer(t)
+	defer safeShutdown(server)
+
+	filePath := filepath.Join(server.cfg.Storage.BaseDirectory, "thumbnail-invalidate.jpg")
+	createSolidJPEG(t, filePath, color.RGBA{R: 220, G: 20, B: 20, A: 255})
+	firstHash := sha256.Sum256([]byte("thumbnail-invalidate-v1"))
+	photo := database.DownloadedPhoto{
+		URL:          "https://example.com/thumbnail-invalidate.jpg",
+		Title:        "Thumbnail Invalidate",
+		FilePath:     filePath,
+		FileName:     "thumbnail-invalidate.jpg",
+		FileSize:     1234,
+		ContentHash:  firstHash[:],
+		Status:       "downloaded",
+		DownloadedAt: ptrTime(time.Now()),
+	}
+	if err := db.Create(&photo).Error; err != nil {
+		t.Fatalf("Failed to create photo: %v", err)
+	}
+
+	thumbURL := "/api/v1/photos/" + strconv.Itoa(int(photo.ID)) + "/thumbnail?w=256"
+	req := httptest.NewRequest(http.MethodGet, thumbURL, nil)
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected first thumbnail status 200, got %d", w.Code)
+	}
+	if got := w.Header().Get("X-OK-Folio-Thumbnail-Cache"); got != "miss" {
+		t.Fatalf("Expected first thumbnail cache miss, got %q", got)
+	}
+	firstBody := append([]byte(nil), w.Body.Bytes()...)
+
+	secondHash := sha256.Sum256([]byte("thumbnail-invalidate-v2"))
+	photo.ContentHash = secondHash[:]
+	if err := db.Save(&photo).Error; err != nil {
+		t.Fatalf("Failed to update photo content hash: %v", err)
+	}
+	createSolidJPEG(t, filePath, color.RGBA{R: 20, G: 180, B: 60, A: 255})
+
+	req = httptest.NewRequest(http.MethodGet, thumbURL, nil)
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected updated thumbnail status 200, got %d body=%q", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("X-OK-Folio-Thumbnail-Cache"); got != "miss" {
+		t.Fatalf("Expected content-hash change to miss cache, got %q", got)
+	}
+	if bytes.Equal(w.Body.Bytes(), firstBody) {
+		t.Fatalf("Expected content-hash change to generate different thumbnail bytes")
+	}
+}
+
+func TestThumbnailCachePrunesToConfiguredSize(t *testing.T) {
+	dir := t.TempDir()
+	cache := &thumbnailCache{dir: dir, maxBytes: 50}
+
+	oldEntry := cache.entry(&database.DownloadedPhoto{ID: 1, ContentHash: bytes.Repeat([]byte{0x11}, 32)}, 320, "")
+	newEntry := cache.entry(&database.DownloadedPhoto{ID: 2, ContentHash: bytes.Repeat([]byte{0x22}, 32)}, 320, "")
+	oldPath := oldEntry.path
+	newPath := newEntry.path
+	nonCachePath := filepath.Join(dir, "existing-media", "original.jpg")
+	if err := os.MkdirAll(filepath.Dir(oldPath), 0o755); err != nil {
+		t.Fatalf("Failed to create old shard: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(newPath), 0o755); err != nil {
+		t.Fatalf("Failed to create new shard: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(nonCachePath), 0o755); err != nil {
+		t.Fatalf("Failed to create non-cache dir: %v", err)
+	}
+	if err := os.WriteFile(oldPath, bytes.Repeat([]byte("a"), 40), 0o644); err != nil {
+		t.Fatalf("Failed to write old cache file: %v", err)
+	}
+	if err := os.WriteFile(newPath, bytes.Repeat([]byte("b"), 40), 0o644); err != nil {
+		t.Fatalf("Failed to write new cache file: %v", err)
+	}
+	if err := os.WriteFile(nonCachePath, bytes.Repeat([]byte("c"), 40), 0o644); err != nil {
+		t.Fatalf("Failed to write non-cache JPEG: %v", err)
+	}
+	oldTime := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(oldPath, oldTime, oldTime); err != nil {
+		t.Fatalf("Failed to set old cache time: %v", err)
+	}
+	if err := os.Chtimes(nonCachePath, oldTime.Add(-time.Hour), oldTime.Add(-time.Hour)); err != nil {
+		t.Fatalf("Failed to set non-cache time: %v", err)
+	}
+
+	if err := cache.prune(); err != nil {
+		t.Fatalf("Prune failed: %v", err)
+	}
+	if _, err := os.Stat(oldPath); !os.IsNotExist(err) {
+		t.Fatalf("Expected oldest cache file to be pruned, stat err=%v", err)
+	}
+	if _, err := os.Stat(newPath); err != nil {
+		t.Fatalf("Expected newest cache file to remain: %v", err)
+	}
+	if _, err := os.Stat(nonCachePath); err != nil {
+		t.Fatalf("Expected non-cache JPEG to remain: %v", err)
+	}
+}
+
 func TestHandleFavoritePersistsLocally(t *testing.T) {
 	server, db := setupTestServer(t)
 	defer safeShutdown(server)
@@ -1193,6 +1357,28 @@ func createTestJPEG(t *testing.T, filePath string) {
 		}
 	}
 	if err := jpeg.Encode(file, img, &jpeg.Options{Quality: 80}); err != nil {
+		t.Fatalf("Failed to encode test image: %v", err)
+	}
+}
+
+func createSolidJPEG(t *testing.T, filePath string, c color.Color) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
+		t.Fatalf("Failed to create test image directory: %v", err)
+	}
+	file, err := os.Create(filePath)
+	if err != nil {
+		t.Fatalf("Failed to create test image: %v", err)
+	}
+	defer file.Close()
+
+	img := image.NewRGBA(image.Rect(0, 0, 16, 16))
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 16; x++ {
+			img.Set(x, y, c)
+		}
+	}
+	if err := jpeg.Encode(file, img, &jpeg.Options{Quality: 90}); err != nil {
 		t.Fatalf("Failed to encode test image: %v", err)
 	}
 }
