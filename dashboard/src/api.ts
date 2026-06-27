@@ -15,6 +15,7 @@ import type {
   GalleryCatalogResponse,
   PhotoDetailResponse,
   RunPhotosResponse,
+  Photo,
 } from "./types";
 
 const API_BASE = "/api/v1";
@@ -317,4 +318,46 @@ export async function removeFromFavorites(photoId: number): Promise<void> {
     const data = await response.json();
     throw new Error(data.error || "Failed to remove from favorites");
   }
+}
+
+export interface CreatePieceInput {
+  file: File;
+  title: string;
+  source: string;
+  artist: string;
+  date: string;
+  notes: string;
+}
+
+export interface CreatePieceResponse {
+  photo: Photo;
+  duplicate: boolean;
+}
+
+export async function createPiece(input: CreatePieceInput): Promise<CreatePieceResponse> {
+  const form = new FormData();
+  form.set("file", input.file);
+  form.set("title", input.title);
+  form.set("source", input.source);
+  form.set("artist", input.artist);
+  form.set("date", input.date);
+  form.set("notes", input.notes);
+
+  const response = await fetch(`${API_BASE}/pieces`, {
+    method: "POST",
+    body: form,
+  });
+  if (!response.ok) {
+    let message = "Failed to add piece";
+    try {
+      const data = await response.json();
+      if (typeof data.error === "string") {
+        message = data.error;
+      }
+    } catch {
+      // Keep the generic message when the backend returns a non-JSON error.
+    }
+    throw new Error(message);
+  }
+  return response.json();
 }

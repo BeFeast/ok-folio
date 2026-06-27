@@ -9,6 +9,7 @@ import (
 	"image"
 	"image/color"
 	"image/jpeg"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -197,6 +198,166 @@ func TestHandleGalleryDecision(t *testing.T) {
 	}
 	if err := gallery.ValidateDecision(response); err != nil {
 		t.Fatalf("Expected response to validate: %v", err)
+	}
+}
+
+func TestHandleCreatePieceValidUpload(t *testing.T) {
+	server, db := setupTestServer(t)
+	defer safeShutdown(server)
+
+	statsReq := httptest.NewRequest(http.MethodGet, "/api/v1/stats", nil)
+	statsW := httptest.NewRecorder()
+	server.router.ServeHTTP(statsW, statsReq)
+	if statsW.Code != http.StatusOK {
+		t.Fatalf("prime stats status=%d body=%q", statsW.Code, statsW.Body.String())
+	}
+	var beforeStats map[string]interface{}
+	if err := json.NewDecoder(statsW.Body).Decode(&beforeStats); err != nil {
+		t.Fatalf("decode primed stats: %v", err)
+	}
+	if beforeStats["total_photos"].(float64) != 0 {
+		t.Fatalf("expected empty primed stats, got %#v", beforeStats)
+	}
+
+	body, contentType := createPieceMultipart(t, "piece.jpg", createTestJPEGBytes(t), map[string]string{
+		"title":  "Manual Piece",
+		"source": "https://example.com/source",
+		"artist": "Upload Artist",
+		"date":   "2026-06-27",
+		"notes":  "Kept from the manual modal.",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/pieces", body)
+	req.Header.Set("Content-Type", contentType)
+	w := httptest.NewRecorder()
+
+	server.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("Expected status 201, got %d body=%q", w.Code, w.Body.String())
+	}
+	var response createPieceResponse
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("decode upload response: %v", err)
+	}
+	if response.Duplicate {
+		t.Fatal("expected first upload not to be marked duplicate")
+	}
+	photo := response.Photo
+	if photo.Provider != "upload" || photo.URL == "" || photo.Status != "downloaded" {
+		t.Fatalf("unexpected upload photo identity: %#v", photo)
+	}
+	if photo.Title != "Manual Piece" || photo.Artist != "Upload Artist" || photo.SourcePage != "https://example.com/source" || photo.Notes != "Kept from the manual modal." {
+		t.Fatalf("uploaded metadata was not stored: %#v", photo)
+	}
+	if photo.ImageWidth != 12 || photo.ImageHeight != 8 {
+		t.Fatalf("expected dimensions 12x8, got %dx%d", photo.ImageWidth, photo.ImageHeight)
+	}
+	if len(photo.ContentHash) != sha256.Size || photo.PerceptualHash == 0 {
+		t.Fatalf("expected content and perceptual hashes, got content=%d phash=%d", len(photo.ContentHash), photo.PerceptualHash)
+	}
+	if photo.UploadDate == nil || photo.UploadDate.Format("2006-01-02") != "2026-06-27" {
+		t.Fatalf("expected parsed upload date, got %v", photo.UploadDate)
+	}
+	if _, err := os.Stat(filepath.Join(server.cfg.Storage.BaseDirectory, photo.FilePath)); err != nil {
+		t.Fatalf("expected uploaded original to be written: %v", err)
+	}
+	var count int64
+	if err := db.Model(&database.DownloadedPhoto{}).Where("provider = ?", "upload").Count(&count).Error; err != nil {
+		t.Fatalf("count uploaded rows: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected one uploaded row, got %d", count)
+	}
+
+	statsReq = httptest.NewRequest(http.MethodGet, "/api/v1/stats", nil)
+	statsW = httptest.NewRecorder()
+	server.router.ServeHTTP(statsW, statsReq)
+	if statsW.Code != http.StatusOK {
+		t.Fatalf("refetch stats status=%d body=%q", statsW.Code, statsW.Body.String())
+	}
+	var afterStats map[string]interface{}
+	if err := json.NewDecoder(statsW.Body).Decode(&afterStats); err != nil {
+		t.Fatalf("decode refreshed stats: %v", err)
+	}
+	if afterStats["total_photos"].(float64) != 1 {
+		t.Fatalf("expected stats cache to refresh after upload, got %#v", afterStats)
+	}
+
+	thumbReq := httptest.NewRequest(http.MethodGet, "/api/v1/photos/"+strconv.FormatUint(photo.ID, 10)+"/thumbnail?w=400", nil)
+	thumbW := httptest.NewRecorder()
+	server.router.ServeHTTP(thumbW, thumbReq)
+	if thumbW.Code != http.StatusOK {
+		t.Fatalf("expected warmed thumbnail to serve, got %d body=%q", thumbW.Code, thumbW.Body.String())
+	}
+	if got := thumbW.Header().Get("X-OK-Folio-Thumbnail-Cache"); got != "disk-hit" && got != "hot" {
+		t.Fatalf("expected thumbnail to be warmed before first read, got cache header %q", got)
+	}
+}
+
+func TestHandleCreatePieceRejectsNonImage(t *testing.T) {
+	server, _ := setupTestServer(t)
+	defer safeShutdown(server)
+
+	body, contentType := createPieceMultipart(t, "piece.txt", []byte("not an image"), map[string]string{
+		"title": "Nope",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/pieces", body)
+	req.Header.Set("Content-Type", contentType)
+	w := httptest.NewRecorder()
+
+	server.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("Expected status 400, got %d body=%q", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleCreatePieceReturnsExistingDuplicate(t *testing.T) {
+	server, db := setupTestServer(t)
+	defer safeShutdown(server)
+
+	imageBytes := createTestJPEGBytes(t)
+	firstBody, firstContentType := createPieceMultipart(t, "piece.jpg", imageBytes, map[string]string{
+		"title": "First",
+	})
+	firstReq := httptest.NewRequest(http.MethodPost, "/api/v1/pieces", firstBody)
+	firstReq.Header.Set("Content-Type", firstContentType)
+	firstW := httptest.NewRecorder()
+	server.router.ServeHTTP(firstW, firstReq)
+	if firstW.Code != http.StatusCreated {
+		t.Fatalf("first upload status=%d body=%q", firstW.Code, firstW.Body.String())
+	}
+	var firstResponse createPieceResponse
+	if err := json.NewDecoder(firstW.Body).Decode(&firstResponse); err != nil {
+		t.Fatalf("decode first response: %v", err)
+	}
+
+	secondBody, secondContentType := createPieceMultipart(t, "again.jpg", imageBytes, map[string]string{
+		"title": "Second",
+	})
+	secondReq := httptest.NewRequest(http.MethodPost, "/api/v1/pieces", secondBody)
+	secondReq.Header.Set("Content-Type", secondContentType)
+	secondW := httptest.NewRecorder()
+	server.router.ServeHTTP(secondW, secondReq)
+	if secondW.Code != http.StatusOK {
+		t.Fatalf("duplicate upload status=%d body=%q", secondW.Code, secondW.Body.String())
+	}
+	var secondResponse createPieceResponse
+	if err := json.NewDecoder(secondW.Body).Decode(&secondResponse); err != nil {
+		t.Fatalf("decode duplicate response: %v", err)
+	}
+	if !secondResponse.Duplicate {
+		t.Fatal("expected duplicate upload to be reported")
+	}
+	if secondResponse.Photo.ID != firstResponse.Photo.ID || secondResponse.Photo.Title != "First" {
+		t.Fatalf("expected existing piece to be returned, got %#v first=%#v", secondResponse.Photo, firstResponse.Photo)
+	}
+	var count int64
+	if err := db.Model(&database.DownloadedPhoto{}).Where("content_hash = ?", firstResponse.Photo.ContentHash).Count(&count).Error; err != nil {
+		t.Fatalf("count duplicate content hash rows: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected duplicate upload not to create a second row, got %d", count)
 	}
 }
 
@@ -1372,6 +1533,43 @@ func createTestJPEG(t *testing.T, filePath string) {
 	if err := jpeg.Encode(file, img, &jpeg.Options{Quality: 80}); err != nil {
 		t.Fatalf("Failed to encode test image: %v", err)
 	}
+}
+
+func createTestJPEGBytes(t *testing.T) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	img := image.NewRGBA(image.Rect(0, 0, 12, 8))
+	for y := 0; y < 8; y++ {
+		for x := 0; x < 12; x++ {
+			img.Set(x, y, color.RGBA{R: uint8(15 * x), G: uint8(25 * y), B: 90, A: 255})
+		}
+	}
+	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 85}); err != nil {
+		t.Fatalf("Failed to encode test image bytes: %v", err)
+	}
+	return buf.Bytes()
+}
+
+func createPieceMultipart(t *testing.T, fileName string, fileBytes []byte, fields map[string]string) (*bytes.Buffer, string) {
+	t.Helper()
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("file", fileName)
+	if err != nil {
+		t.Fatalf("create multipart file: %v", err)
+	}
+	if _, err := part.Write(fileBytes); err != nil {
+		t.Fatalf("write multipart file: %v", err)
+	}
+	for key, value := range fields {
+		if err := writer.WriteField(key, value); err != nil {
+			t.Fatalf("write multipart field %s: %v", key, err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+	return &body, writer.FormDataContentType()
 }
 
 func createSolidJPEG(t *testing.T, filePath string, c color.Color) {

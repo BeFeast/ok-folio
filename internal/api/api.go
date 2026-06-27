@@ -174,6 +174,7 @@ func (s *Server) setupRoutes() {
 		r.Get("/artists/detail", s.handleArtistDetail)
 
 		// Photo endpoints
+		r.Post("/pieces", s.handleCreatePiece)
 		r.Get("/photos/{id}", s.handlePhotoDetail)
 		r.Get("/photos/{id}/thumbnail", s.handleImageThumbnail)
 		r.Get("/photos/{id}/image", s.handleImageFull)

@@ -1,4 +1,6 @@
-import { useRef, useState, type CSSProperties } from "react";
+import { useRef, useState, type CSSProperties, type DragEvent } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { createPiece } from "../api";
 import { useFolio } from "./context";
 import { BrandMark, CloseIcon, Hov } from "./ui";
 
@@ -20,6 +22,19 @@ const FIELD_BASE: CSSProperties = {
   padding: "6px 0",
   color: "var(--ink)",
 };
+const ACCEPTED_IMAGE_TYPES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/tiff",
+  "image/webp",
+]);
+const ACCEPTED_IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp"];
+
+function isAcceptedImage(file: File): boolean {
+  if (ACCEPTED_IMAGE_TYPES.has(file.type)) return true;
+  const name = file.name.toLowerCase();
+  return ACCEPTED_IMAGE_EXTENSIONS.some((ext) => name.endsWith(ext));
+}
 
 function Field({
   label,
@@ -57,19 +72,69 @@ function Field({
 
 export default function AddPieceModal() {
   const { addOpen, closeAdd } = useFolio();
+  const queryClient = useQueryClient();
   const fileRef = useRef<HTMLInputElement>(null);
-  const [fileName, setFileName] = useState("");
+  const [file, setFile] = useState<File | null>(null);
   const [title, setTitle] = useState("");
   const [source, setSource] = useState("");
   const [artist, setArtist] = useState("");
   const [date, setDate] = useState("");
   const [notes, setNotes] = useState("");
+  const [error, setError] = useState("");
+  const [uploading, setUploading] = useState(false);
 
   if (!addOpen) return null;
 
+  const resetAndClose = () => {
+    setFile(null);
+    setTitle("");
+    setSource("");
+    setArtist("");
+    setDate("");
+    setNotes("");
+    setError("");
+    setUploading(false);
+    if (fileRef.current) fileRef.current.value = "";
+    closeAdd();
+  };
+  const stageFile = (nextFile: File | undefined) => {
+    if (!nextFile) return;
+    if (!isAcceptedImage(nextFile)) {
+      setError("Choose a JPEG, PNG, TIFF, or WebP image.");
+      setFile(null);
+      return;
+    }
+    setError("");
+    setFile(nextFile);
+  };
+  const handleDrop = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    stageFile(event.dataTransfer.files?.[0]);
+  };
+  const handleAdd = async () => {
+    if (!file) {
+      setError("Choose an image before adding the piece.");
+      return;
+    }
+    setUploading(true);
+    setError("");
+    try {
+      await createPiece({ file, title, source, artist, date, notes });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["folio-catalog"] }),
+        queryClient.invalidateQueries({ queryKey: ["folio-stats"] }),
+      ]);
+      resetAndClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to add piece");
+      setUploading(false);
+    }
+  };
+
   return (
     <div
-      onClick={closeAdd}
+      onClick={resetAndClose}
       style={{
         position: "fixed",
         inset: 0,
@@ -94,7 +159,7 @@ export default function AddPieceModal() {
           </div>
           <Hov
             as="button"
-            onClick={closeAdd}
+            onClick={resetAndClose}
             aria-label="Close"
             style={{ appearance: "none", cursor: "pointer", width: 34, height: 34, borderRadius: 99, border: "1px solid var(--line)", background: "transparent", color: "var(--muted)", display: "flex", alignItems: "center", justifyContent: "center" }}
             hover={{ color: "var(--ink)", borderColor: "var(--line-2)" }}
@@ -108,18 +173,23 @@ export default function AddPieceModal() {
             <input
               ref={fileRef}
               type="file"
-              accept="image/*"
+              accept="image/jpeg,image/png,image/tiff,image/webp,.jpg,.jpeg,.png,.tif,.tiff,.webp"
               style={{ display: "none" }}
-              onChange={(e) => setFileName(e.target.files?.[0]?.name ?? "")}
+              onChange={(e) => stageFile(e.target.files?.[0])}
             />
             <Hov
               onClick={() => fileRef.current?.click()}
+              onDragOver={(e: DragEvent<HTMLDivElement>) => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = "copy";
+              }}
+              onDrop={handleDrop}
               style={{ height: "100%", minHeight: 300, border: "1.5px dashed var(--line-2)", borderRadius: 8, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 15, padding: "34px 22px", textAlign: "center", background: "var(--surface-2)", cursor: "pointer" }}
               hover={{ borderColor: "var(--accent-line)" }}
             >
               <BrandMark width={40} height={44} />
               <div style={{ fontFamily: "var(--serif)", fontStyle: "italic", fontSize: 18, color: "var(--ink)" }}>
-                {fileName || "Drag an image here"}
+                {file?.name || "Drag an image here"}
               </div>
               <Hov
                 as="button"
@@ -132,7 +202,7 @@ export default function AddPieceModal() {
               >
                 Choose a file
               </Hov>
-              <div style={{ fontFamily: "var(--sans)", fontSize: 11, color: "var(--faint)", letterSpacing: "0.04em" }}>JPEG · PNG · TIFF · WebP · HEIC</div>
+              <div style={{ fontFamily: "var(--sans)", fontSize: 11, color: "var(--faint)", letterSpacing: "0.04em" }}>JPEG · PNG · TIFF · WebP</div>
             </Hov>
           </div>
           <div style={{ padding: "26px 28px 26px 16px", display: "flex", flexDirection: "column", gap: 18 }}>
@@ -149,9 +219,15 @@ export default function AddPieceModal() {
             Dimensions, colour, and similar pieces are filled in quietly after import.
           </div>
           <div style={{ display: "flex", gap: 11, flex: "none" }}>
+            {error ? (
+              <div role="alert" style={{ alignSelf: "center", maxWidth: 230, fontFamily: "var(--sans)", fontSize: 12, color: "var(--danger, #b42318)", lineHeight: 1.35 }}>
+                {error}
+              </div>
+            ) : null}
             <Hov
               as="button"
-              onClick={closeAdd}
+              onClick={resetAndClose}
+              disabled={uploading}
               style={{ appearance: "none", cursor: "pointer", fontFamily: "var(--sans)", fontSize: 13.5, padding: "10px 18px", borderRadius: 99, border: 0, background: "transparent", color: "var(--muted)" }}
               hover={{ color: "var(--ink)" }}
             >
@@ -159,11 +235,12 @@ export default function AddPieceModal() {
             </Hov>
             <Hov
               as="button"
-              onClick={closeAdd}
-              style={{ appearance: "none", cursor: "pointer", fontFamily: "var(--sans)", fontSize: 13.5, fontWeight: 500, padding: "10px 22px", borderRadius: 99, border: 0, background: "var(--accent)", color: "var(--on-accent)" }}
+              onClick={handleAdd}
+              disabled={uploading || !file}
+              style={{ appearance: "none", cursor: uploading || !file ? "not-allowed" : "pointer", opacity: uploading || !file ? 0.6 : 1, fontFamily: "var(--sans)", fontSize: 13.5, fontWeight: 500, padding: "10px 22px", borderRadius: 99, border: 0, background: "var(--accent)", color: "var(--on-accent)" }}
               hover={{ filter: "brightness(1.06)" }}
             >
-              Add Piece
+              {uploading ? "Adding..." : "Add Piece"}
             </Hov>
           </div>
         </div>

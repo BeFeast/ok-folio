@@ -142,8 +142,11 @@ export interface Photo {
   UploadDate: string;
   FilePath: string;
   FileName: string;
+  ImageWidth: number;
+  ImageHeight: number;
   DownloadedAt: string;
   FileSize: number;
+  Notes: string;
   Favorite: boolean;
   Status: string;
 }
