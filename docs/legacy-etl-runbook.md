@@ -58,8 +58,11 @@ mariadb-dump --single-transaction --skip-lock-tables --no-create-info --no-table
 
 The loader inserts real legacy IDs verbatim, stamps `provider='sight.photo'` on
 new `downloaded_photos` rows, sets `url_hash` explicitly, preserves absolute
-`file_path` and `artist`, and runs `setval` for both ID sequences when `--setval`
-is provided.
+`file_path` and `artist`, and restarts both Postgres identity columns to
+`MAX(id)+1` when `--setval` is provided. The flag name is kept for operator
+compatibility, but the implementation uses `ALTER TABLE ... ALTER COLUMN id
+RESTART WITH` against the active identity column instead of guessing a sequence
+name with `pg_get_serial_sequence()`.
 
 ## Upsert Contracts
 

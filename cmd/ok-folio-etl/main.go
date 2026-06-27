@@ -44,7 +44,7 @@ func loadDump(args []string) {
 	fs := flag.NewFlagSet("load-dump", flag.ExitOnError)
 	configPath := fs.String("config", "/config/config.yaml", "Path to OK Folio configuration")
 	legacyTZ := fs.String("legacy-timezone", "", "Verified legacy source timezone for naive datetime values")
-	setSequences := fs.Bool("setval", false, "Run id sequence setval after load")
+	setSequences := fs.Bool("setval", false, "Restart id identity columns after load")
 	advanceWatermark := fs.Bool("advance-watermark", true, "Advance etl_watermarks after the load transaction commits")
 	if err := fs.Parse(args); err != nil {
 		exitErr(err)
