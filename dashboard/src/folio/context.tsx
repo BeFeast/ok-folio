@@ -13,7 +13,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import {
   addToFavorites,
   fetchGalleryCatalog,
@@ -126,7 +126,7 @@ function mapPhoto(p: Photo): PieceVM {
     note: "",
     folio: "",
     img: getPhotoImageUrl(p.ID),
-    thumb: getPhotoThumbnailUrl(p.ID),
+    thumb: getPhotoThumbnailUrl(p.ID, 400),
     fav: !!p.Favorite,
     file: p.FileName || "—",
     size: formatBytes(p.FileSize),
@@ -152,6 +152,9 @@ interface FolioContextValue {
   total: number;
   isLoading: boolean;
   isError: boolean;
+  loadMore: () => void;
+  hasMore: boolean;
+  loadingMore: boolean;
 
   totalPhotos: number;
   totalSizeBytes: number;
@@ -211,20 +214,27 @@ export function FolioProvider({ children }: { children: ReactNode }) {
     return () => clearTimeout(id);
   }, [query]);
 
-  const catalog = useQuery({
+  const catalog = useInfiniteQuery({
     queryKey: ["folio-catalog", debouncedQuery],
-    queryFn: () =>
+    queryFn: ({ pageParam }) =>
       fetchGalleryCatalog(
         PAGE_SIZE,
-        0,
+        pageParam as number,
         debouncedQuery ? { query: debouncedQuery } : {},
       ),
+    initialPageParam: 0,
+    getNextPageParam: (lastPage, allPages) => {
+      const loaded = allPages.reduce((n, pg) => n + pg.photos.length, 0);
+      return loaded < lastPage.total ? loaded : undefined;
+    },
   });
 
   const stats = useQuery({ queryKey: ["folio-stats"], queryFn: fetchStats });
 
+  const catalogTotal = catalog.data?.pages[0]?.total;
+
   const pieces = useMemo<PieceVM[]>(() => {
-    const photos = catalog.data?.photos ?? [];
+    const photos = catalog.data?.pages.flatMap((pg) => pg.photos) ?? [];
     return photos.map((p) => {
       const vm = mapPhoto(p);
       const override = favOverride[vm.id];
@@ -294,10 +304,17 @@ export function FolioProvider({ children }: { children: ReactNode }) {
     mode,
     setMode,
     pieces,
-    total: catalog.data?.total ?? pieces.length,
+    total: catalogTotal ?? pieces.length,
     isLoading: catalog.isLoading,
     isError: catalog.isError,
-    totalPhotos: stats.data?.total_photos ?? catalog.data?.total ?? 0,
+    loadMore: () => {
+      if (catalog.hasNextPage && !catalog.isFetchingNextPage) {
+        void catalog.fetchNextPage();
+      }
+    },
+    hasMore: !!catalog.hasNextPage,
+    loadingMore: catalog.isFetchingNextPage,
+    totalPhotos: stats.data?.total_photos ?? catalogTotal ?? 0,
     totalSizeBytes: stats.data?.total_size_bytes ?? 0,
     selected,
     selIndex,

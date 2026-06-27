@@ -1,4 +1,5 @@
-import { useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { getPhotoThumbnailUrl } from "../api";
 import { useFolio, type GalleryMode, type PieceVM } from "./context";
 import { HeartIcon, OkfImage, PageHeader } from "./ui";
 
@@ -206,7 +207,7 @@ function MagazineCard({ piece }: { piece: PieceVM }) {
     >
       <Heart id={piece.id} top={11} right={11} dim={31} size={15} />
       <OkfImage
-        src={piece.img}
+        src={getPhotoThumbnailUrl(piece.id, 700)}
         alt={piece.t}
         title={piece.t}
         artist={piece.a}
@@ -373,6 +374,34 @@ function WallView({ pieces }: { pieces: PieceVM[] }) {
   );
 }
 
+/* ---- Infinite scroll ---- */
+
+function LoadMoreSentinel() {
+  const { loadMore, hasMore, loadingMore } = useFolio();
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || !hasMore) return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) loadMore();
+      },
+      { rootMargin: "600px" },
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [hasMore, loadMore]);
+  if (!hasMore && !loadingMore) return null;
+  return (
+    <div
+      ref={ref}
+      style={{ padding: "44px 0 12px", textAlign: "center", fontFamily: "var(--sans)", fontSize: 12.5, letterSpacing: "0.04em", color: "var(--faint)" }}
+    >
+      {loadingMore ? "Gathering more…" : ""}
+    </div>
+  );
+}
+
 /* ---- Screen ---- */
 
 export default function Gallery() {
@@ -394,12 +423,17 @@ export default function Gallery() {
           <div style={{ fontFamily: "var(--serif)", fontStyle: "italic", fontSize: 24, color: "var(--graphite)" }}>Nothing here yet.</div>
           <div style={{ fontFamily: "var(--sans)", fontSize: 14, marginTop: 10 }}>Pieces will appear as your streams gather them.</div>
         </div>
-      ) : mode === "magazine" ? (
-        <MagazineView pieces={pieces} />
-      ) : mode === "wall" ? (
-        <WallView pieces={pieces} />
       ) : (
-        <LibraryView pieces={pieces} total={total} />
+        <>
+          {mode === "magazine" ? (
+            <MagazineView pieces={pieces} />
+          ) : mode === "wall" ? (
+            <WallView pieces={pieces} />
+          ) : (
+            <LibraryView pieces={pieces} total={total} />
+          )}
+          {mode !== "wall" ? <LoadMoreSentinel /> : null}
+        </>
       )}
     </div>
   );

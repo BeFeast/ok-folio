@@ -259,8 +259,9 @@ export async function fetchPhotoDetail(
   return response.json();
 }
 
-export function getPhotoThumbnailUrl(id: number): string {
-  return `${API_BASE}/photos/${id}/thumbnail`;
+export function getPhotoThumbnailUrl(id: number, width?: number): string {
+  const base = `${API_BASE}/photos/${id}/thumbnail`;
+  return width ? `${base}?w=${width}` : base;
 }
 
 export function getPhotoImageUrl(id: number): string {
