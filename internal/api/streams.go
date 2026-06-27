@@ -164,6 +164,9 @@ func buildConnectorStatuses(sourceStats []database.ConnectorSourceStats, runs []
 			providerID = "webgallery"
 		}
 		connector := ensureConnectorStatus(byConnector, providerID)
+		if runLastSync := extractionRunLastSync(run); runLastSync != nil {
+			connector.LastSync = maxTime(connector.LastSync, *runLastSync)
+		}
 		connector.RecentRuns = append(connector.RecentRuns, connectorRunStatus{
 			ID:               run.ID,
 			StartTime:        run.StartTime,
@@ -294,6 +297,10 @@ func connectorHealth(connector connectorStatus) (string, string) {
 }
 
 func connectorHealthFromStatuses(lastStatus string, runStatus string, hasFailures bool) (string, string) {
+	if normalizeConnectorStatus(runStatus) == "running" {
+		return "syncing", "Syncing"
+	}
+
 	status := normalizeConnectorStatus(lastStatus)
 	if status == "" {
 		status = normalizeConnectorStatus(runStatus)
@@ -337,6 +344,17 @@ func normalizeConnectorStatus(status string) string {
 	default:
 		return status
 	}
+}
+
+func extractionRunLastSync(run database.ExtractionRun) *time.Time {
+	if run.EndTime != nil && !run.EndTime.IsZero() {
+		return run.EndTime
+	}
+	if !run.StartTime.IsZero() {
+		value := run.StartTime
+		return &value
+	}
+	return nil
 }
 
 func maxTime(current *time.Time, candidate time.Time) *time.Time {

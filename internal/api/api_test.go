@@ -638,6 +638,36 @@ func TestHandleConnectorStatusRendersKnownConnectorsWithoutCatalogRows(t *testin
 	}
 }
 
+func TestBuildConnectorStatusesUsesRunLastSyncWhenStateMissing(t *testing.T) {
+	runEnd := time.Date(2026, 6, 25, 12, 10, 0, 0, time.UTC)
+	run := database.ExtractionRun{
+		ID:        7,
+		Provider:  "telegram",
+		StartTime: time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC),
+		EndTime:   &runEnd,
+		Status:    "completed",
+	}
+
+	connectors := buildConnectorStatuses(nil, []database.ExtractionRun{run}, nil, nil)
+
+	var telegram *connectorStatus
+	for i := range connectors {
+		if connectors[i].ID == "telegram" {
+			telegram = &connectors[i]
+			break
+		}
+	}
+	if telegram == nil {
+		t.Fatalf("Expected Telegram connector, got %#v", connectors)
+	}
+	if telegram.LastSync == nil || !telegram.LastSync.Equal(runEnd) {
+		t.Fatalf("Expected last sync fallback from extraction run, got %v", telegram.LastSync)
+	}
+	if telegram.Health != "healthy" || telegram.State != "Healthy" {
+		t.Fatalf("Expected completed run without state to mark connector healthy, got health=%q state=%q", telegram.Health, telegram.State)
+	}
+}
+
 func TestConnectorHealth(t *testing.T) {
 	syncingRun := connectorStatus{
 		RecentRuns: []connectorRunStatus{{Status: "running"}},
@@ -657,6 +687,11 @@ func TestConnectorHealth(t *testing.T) {
 		hasState:   true,
 		lastStatus: "permission_halt",
 	}
+	runningRunWithStaleState := connectorStatus{
+		hasState:   true,
+		lastStatus: "completed",
+		RecentRuns: []connectorRunStatus{{Status: "running"}},
+	}
 	noState := connectorStatus{}
 
 	tests := []struct {
@@ -671,6 +706,7 @@ func TestConnectorHealth(t *testing.T) {
 		{name: "completed state with failed rows", connector: connectorStatus{hasState: true, lastStatus: "completed", Counts: connectorCounts{Failed: 1}}, wantHealth: "degraded", wantState: "Degraded"},
 		{name: "degraded state", connector: degradedState, wantHealth: "degraded", wantState: "Degraded"},
 		{name: "permission halt state", connector: permissionHaltState, wantHealth: "error", wantState: "Needs review"},
+		{name: "running run with stale state", connector: runningRunWithStaleState, wantHealth: "syncing", wantState: "Syncing"},
 		{name: "no state", connector: noState, wantHealth: "idle", wantState: "Not synced"},
 	}
 
