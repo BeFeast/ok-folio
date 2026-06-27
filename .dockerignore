@@ -7,3 +7,9 @@
 .DS_Store
 .idea
 .vscode
+
+# Build artifacts — always produced fresh inside the image build
+node_modules
+dashboard/node_modules
+dashboard/dist
+dist
