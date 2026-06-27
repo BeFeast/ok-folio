@@ -748,12 +748,21 @@ func TestConnectorSourcesCRUDAndScopes(t *testing.T) {
 		t.Fatalf("expected enabled managed scopes, got managed=%v scopes=%v", managed, scopes)
 	}
 
-	updated, err := db.UpdateConnectorSource(second.ID, ConnectorSource{Enabled: false})
+	disabledEnabled := false
+	updated, err := db.UpdateConnectorSource(second.ID, ConnectorSourceUpdates{Enabled: &disabledEnabled})
 	if err != nil {
 		t.Fatalf("UpdateConnectorSource disable failed: %v", err)
 	}
 	if updated.Enabled {
 		t.Fatalf("expected source to be disabled: %#v", updated)
+	}
+	emptyLabel := ""
+	updated, err = db.UpdateConnectorSource(second.ID, ConnectorSourceUpdates{Label: &emptyLabel})
+	if err != nil {
+		t.Fatalf("UpdateConnectorSource clear label failed: %v", err)
+	}
+	if updated.Enabled || updated.Label != "" {
+		t.Fatalf("expected label-only update to preserve disabled state and clear label: %#v", updated)
 	}
 
 	scopes, managed, err = db.ConnectorSourceScopes("telegram")

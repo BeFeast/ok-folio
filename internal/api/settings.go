@@ -20,10 +20,10 @@ type connectorSourcesResponse struct {
 }
 
 type connectorSourceRequest struct {
-	Type    string `json:"type"`
-	ChatID  string `json:"chat_id"`
-	Label   string `json:"label"`
-	Enabled *bool  `json:"enabled"`
+	Type    string  `json:"type"`
+	ChatID  string  `json:"chat_id"`
+	Label   *string `json:"label"`
+	Enabled *bool   `json:"enabled"`
 }
 
 func (s *Server) handleListConnectorSources(w http.ResponseWriter, r *http.Request) {
@@ -40,7 +40,7 @@ func (s *Server) handleCreateConnectorSource(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	if err := s.validateConnectorSource(input); err != nil {
+	if err := s.validateConnectorSource(input, true); err != nil {
 		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -52,7 +52,7 @@ func (s *Server) handleCreateConnectorSource(w http.ResponseWriter, r *http.Requ
 	source, err := s.db.CreateConnectorSource(database.ConnectorSource{
 		Type:    input.Type,
 		ChatID:  input.ChatID,
-		Label:   input.Label,
+		Label:   connectorSourceLabel(input),
 		Enabled: enabled,
 	})
 	if err != nil {
@@ -72,19 +72,14 @@ func (s *Server) handleUpdateConnectorSource(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	if err := s.validateConnectorSource(input); err != nil {
+	if err := s.validateConnectorSource(input, false); err != nil {
 		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	enabled := true
-	if input.Enabled != nil {
-		enabled = *input.Enabled
-	}
-
-	source, err := s.db.UpdateConnectorSource(id, database.ConnectorSource{
-		ChatID:  input.ChatID,
+	source, err := s.db.UpdateConnectorSource(id, database.ConnectorSourceUpdates{
+		ChatID:  optionalNonEmptyString(input.ChatID),
 		Label:   input.Label,
-		Enabled: enabled,
+		Enabled: input.Enabled,
 	})
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		s.writeError(w, http.StatusNotFound, "Connector source not found")
@@ -123,13 +118,25 @@ func (s *Server) readConnectorSourceRequest(w http.ResponseWriter, r *http.Reque
 	}
 	input.Type = strings.TrimSpace(input.Type)
 	input.ChatID = strings.TrimSpace(input.ChatID)
-	input.Label = strings.TrimSpace(input.Label)
+	if input.Label != nil {
+		label := strings.TrimSpace(*input.Label)
+		input.Label = &label
+	}
 	return input, true
 }
 
-func (s *Server) validateConnectorSource(input connectorSourceRequest) error {
-	if input.Type != telegram.ProviderID {
+func (s *Server) validateConnectorSource(input connectorSourceRequest, requireSource bool) error {
+	if input.Type != "" && input.Type != telegram.ProviderID {
 		return fmt.Errorf("only Telegram connector sources are supported")
+	}
+	if input.Type == "" && input.ChatID == "" {
+		if requireSource {
+			return fmt.Errorf("connector source type is required")
+		}
+		return nil
+	}
+	if input.Type == "" {
+		return fmt.Errorf("connector source type is required")
 	}
 	if input.ChatID == "" {
 		return fmt.Errorf("Telegram chat ID is required")
@@ -138,4 +145,18 @@ func (s *Server) validateConnectorSource(input connectorSourceRequest) error {
 		return fmt.Errorf("Telegram chat ID must be a numeric ID")
 	}
 	return nil
+}
+
+func connectorSourceLabel(input connectorSourceRequest) string {
+	if input.Label == nil {
+		return ""
+	}
+	return *input.Label
+}
+
+func optionalNonEmptyString(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
 }

@@ -154,6 +154,13 @@ type ConnectorSource struct {
 	UpdatedAt  time.Time  `gorm:"autoUpdateTime" json:"updated_at"`
 }
 
+// ConnectorSourceUpdates contains optional fields for partial source updates.
+type ConnectorSourceUpdates struct {
+	ChatID  *string
+	Label   *string
+	Enabled *bool
+}
+
 func (ConnectorSource) TableName() string {
 	return "connector_sources"
 }
@@ -925,26 +932,29 @@ func (db *DB) CreateConnectorSource(source ConnectorSource) (*ConnectorSource, e
 	return &normalized, nil
 }
 
-func (db *DB) UpdateConnectorSource(id uint64, updates ConnectorSource) (*ConnectorSource, error) {
+func (db *DB) UpdateConnectorSource(id uint64, updates ConnectorSourceUpdates) (*ConnectorSource, error) {
 	if id == 0 {
 		return nil, fmt.Errorf("connector source ID is required")
 	}
-	attrs := map[string]interface{}{
-		"enabled": updates.Enabled,
+	attrs := map[string]interface{}{}
+	if updates.Enabled != nil {
+		attrs["enabled"] = *updates.Enabled
 	}
-	if strings.TrimSpace(updates.Label) != "" {
-		attrs["label"] = strings.TrimSpace(updates.Label)
+	if updates.Label != nil {
+		attrs["label"] = strings.TrimSpace(*updates.Label)
 	}
-	if strings.TrimSpace(updates.ChatID) != "" {
-		attrs["chat_id"] = strings.TrimSpace(updates.ChatID)
+	if updates.ChatID != nil && strings.TrimSpace(*updates.ChatID) != "" {
+		attrs["chat_id"] = strings.TrimSpace(*updates.ChatID)
 	}
 
-	result := db.Model(&ConnectorSource{}).Where("id = ?", id).Updates(attrs)
-	if result.Error != nil {
-		return nil, result.Error
-	}
-	if result.RowsAffected == 0 {
-		return nil, gorm.ErrRecordNotFound
+	if len(attrs) > 0 {
+		result := db.Model(&ConnectorSource{}).Where("id = ?", id).Updates(attrs)
+		if result.Error != nil {
+			return nil, result.Error
+		}
+		if result.RowsAffected == 0 {
+			return nil, gorm.ErrRecordNotFound
+		}
 	}
 
 	var source ConnectorSource

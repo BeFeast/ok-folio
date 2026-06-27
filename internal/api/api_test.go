@@ -249,6 +249,20 @@ func TestConnectorSourceSettingsCRUD(t *testing.T) {
 		t.Fatalf("expected disabled connector source: %#v", updated)
 	}
 
+	patchBody = bytes.NewBufferString(`{"label":""}`)
+	req = httptest.NewRequest(http.MethodPatch, "/api/v1/settings/connector-sources/"+strconv.FormatUint(created.ID, 10), patchBody)
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("patch label status=%d body=%q", w.Code, w.Body.String())
+	}
+	if err := json.NewDecoder(w.Body).Decode(&updated); err != nil {
+		t.Fatalf("decode label-updated connector source: %v", err)
+	}
+	if updated.Enabled || updated.Label != "" {
+		t.Fatalf("expected label-only patch to preserve disabled source and clear label: %#v", updated)
+	}
+
 	req = httptest.NewRequest(http.MethodDelete, "/api/v1/settings/connector-sources/"+strconv.FormatUint(created.ID, 10), nil)
 	w = httptest.NewRecorder()
 	server.router.ServeHTTP(w, req)
