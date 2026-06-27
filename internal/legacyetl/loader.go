@@ -210,7 +210,7 @@ func restartIdentitySequenceSQL(table string) (string, error) {
 		DECLARE
 			next_id bigint;
 		BEGIN
-			SELECT COALESCE(MAX(id), 0) + 1 INTO next_id FROM %s;
+			SELECT COALESCE(MAX(id), 1) + 1 INTO next_id FROM %s;
 			EXECUTE format('ALTER TABLE %%I ALTER COLUMN id RESTART WITH %%s', %s, next_id);
 		END $$;`,
 		table,

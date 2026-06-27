@@ -68,6 +68,9 @@ func TestRestartIdentitySequenceSQLUsesColumnIdentity(t *testing.T) {
 		t.Fatalf("restartIdentitySequenceSQL failed: %v", err)
 	}
 	normalized := normalizeSQL(sql)
+	if !strings.Contains(normalized, "SELECT COALESCE(MAX(id), 1) + 1 INTO next_id") {
+		t.Fatalf("empty ETL loads must restart at 2 to reserve legacy id 1, got: %s", normalized)
+	}
 	if !strings.Contains(normalized, "ALTER TABLE %I ALTER COLUMN id RESTART WITH %s") {
 		t.Fatalf("expected ALTER TABLE identity restart, got: %s", normalized)
 	}
@@ -381,12 +384,34 @@ func setupPostgresETLDB(t *testing.T) *database.DB {
 	if err != nil {
 		t.Fatalf("open postgres: %v", err)
 	}
-	gormDB.Exec("DROP TABLE IF EXISTS downloaded_photos, extraction_runs, inbox_items, connector_states, etl_watermark CASCADE")
-	gormDB.Exec("CREATE EXTENSION IF NOT EXISTS vector")
+	assertDisposablePostgresTestDB(t, gormDB)
+	if err := gormDB.Exec("DROP TABLE IF EXISTS downloaded_photos, extraction_runs, inbox_items, connector_states, etl_watermark CASCADE").Error; err != nil {
+		t.Fatalf("reset postgres test tables: %v", err)
+	}
+	if err := gormDB.Exec("CREATE EXTENSION IF NOT EXISTS vector").Error; err != nil {
+		t.Fatalf("create vector extension: %v", err)
+	}
 	if err := database.Migrate(gormDB); err != nil {
 		t.Fatalf("migrate postgres: %v", err)
 	}
 	return &database.DB{DB: gormDB}
+}
+
+func assertDisposablePostgresTestDB(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	var databaseName string
+	if err := db.Raw("SELECT current_database()").Scan(&databaseName).Error; err != nil {
+		t.Fatalf("verify postgres test database name: %v", err)
+	}
+	lowerName := strings.ToLower(databaseName)
+	if !strings.Contains(lowerName, "test") {
+		t.Fatalf("refusing to reset Postgres database %q; OKFOLIO_TEST_POSTGRES_DSN must point at a disposable database with \"test\" in its name", databaseName)
+	}
+	for _, blocked := range []string{"prod", "production", "staging", "stage"} {
+		if strings.Contains(lowerName, blocked) {
+			t.Fatalf("refusing to reset Postgres database %q; name looks non-disposable", databaseName)
+		}
+	}
 }
 
 func normalizeSQL(sql string) string {
