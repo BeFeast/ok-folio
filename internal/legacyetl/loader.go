@@ -190,16 +190,36 @@ func nullableDatetimePtr(s *string) any {
 
 func setSequences(tx *gorm.DB) error {
 	for _, table := range []string{DownloadedPhotosTable, ExtractionRunsTable} {
-		stmt := fmt.Sprintf(
-			"SELECT setval(pg_get_serial_sequence('%s','id'), COALESCE((SELECT MAX(id) FROM %s), 1))",
-			table,
-			table,
-		)
+		stmt, err := restartIdentitySequenceSQL(table)
+		if err != nil {
+			return err
+		}
 		if err := tx.Exec(stmt).Error; err != nil {
-			return fmt.Errorf("set %s id sequence: %w", table, err)
+			return fmt.Errorf("restart %s id identity sequence: %w", table, err)
 		}
 	}
 	return nil
+}
+
+func restartIdentitySequenceSQL(table string) (string, error) {
+	if !isOwnedTable(table) {
+		return "", fmt.Errorf("refusing to restart id identity for non-owned table %q", table)
+	}
+	return fmt.Sprintf(`
+		DO $$
+		DECLARE
+			next_id bigint;
+		BEGIN
+			SELECT COALESCE(MAX(id), 1) + 1 INTO next_id FROM %s;
+			EXECUTE format('ALTER TABLE %%I ALTER COLUMN id RESTART WITH %%s', %s, next_id);
+		END $$;`,
+		table,
+		sqlLiteral(table),
+	), nil
+}
+
+func sqlLiteral(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 }
 
 func advanceWatermark(db *gorm.DB, table string, lastID uint64, lastTimestamp time.Time) error {

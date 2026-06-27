@@ -6,9 +6,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"ok-folio/internal/database"
 
+	postgresdriver "gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -57,6 +59,26 @@ func TestExtractionRunUpsertContract(t *testing.T) {
 	setList := sql[strings.Index(sql, " DO UPDATE SET "):strings.Index(sql, " RETURNING ")]
 	if strings.Contains(setList, "start_time") {
 		t.Fatalf("start_time is insert-only for extraction_runs: %s", setList)
+	}
+}
+
+func TestRestartIdentitySequenceSQLUsesColumnIdentity(t *testing.T) {
+	sql, err := restartIdentitySequenceSQL(DownloadedPhotosTable)
+	if err != nil {
+		t.Fatalf("restartIdentitySequenceSQL failed: %v", err)
+	}
+	normalized := normalizeSQL(sql)
+	if !strings.Contains(normalized, "SELECT COALESCE(MAX(id), 1) + 1 INTO next_id") {
+		t.Fatalf("empty ETL loads must restart at 2 to reserve legacy id 1, got: %s", normalized)
+	}
+	if !strings.Contains(normalized, "ALTER TABLE %I ALTER COLUMN id RESTART WITH %s") {
+		t.Fatalf("expected ALTER TABLE identity restart, got: %s", normalized)
+	}
+	if strings.Contains(normalized, "pg_get_serial_sequence") || strings.Contains(normalized, "setval") {
+		t.Fatalf("identity restart must not guess a sequence name, got: %s", normalized)
+	}
+	if _, err := restartIdentitySequenceSQL("photoprism_albums"); err == nil {
+		t.Fatal("expected restartIdentitySequenceSQL to reject non-owned tables")
 	}
 }
 
@@ -146,6 +168,74 @@ func TestUpsertExtractionRunCoercesLegacyZeroDatetimesToNull(t *testing.T) {
 	if stored.StartTime != nil || stored.EndTime != nil {
 		t.Fatalf("expected nullable model times to scan as nil, got start_time=%v end_time=%v", stored.StartTime, stored.EndTime)
 	}
+}
+
+func TestPostgresLoadDumpRestartsIdentityBeforeAppInsert(t *testing.T) {
+	db := setupPostgresETLDB(t)
+	downloadedAt := "2026-06-27 12:00:00"
+	runEnd := "2026-06-27 12:05:00"
+	rows := DumpRows{
+		DownloadedPhotos: []LegacyDownloadedPhoto{{
+			ID:           5,
+			URL:          "https://fixture.test/legacy-photo.jpg",
+			SourcePage:   "https://fixture.test/gallery",
+			Title:        "Legacy photo",
+			Artist:       "Legacy Artist",
+			FilePath:     "legacy-photo.jpg",
+			FileName:     "legacy-photo.jpg",
+			DownloadedAt: downloadedAt,
+			FileSize:     123,
+			Status:       "downloaded",
+		}},
+		ExtractionRuns: []LegacyExtractionRun{{
+			ID:               3,
+			StartTime:        "2026-06-27 12:00:00",
+			EndTime:          &runEnd,
+			Status:           "completed",
+			PagesProcessed:   1,
+			PhotosFound:      1,
+			PhotosDownloaded: 1,
+		}},
+	}
+
+	result, err := LoadDump(db, rows, LoadOptions{
+		LegacyTimeZone: "UTC",
+		SetSequences:   true,
+	})
+	if err != nil {
+		t.Fatalf("LoadDump failed: %v", err)
+	}
+	if result.PhotoMaxID != 5 || result.RunMaxID != 3 {
+		t.Fatalf("unexpected max IDs from LoadDump: %#v", result)
+	}
+
+	appRun := database.ExtractionRun{Status: "running"}
+	if err := db.Create(&appRun).Error; err != nil {
+		t.Fatalf("plain app extraction_runs insert after ETL failed: %v", err)
+	}
+	if appRun.ID <= result.RunMaxID {
+		t.Fatalf("app extraction_runs insert used id %d, want > %d", appRun.ID, result.RunMaxID)
+	}
+
+	appPhoto := database.DownloadedPhoto{
+		URL:          "https://fixture.test/app-photo.jpg",
+		SourcePage:   "https://fixture.test/gallery",
+		Title:        "App photo",
+		Artist:       "App Artist",
+		FilePath:     "app-photo.jpg",
+		FileName:     "app-photo.jpg",
+		DownloadedAt: ptrTime(time.Date(2026, 6, 27, 12, 10, 0, 0, time.UTC)),
+		Status:       "downloaded",
+	}
+	if err := db.Create(&appPhoto).Error; err != nil {
+		t.Fatalf("plain app downloaded_photos insert after ETL failed: %v", err)
+	}
+	if appPhoto.ID <= result.PhotoMaxID {
+		t.Fatalf("app downloaded_photos insert used id %d, want > %d", appPhoto.ID, result.PhotoMaxID)
+	}
+
+	assertOnlyIdentityIDSequence(t, db.DB, DownloadedPhotosTable)
+	assertOnlyIdentityIDSequence(t, db.DB, ExtractionRunsTable)
 }
 
 func TestFillMissingContentHashesReadsOriginalsAndIsIdempotent(t *testing.T) {
@@ -284,6 +374,46 @@ func setupSQLiteETLDB(t *testing.T) *database.DB {
 	return &database.DB{DB: gormDB}
 }
 
+func setupPostgresETLDB(t *testing.T) *database.DB {
+	t.Helper()
+	dsn := os.Getenv("OKFOLIO_TEST_POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("set OKFOLIO_TEST_POSTGRES_DSN to run the Postgres-backed ETL integration test")
+	}
+	gormDB, err := gorm.Open(postgresdriver.Open(dsn), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatalf("open postgres: %v", err)
+	}
+	assertDisposablePostgresTestDB(t, gormDB)
+	if err := gormDB.Exec("DROP TABLE IF EXISTS downloaded_photos, extraction_runs, inbox_items, connector_states, etl_watermark CASCADE").Error; err != nil {
+		t.Fatalf("reset postgres test tables: %v", err)
+	}
+	if err := gormDB.Exec("CREATE EXTENSION IF NOT EXISTS vector").Error; err != nil {
+		t.Fatalf("create vector extension: %v", err)
+	}
+	if err := database.Migrate(gormDB); err != nil {
+		t.Fatalf("migrate postgres: %v", err)
+	}
+	return &database.DB{DB: gormDB}
+}
+
+func assertDisposablePostgresTestDB(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	var databaseName string
+	if err := db.Raw("SELECT current_database()").Scan(&databaseName).Error; err != nil {
+		t.Fatalf("verify postgres test database name: %v", err)
+	}
+	lowerName := strings.ToLower(databaseName)
+	if !strings.Contains(lowerName, "test") {
+		t.Fatalf("refusing to reset Postgres database %q; OKFOLIO_TEST_POSTGRES_DSN must point at a disposable database with \"test\" in its name", databaseName)
+	}
+	for _, blocked := range []string{"prod", "production", "staging", "stage"} {
+		if strings.Contains(lowerName, blocked) {
+			t.Fatalf("refusing to reset Postgres database %q; name looks non-disposable", databaseName)
+		}
+	}
+}
+
 func normalizeSQL(sql string) string {
 	return strings.Join(strings.Fields(sql), " ")
 }
@@ -297,4 +427,40 @@ func assertNullTimeColumn(t *testing.T, db *gorm.DB, table, column string, id ui
 	if got.Valid {
 		t.Fatalf("expected %s.%s for id %d to be NULL, got %v", table, column, id, got.Time)
 	}
+}
+
+func assertOnlyIdentityIDSequence(t *testing.T, db *gorm.DB, table string) {
+	t.Helper()
+	type sequenceRow struct {
+		RelName string
+		DepType sql.NullString
+	}
+	var rows []sequenceRow
+	if err := db.Raw(`
+		SELECT seq.relname AS rel_name, dep.deptype AS dep_type
+		FROM pg_class tbl
+		JOIN pg_namespace ns ON ns.oid = tbl.relnamespace
+		JOIN pg_attribute attr ON attr.attrelid = tbl.oid AND attr.attname = 'id'
+		JOIN pg_class seq ON seq.relnamespace = ns.oid AND seq.relkind = 'S'
+		LEFT JOIN pg_depend dep ON dep.objid = seq.oid
+			AND dep.refobjid = tbl.oid
+			AND dep.refobjsubid = attr.attnum
+		WHERE tbl.relname = ?
+			AND seq.relname ~ ?
+		ORDER BY seq.relname`, table, "^"+table+"_id_seq[0-9]*$").Scan(&rows).Error; err != nil {
+		t.Fatalf("probe %s id sequences: %v", table, err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected one %s id sequence, got %#v", table, rows)
+	}
+	if rows[0].RelName != table+"_id_seq" {
+		t.Fatalf("expected canonical %s id sequence, got %#v", table, rows)
+	}
+	if !rows[0].DepType.Valid || rows[0].DepType.String != "i" {
+		t.Fatalf("expected %s id sequence to be identity-owned, got %#v", table, rows)
+	}
+}
+
+func ptrTime(t time.Time) *time.Time {
+	return &t
 }
