@@ -285,6 +285,54 @@ func TestRecordDownloadOrDuplicateRoutesLoserToInbox(t *testing.T) {
 	}
 }
 
+func TestRecordDownloadOrDuplicateRecoversFailedURLHashOwner(t *testing.T) {
+	db := setupTestDB(t)
+
+	const sharedURL = "https://example.com/retry-success.jpg"
+	if err := db.RecordFailedDownload(sharedURL, "temporary timeout"); err != nil {
+		t.Fatalf("Failed to seed failed download: %v", err)
+	}
+
+	retry := &DownloadedPhoto{
+		URL:        sharedURL,
+		SourcePage: "https://example.com/source/retry",
+		Title:      "Recovered",
+		Artist:     "Retry Artist",
+		FileName:   "retry-success.jpg",
+		FileSize:   123,
+		Status:     "downloaded",
+	}
+	duplicate := &InboxItem{
+		ProviderID: "webgallery",
+		DedupeKey:  "webgallery:retry-success",
+		Status:     "duplicate",
+		Reason:     "url_hash already kept",
+	}
+	kept, err := db.RecordDownloadOrDuplicate(retry, duplicate)
+	if err != nil {
+		t.Fatalf("Expected retry to update failed row without error, got %v", err)
+	}
+	if !kept {
+		t.Fatalf("Expected retry to be kept after recovering failed row")
+	}
+
+	var stored DownloadedPhoto
+	if err := db.Where("url_hash = ?", HashURL(sharedURL)).First(&stored).Error; err != nil {
+		t.Fatalf("Failed to load recovered row: %v", err)
+	}
+	if stored.Status != "downloaded" || stored.ErrorMessage != "" || stored.Title != retry.Title || stored.FileSize != retry.FileSize {
+		t.Fatalf("Expected failed row to be updated to successful download, got %#v", stored)
+	}
+
+	exceptions, total, err := db.GetInboxExceptions(10, 0)
+	if err != nil {
+		t.Fatalf("Failed to read inbox exceptions: %v", err)
+	}
+	if total != 0 || len(exceptions) != 0 {
+		t.Fatalf("Expected no inbox duplicate for successful retry, got total=%d items=%#v", total, exceptions)
+	}
+}
+
 func TestMarkPhotoFailed(t *testing.T) {
 	db := setupTestDB(t)
 

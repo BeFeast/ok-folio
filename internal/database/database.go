@@ -391,12 +391,17 @@ func postMigratePostgres(db *gorm.DB) error {
 	indexStmts := []string{
 		`DROP INDEX IF EXISTS idx_downloaded_photos_source_page`,
 		`CREATE INDEX IF NOT EXISTS idx_downloaded_photos_source_page_hash ON downloaded_photos USING hash (source_page)`,
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_downloaded_photos_content_hash_unique ON downloaded_photos (content_hash) WHERE content_hash IS NOT NULL`,
 	}
 	for _, stmt := range indexStmts {
 		if err := db.Exec(stmt).Error; err != nil {
 			return fmt.Errorf("post-migrate index step failed: %w", err)
 		}
+	}
+	if err := quarantineExistingContentHashDuplicates(db); err != nil {
+		return err
+	}
+	if err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_downloaded_photos_content_hash_unique ON downloaded_photos (content_hash) WHERE content_hash IS NOT NULL`).Error; err != nil {
+		return fmt.Errorf("post-migrate content-hash unique index step failed: %w", err)
 	}
 
 	// Add the embedding column only when the vector type exists. The app must
@@ -412,6 +417,72 @@ func postMigratePostgres(db *gorm.DB) error {
 		return fmt.Errorf("post-migrate embedding step failed: %w", err)
 	}
 
+	return nil
+}
+
+func quarantineExistingContentHashDuplicates(db *gorm.DB) error {
+	const stmt = `
+		WITH ranked AS (
+			SELECT
+				id,
+				COALESCE(provider, ?) AS provider_id,
+				url,
+				source_page,
+				title,
+				artist,
+				ROW_NUMBER() OVER (
+					PARTITION BY content_hash
+					ORDER BY
+						CASE WHEN status = 'downloaded' THEN 0 ELSE 1 END,
+						downloaded_at ASC,
+						id ASC
+				) AS rn
+			FROM downloaded_photos
+			WHERE content_hash IS NOT NULL
+		), losers AS (
+			SELECT * FROM ranked WHERE rn > 1
+		), inboxed AS (
+			INSERT INTO inbox_items (
+				provider_id,
+				dedupe_key,
+				source_url,
+				title,
+				artist,
+				status,
+				reason,
+				fingerprint,
+				created_at,
+				updated_at
+			)
+			SELECT
+				provider_id,
+				url,
+				source_page,
+				title,
+				artist,
+				'duplicate',
+				'pre-existing exact content hash duplicate quarantined',
+				'k' || E'\x1f' || provider_id || E'\x1f' || 'duplicate' || E'\x1f' || url,
+				NOW(),
+				NOW()
+			FROM losers
+			ON CONFLICT (fingerprint) DO UPDATE SET
+				source_url = EXCLUDED.source_url,
+				title = EXCLUDED.title,
+				artist = EXCLUDED.artist,
+				reason = EXCLUDED.reason,
+				updated_at = NOW()
+			RETURNING 1
+		)
+		UPDATE downloaded_photos
+		SET
+			content_hash = NULL,
+			status = 'deleted',
+			error_message = 'quarantined as pre-existing exact content hash duplicate'
+		WHERE id IN (SELECT id FROM losers)`
+	if err := db.Exec(stmt, DefaultProvider).Error; err != nil {
+		return fmt.Errorf("post-migrate content-hash duplicate quarantine failed: %w", err)
+	}
 	return nil
 }
 
@@ -440,20 +511,7 @@ func (db *DB) RecordDownload(photo *DownloadedPhoto) error {
 		Where: clause.Where{Exprs: []clause.Expression{
 			gorm.Expr("downloaded_photos.status <> ?", "downloaded"),
 		}},
-		DoUpdates: clause.Assignments(map[string]interface{}{
-			"source_page":   photo.SourcePage,
-			"title":         photo.Title,
-			"artist":        photo.Artist,
-			"category":      resolveCategory(photo),
-			"upload_date":   photo.UploadDate,
-			"file_path":     photo.FilePath,
-			"file_name":     photo.FileName,
-			"file_size":     photo.FileSize,
-			"provider":      photo.Provider,
-			"content_hash":  photo.ContentHash,
-			"status":        photo.Status,
-			"error_message": "",
-		}),
+		DoUpdates: clause.Assignments(downloadAssignments(photo)),
 	}).Create(photo)
 	if result.Error != nil {
 		return result.Error
@@ -462,6 +520,23 @@ func (db *DB) RecordDownload(photo *DownloadedPhoto) error {
 		return fmt.Errorf("photo already downloaded: %s", photo.URL)
 	}
 	return nil
+}
+
+func downloadAssignments(photo *DownloadedPhoto) map[string]interface{} {
+	return map[string]interface{}{
+		"source_page":   photo.SourcePage,
+		"title":         photo.Title,
+		"artist":        photo.Artist,
+		"category":      resolveCategory(photo),
+		"upload_date":   photo.UploadDate,
+		"file_path":     photo.FilePath,
+		"file_name":     photo.FileName,
+		"file_size":     photo.FileSize,
+		"provider":      photo.Provider,
+		"content_hash":  photo.ContentHash,
+		"status":        photo.Status,
+		"error_message": "",
+	}
 }
 
 // RecordDownloadOrDuplicate atomically inserts a downloaded photo. If another
@@ -478,14 +553,38 @@ func (db *DB) RecordDownloadOrDuplicate(photo *DownloadedPhoto, duplicate *Inbox
 		if constraint != "" && constraint != URLHashUniqueIndex && constraint != ContentHashUniqueIndex {
 			return false, err
 		}
-		if duplicate != nil {
-			if inboxErr := db.RecordInboxException(duplicate); inboxErr != nil {
-				return false, inboxErr
+		if constraint == URLHashUniqueIndex || constraint == "" {
+			updated, updateErr := db.updateNonDownloadedURLHashOwner(photo)
+			if updateErr != nil {
+				if IsUniqueViolation(updateErr) && uniqueViolationConstraint(updateErr) == ContentHashUniqueIndex {
+					return db.routeDuplicateToInbox(duplicate)
+				}
+				return false, updateErr
+			}
+			if updated {
+				return true, nil
 			}
 		}
-		return false, nil
+		return db.routeDuplicateToInbox(duplicate)
 	}
 	return false, err
+}
+
+func (db *DB) updateNonDownloadedURLHashOwner(photo *DownloadedPhoto) (bool, error) {
+	result := db.Model(&DownloadedPhoto{}).
+		Where("url_hash = ? AND status <> ?", HashURL(photo.URL), "downloaded").
+		Updates(downloadAssignments(photo))
+	return result.RowsAffected > 0, result.Error
+}
+
+func (db *DB) routeDuplicateToInbox(duplicate *InboxItem) (bool, error) {
+	if duplicate == nil {
+		return false, nil
+	}
+	if err := db.RecordInboxException(duplicate); err != nil {
+		return false, err
+	}
+	return false, nil
 }
 
 // MarkPhotoFailed marks a photo download as failed, keyed on url_hash.

@@ -145,6 +145,77 @@ func TestPostgresMigrateSchemaAndIdempotency(t *testing.T) {
 	assertIdentityByDefault(t, db, "extraction_runs")
 }
 
+func TestPostgresMigrateQuarantinesExistingContentHashDuplicates(t *testing.T) {
+	db := openPostgresTestDB(t)
+	if err := db.DB.AutoMigrate(&DownloadedPhoto{}, &ExtractionRun{}, &InboxItem{}, &ConnectorState{}, &ETLWatermark{}); err != nil {
+		t.Fatalf("AutoMigrate seed schema failed: %v", err)
+	}
+
+	sharedContent := []byte("duplicate-content-hash-fixture-123")
+	photos := []DownloadedPhoto{
+		{
+			URL:          "fixture:existing:winner",
+			SourcePage:   "https://fixture.test/source/winner",
+			Title:        "Winner",
+			Artist:       "Hash Artist",
+			FileName:     "winner.jpg",
+			Status:       "downloaded",
+			ContentHash:  sharedContent,
+			DownloadedAt: time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC),
+		},
+		{
+			URL:          "fixture:existing:loser",
+			SourcePage:   "https://fixture.test/source/loser",
+			Title:        "Loser",
+			Artist:       "Hash Artist",
+			FileName:     "loser.jpg",
+			Status:       "downloaded",
+			ContentHash:  sharedContent,
+			DownloadedAt: time.Date(2026, 1, 1, 11, 0, 0, 0, time.UTC),
+		},
+	}
+	for idx := range photos {
+		if err := db.Create(&photos[idx]).Error; err != nil {
+			t.Fatalf("seed duplicate photo %d failed: %v", idx, err)
+		}
+	}
+
+	if err := Migrate(db.DB); err != nil {
+		t.Fatalf("Migrate with pre-existing duplicate content_hash failed: %v", err)
+	}
+	if !partialUniqueIndexExists(db, ContentHashUniqueIndex, "content_hash IS NOT NULL") {
+		t.Fatalf("expected partial unique content_hash index %s", ContentHashUniqueIndex)
+	}
+
+	var hashedRows int64
+	if err := db.Model(&DownloadedPhoto{}).Where("content_hash = ?", sharedContent).Count(&hashedRows).Error; err != nil {
+		t.Fatalf("count hashed rows failed: %v", err)
+	}
+	if hashedRows != 1 {
+		t.Fatalf("expected one remaining catalog row with the duplicate content_hash, got %d", hashedRows)
+	}
+
+	var quarantined DownloadedPhoto
+	if err := db.Where("url = ?", "fixture:existing:loser").First(&quarantined).Error; err != nil {
+		t.Fatalf("load quarantined row failed: %v", err)
+	}
+	if quarantined.Status != "deleted" || len(quarantined.ContentHash) != 0 {
+		t.Fatalf("expected loser row quarantined out of catalog unique guard, got %#v", quarantined)
+	}
+
+	exceptions, total, err := db.GetInboxExceptions(10, 0)
+	if err != nil {
+		t.Fatalf("GetInboxExceptions failed: %v", err)
+	}
+	if total != 1 || len(exceptions) != 1 {
+		t.Fatalf("expected one inbox quarantine duplicate, got total=%d items=%#v", total, exceptions)
+	}
+	got := exceptions[0]
+	if got.Status != "duplicate" || got.DedupeKey != "fixture:existing:loser" || got.SourceURL != "https://fixture.test/source/loser" || got.Title != "Loser" || got.Artist != "Hash Artist" {
+		t.Fatalf("expected loser provenance in inbox duplicate, got %#v", got)
+	}
+}
+
 func TestPostgresILIKESearchAndCompositeOrder(t *testing.T) {
 	db := openPostgresTestDB(t)
 	if err := Migrate(db.DB); err != nil {
