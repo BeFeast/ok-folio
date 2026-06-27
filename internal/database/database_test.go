@@ -947,6 +947,96 @@ func TestGetGalleryCatalog(t *testing.T) {
 	}
 }
 
+func TestGetGalleryCatalogOrdersByBestAvailableTimestamp(t *testing.T) {
+	db := setupTestDB(t)
+	downloaded2026 := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+	downloaded2022 := time.Date(2022, 6, 25, 12, 0, 0, 0, time.UTC)
+	upload2030 := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	upload2024 := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	upload2019 := time.Date(2019, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	photos := []DownloadedPhoto{
+		{
+			URL:          "https://example.com/connector-2026.jpg",
+			Title:        "Connector 2026",
+			FilePath:     filepath.Join(t.TempDir(), "connector-2026.jpg"),
+			FileName:     "connector-2026.jpg",
+			DownloadedAt: ptrTime(downloaded2026),
+			UploadDate:   ptrTime(time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)),
+			Status:       "downloaded",
+		},
+		{
+			URL:          "https://example.com/legacy-2024.jpg",
+			Title:        "Legacy Upload 2024",
+			FilePath:     filepath.Join(t.TempDir(), "legacy-2024.jpg"),
+			FileName:     "legacy-2024.jpg",
+			DownloadedAt: ptrTime(downloaded2026),
+			UploadDate:   ptrTime(upload2024),
+			Status:       "downloaded",
+		},
+		{
+			URL:          "https://example.com/connector-2022.jpg",
+			Title:        "Connector 2022",
+			FilePath:     filepath.Join(t.TempDir(), "connector-2022.jpg"),
+			FileName:     "connector-2022.jpg",
+			DownloadedAt: ptrTime(downloaded2022),
+			UploadDate:   ptrTime(upload2030),
+			Status:       "downloaded",
+		},
+		{
+			URL:          "https://example.com/legacy-2019.jpg",
+			Title:        "Legacy Upload 2019",
+			FilePath:     filepath.Join(t.TempDir(), "legacy-2019.jpg"),
+			FileName:     "legacy-2019.jpg",
+			DownloadedAt: ptrTime(downloaded2026),
+			UploadDate:   ptrTime(upload2019),
+			Status:       "downloaded",
+		},
+		{
+			URL:          "https://example.com/undated.jpg",
+			Title:        "Undated",
+			FilePath:     filepath.Join(t.TempDir(), "undated.jpg"),
+			FileName:     "undated.jpg",
+			DownloadedAt: ptrTime(downloaded2026),
+			Status:       "downloaded",
+		},
+	}
+
+	for i := range photos {
+		if err := db.Create(&photos[i]).Error; err != nil {
+			t.Fatalf("Failed to create photo: %v", err)
+		}
+	}
+	for _, photo := range []DownloadedPhoto{photos[1], photos[3], photos[4]} {
+		if err := db.Exec("UPDATE downloaded_photos SET downloaded_at = NULL WHERE id = ?", photo.ID).Error; err != nil {
+			t.Fatalf("Failed to make fixture %q legacy-style: %v", photo.Title, err)
+		}
+	}
+
+	catalog, total, err := db.GetGalleryCatalog(10, 0, GalleryCatalogFilters{})
+	if err != nil {
+		t.Fatalf("Failed to get gallery catalog: %v", err)
+	}
+	if total != int64(len(photos)) {
+		t.Fatalf("Expected %d catalog rows, got %d", len(photos), total)
+	}
+
+	got := make([]string, 0, len(catalog))
+	for _, photo := range catalog {
+		got = append(got, photo.Title)
+	}
+	want := []string{
+		"Connector 2026",
+		"Legacy Upload 2024",
+		"Connector 2022",
+		"Legacy Upload 2019",
+		"Undated",
+	}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("Expected best-available timestamp order %v, got %v", want, got)
+	}
+}
+
 func TestGetGalleryCatalogFiltersCategoryArtistAndFavorites(t *testing.T) {
 	db := setupTestDB(t)
 	baseTime := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
