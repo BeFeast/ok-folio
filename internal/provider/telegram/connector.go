@@ -231,7 +231,7 @@ func discoveredMedia(message Message) (provider.DiscoveredMedia, bool) {
 	}
 	sourceURL := source.URL
 	if sourceURL == "" {
-		sourceURL = collectionName
+		sourceURL = ProviderID
 	}
 
 	return provider.DiscoveredMedia{
@@ -322,18 +322,46 @@ func isJunkCaptionLine(line string) bool {
 
 func isMediumLine(line string) bool {
 	normalized := strings.ToLower(line)
-	keywords := []string{
-		"холст", "масло", "бумага", "акварель", "картон", "темпера", "гуашь",
-		"пастель", "карандаш", "тушь", "уголь", "сангина", "дерево", "медь",
-		"бронза", "мрамор", "canvas", "oil", "paper", "watercolor", "gouache",
-		"tempera", "pastel", "pencil", "ink", "charcoal", "board",
+	if captionYearPattern.MatchString(normalized) {
+		return false
 	}
-	for _, keyword := range keywords {
-		if strings.Contains(normalized, keyword) {
-			return true
+
+	keywords := map[string]struct{}{
+		"холст": {}, "масло": {}, "бумага": {}, "акварель": {}, "картон": {}, "темпера": {},
+		"гуашь": {}, "пастель": {}, "карандаш": {}, "тушь": {}, "уголь": {}, "сангина": {},
+		"дерево": {}, "медь": {}, "бронза": {}, "мрамор": {}, "canvas": {}, "oil": {},
+		"paper": {}, "watercolor": {}, "gouache": {}, "tempera": {}, "pastel": {},
+		"pencil": {}, "ink": {}, "charcoal": {}, "board": {},
+	}
+	connectors := map[string]struct{}{
+		"на": {}, "по": {}, "и": {}, "с": {}, "on": {}, "and": {},
+	}
+
+	materialCount := 0
+	tokens := strings.FieldsFunc(normalized, func(r rune) bool {
+		return r == ',' || r == ';' || r == '/' || r == '\\' || r == '+' || r == '&' || r == '.' || r == ':' || r == '(' || r == ')' || r == '\t' || r == ' '
+	})
+	for _, token := range tokens {
+		token = strings.TrimSpace(token)
+		if token == "" {
+			continue
 		}
+		if _, ok := keywords[token]; ok {
+			materialCount++
+			continue
+		}
+		if _, ok := connectors[token]; ok {
+			continue
+		}
+		return false
 	}
-	return false
+	if materialCount == 0 {
+		return false
+	}
+	if strings.ContainsAny(line, ",;/\\+&") || materialCount > 1 {
+		return true
+	}
+	return line == normalized
 }
 
 func parseTitleAndDate(line string) (string, time.Time) {

@@ -198,8 +198,8 @@ func TestDiscoverPageFallsBackToBotMessageDedupe(t *testing.T) {
 	if item.Source.CollectionName != "Hidden Sender" {
 		t.Fatalf("expected hidden sender provenance, got %q", item.Source.CollectionName)
 	}
-	if item.Source.URL != "Hidden Sender" {
-		t.Fatalf("expected source URL fallback to provenance label, got %q", item.Source.URL)
+	if item.Source.URL != ProviderID {
+		t.Fatalf("expected provider source URL fallback, got %q", item.Source.URL)
 	}
 	if item.Artist != "" {
 		t.Fatalf("expected missing caption to leave artist empty, got %q", item.Artist)
@@ -289,6 +289,14 @@ func TestDiscoveredMediaParsesArtworkCaptionFields(t *testing.T) {
 			wantMedium: "холст, масло",
 		},
 		{
+			name:       "title containing medium keyword",
+			caption:    "Дерево 1971 г.\n\nхолст, масло\n\nГовард Чандлер Кристи (США, 1873 - 1952)",
+			wantTitle:  "Дерево",
+			wantArtist: "Говард Чандлер Кристи (США, 1873 - 1952)",
+			wantYear:   1971,
+			wantMedium: "холст, масло",
+		},
+		{
 			name:        "all junk",
 			caption:     "Секретный контент 🔞\n\n",
 			wantNoDate:  true,
@@ -321,8 +329,11 @@ func TestDiscoveredMediaParsesArtworkCaptionFields(t *testing.T) {
 			if item.Artist != tt.wantArtist {
 				t.Fatalf("unexpected artist: got %q want %q", item.Artist, tt.wantArtist)
 			}
-			if item.Source.URL != channelName {
-				t.Fatalf("expected source to be channel name, got %q", item.Source.URL)
+			if item.Source.CollectionName != channelName {
+				t.Fatalf("expected source collection to be channel name, got %q", item.Source.CollectionName)
+			}
+			if item.Source.URL != ProviderID {
+				t.Fatalf("expected provider source URL fallback, got %q", item.Source.URL)
 			}
 			if strings.Contains(item.Title, "Секретный контент") || strings.Contains(item.Title, "🔞") ||
 				strings.Contains(item.Artist, "Секретный контент") || strings.Contains(item.Artist, "🔞") ||
