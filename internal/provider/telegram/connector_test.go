@@ -198,8 +198,8 @@ func TestDiscoverPageFallsBackToBotMessageDedupe(t *testing.T) {
 	if item.Source.CollectionName != "Hidden Sender" {
 		t.Fatalf("expected hidden sender provenance, got %q", item.Source.CollectionName)
 	}
-	if item.Source.URL != ProviderID {
-		t.Fatalf("expected provider source URL fallback, got %q", item.Source.URL)
+	if item.Source.URL != "Hidden Sender" {
+		t.Fatalf("expected source URL to be the channel/sender name, got %q", item.Source.URL)
 	}
 	if item.Artist != "" {
 		t.Fatalf("expected missing caption to leave artist empty, got %q", item.Artist)
@@ -332,8 +332,8 @@ func TestDiscoveredMediaParsesArtworkCaptionFields(t *testing.T) {
 			if item.Source.CollectionName != channelName {
 				t.Fatalf("expected source collection to be channel name, got %q", item.Source.CollectionName)
 			}
-			if item.Source.URL != ProviderID {
-				t.Fatalf("expected provider source URL fallback, got %q", item.Source.URL)
+			if item.Source.URL != channelName {
+				t.Fatalf("expected source URL to be the channel name, got %q", item.Source.URL)
 			}
 			if strings.Contains(item.Title, "Секретный контент") || strings.Contains(item.Title, "🔞") ||
 				strings.Contains(item.Artist, "Секретный контент") || strings.Contains(item.Artist, "🔞") ||
