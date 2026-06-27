@@ -327,6 +327,9 @@ func TestRecordDownloadOrDuplicateRecoversFailedURLHashOwner(t *testing.T) {
 	if stored.Status != "downloaded" || stored.ErrorMessage != "" || stored.Title != retry.Title || stored.FileSize != retry.FileSize {
 		t.Fatalf("Expected failed row to be updated to successful download, got %#v", stored)
 	}
+	if retry.ID == 0 || retry.ID != stored.ID || retry.DownloadedAt == nil {
+		t.Fatalf("Expected retry photo to be hydrated with persisted row, retry=%#v stored=%#v", retry, stored)
+	}
 
 	exceptions, total, err := db.GetInboxExceptions(10, 0)
 	if err != nil {

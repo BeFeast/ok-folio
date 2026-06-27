@@ -287,6 +287,64 @@ func TestDownloadResolvedMediaWarmsThumbnailsOnIngest(t *testing.T) {
 	}
 }
 
+func TestDownloadResolvedMediaWarmsRecoveredFailedRowWithPersistedID(t *testing.T) {
+	imageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "image/jpeg")
+		writeScraperTestJPEG(t, w)
+	}))
+	defer imageServer.Close()
+
+	db := setupScraperTestDB(t)
+	cfg := setupScraperTestConfig(t)
+	cfg.Storage.DerivativesDirectory = filepath.Join(t.TempDir(), "derivatives")
+	cfg.Storage.DerivativesMaxBytes = 50 * 1024 * 1024
+	cfg.Storage.WarmOnIngest = true
+	cfg.Storage.WarmOnIngestWidths = []int{400}
+	s := NewWithProvider(cfg, db, zerolog.New(os.Stderr).Level(zerolog.Disabled), &fakeConnector{})
+	s.thumbHotCache = nil
+
+	dedupeKey := provider.DedupeKey{ProviderID: "fixture", Value: "source-retry:media-retry"}.String()
+	if err := db.RecordFailedDownload(dedupeKey, "temporary failure"); err != nil {
+		t.Fatalf("RecordFailedDownload failed: %v", err)
+	}
+
+	publishedAt := time.Date(2026, 6, 27, 12, 0, 0, 0, time.UTC)
+	photo, kept, err := s.DownloadResolvedMediaOrDuplicate(context.Background(), provider.DiscoveredMedia{
+		ProviderID:  "fixture",
+		DedupeKey:   provider.DedupeKey{ProviderID: "fixture", Value: "source-retry:media-retry"},
+		Source:      provider.SourceMetadata{URL: "https://fixture.test/source/retry", ExternalID: "source-retry"},
+		Media:       provider.MediaMetadata{URL: imageServer.URL + "/media-retry.jpg", ExternalID: "media-retry", FileName: "media-retry.jpg"},
+		Title:       "Recovered Warm Fixture",
+		Artist:      "Fixture Artist",
+		PublishedAt: publishedAt,
+	}, "fixture")
+	if err != nil {
+		t.Fatalf("DownloadResolvedMediaOrDuplicate failed: %v", err)
+	}
+	if !kept {
+		t.Fatal("expected recovered media to be kept")
+	}
+	if photo.ID == 0 {
+		t.Fatalf("expected recovered photo to include persisted ID, got %#v", photo)
+	}
+
+	var stored database.DownloadedPhoto
+	if err := db.Where("url_hash = ?", database.HashURL(dedupeKey)).First(&stored).Error; err != nil {
+		t.Fatalf("failed to load recovered photo: %v", err)
+	}
+	if stored.ID != photo.ID {
+		t.Fatalf("expected returned photo ID %d to match stored ID %d", photo.ID, stored.ID)
+	}
+
+	cache := derivatives.NewCache(cfg.Storage)
+	validator, err := derivatives.Validator(&stored, stored.FilePath)
+	if err != nil {
+		t.Fatalf("Validator failed: %v", err)
+	}
+	entry := cache.Entry(&stored, 400, validator)
+	waitForFile(t, entry.Path)
+}
+
 func setupScraperTestDB(t *testing.T) *database.DB {
 	t.Helper()
 
