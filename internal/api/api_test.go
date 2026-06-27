@@ -1564,34 +1564,52 @@ func TestRateLimitMiddleware(t *testing.T) {
 	server, _ := setupTestServer(t)
 	defer safeShutdown(server)
 
-	// Create a test handler
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-
-	// Wrap with rate limit middleware
 	rateLimitedHandler := server.rateLimitMiddleware(handler)
 
-	// Make many requests rapidly
-	successCount := 0
-	rateLimitedCount := 0
-
-	for i := 0; i < 30; i++ {
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	// Cheap cache-served reads (the gallery fetches dozens of thumbnails per
+	// screen) must NEVER be rate-limited, even in a large burst from one client.
+	for i := 0; i < 100; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/photos/1/thumbnail", nil)
+		req.RemoteAddr = "10.0.0.1:1000"
 		w := httptest.NewRecorder()
-
 		rateLimitedHandler.ServeHTTP(w, req)
-
-		if w.Code == http.StatusOK {
-			successCount++
-		} else if w.Code == http.StatusTooManyRequests {
-			rateLimitedCount++
+		if w.Code == http.StatusTooManyRequests {
+			t.Fatalf("GET request %d was rate-limited; cache-served reads must never 429", i)
 		}
 	}
 
-	// Should have some rate-limited requests
+	// Expensive, state-changing requests are still throttled (per client IP).
+	rateLimitedCount := 0
+	for i := 0; i < 3*RateLimitBurst; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/extract", nil)
+		req.RemoteAddr = "10.0.0.2:1000"
+		w := httptest.NewRecorder()
+		rateLimitedHandler.ServeHTTP(w, req)
+		if w.Code == http.StatusTooManyRequests {
+			rateLimitedCount++
+		}
+	}
 	if rateLimitedCount == 0 {
-		t.Error("Expected some requests to be rate-limited")
+		t.Error("Expected some POST requests to be rate-limited")
+	}
+
+	// A different client IP gets its own fresh bucket and is not starved by the
+	// client that just exhausted its limit above.
+	freshOK := 0
+	for i := 0; i < RateLimitBurst; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/extract", nil)
+		req.RemoteAddr = "10.0.0.3:1000"
+		w := httptest.NewRecorder()
+		rateLimitedHandler.ServeHTTP(w, req)
+		if w.Code == http.StatusOK {
+			freshOK++
+		}
+	}
+	if freshOK == 0 {
+		t.Error("Expected a fresh client IP to have its own rate-limit bucket")
 	}
 }
 

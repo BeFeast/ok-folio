@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	okfcache "ok-folio/internal/cache"
@@ -29,11 +30,43 @@ const (
 	MaxConcurrentExtractions = 3
 	// ExtractionJobQueueSize is the size of the extraction job queue
 	ExtractionJobQueueSize = 10
-	// RateLimitPerSecond is the number of requests allowed per second
+	// RateLimitPerSecond is the per-client request rate for expensive,
+	// state-changing endpoints. Cheap cache-served reads (GET/HEAD) are exempt.
 	RateLimitPerSecond = 10
-	// RateLimitBurst is the maximum burst size for rate limiting
+	// RateLimitBurst is the per-client burst size for rate limiting.
 	RateLimitBurst = 20
 )
+
+// ipRateLimiter hands out a separate token bucket per client IP so one busy
+// client cannot starve the others. It is applied only to expensive,
+// state-changing requests — cheap cache-served GET/HEAD reads bypass it
+// entirely (a single gallery screen fetches dozens of thumbnails at once and
+// must never trip a 429).
+type ipRateLimiter struct {
+	mu       sync.Mutex
+	limiters map[string]*rate.Limiter
+	rps      rate.Limit
+	burst    int
+}
+
+func newIPRateLimiter(rps rate.Limit, burst int) *ipRateLimiter {
+	return &ipRateLimiter{
+		limiters: make(map[string]*rate.Limiter),
+		rps:      rps,
+		burst:    burst,
+	}
+}
+
+func (l *ipRateLimiter) limiterFor(key string) *rate.Limiter {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	limiter, ok := l.limiters[key]
+	if !ok {
+		limiter = rate.NewLimiter(l.rps, l.burst)
+		l.limiters[key] = limiter
+	}
+	return limiter
+}
 
 type Server struct {
 	cfg        *config.Config
@@ -44,7 +77,7 @@ type Server struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	jobQueue   chan func()
-	limiter    *rate.Limiter
+	limiter    *ipRateLimiter
 	statsCache *StatsCache
 	cache      *okfcache.Client
 	thumbCache *derivatives.Cache
@@ -63,7 +96,7 @@ func New(cfg *config.Config, db *database.DB, scraper *scraper.Scraper, logger z
 		ctx:        ctx,
 		cancel:     cancel,
 		jobQueue:   make(chan func(), ExtractionJobQueueSize),
-		limiter:    rate.NewLimiter(RateLimitPerSecond, RateLimitBurst),
+		limiter:    newIPRateLimiter(RateLimitPerSecond, RateLimitBurst),
 		statsCache: NewStatsCache(5 * time.Minute), // Cache stats for 5 minutes
 		cache:      cacheClient,
 		thumbCache: derivatives.NewCache(cfg.Storage),
@@ -167,10 +200,18 @@ func (s *Server) setupRoutes() {
 	s.setupDashboardRoutes()
 }
 
-// rateLimitMiddleware applies rate limiting to all requests
+// rateLimitMiddleware throttles only expensive, state-changing requests, and
+// does so per client IP. Cheap cache-served reads (GET/HEAD) — e.g. the gallery
+// fetching dozens of thumbnails per screen on infinite scroll — are never
+// rate-limited, so a normal page load cannot trip a 429. RealIP runs before
+// this middleware, so r.RemoteAddr is the real client address.
 func (s *Server) rateLimitMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !s.limiter.Allow() {
+		if r.Method == http.MethodGet || r.Method == http.MethodHead {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if !s.limiter.limiterFor(r.RemoteAddr).Allow() {
 			s.writeError(w, http.StatusTooManyRequests, "Rate limit exceeded. Please try again later.")
 			return
 		}
