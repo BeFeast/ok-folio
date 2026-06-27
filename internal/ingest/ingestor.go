@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
+	"sort"
 	"time"
 
 	okfcache "ok-folio/internal/cache"
@@ -32,6 +34,11 @@ type Result struct {
 	ErrorMessage     string
 }
 
+type RunOptions struct {
+	StartPage    int
+	AllowedPages []int
+}
+
 func New(db *database.DB, cache *okfcache.Client, scraper *scraper.Scraper, logger zerolog.Logger) *Ingestor {
 	return &Ingestor{
 		db:      db,
@@ -43,13 +50,17 @@ func New(db *database.DB, cache *okfcache.Client, scraper *scraper.Scraper, logg
 }
 
 func (i *Ingestor) RunConnector(ctx context.Context, connector provider.Connector) (Result, error) {
+	return i.RunConnectorWithOptions(ctx, connector, RunOptions{})
+}
+
+func (i *Ingestor) RunConnectorWithOptions(ctx context.Context, connector provider.Connector, opts RunOptions) (Result, error) {
 	providerID := connector.Provider().ID
 	run, err := i.db.StartExtractionRun(providerID)
 	if err != nil {
 		return Result{}, err
 	}
 
-	result, runErr := i.ingestPages(ctx, connector, run)
+	result, runErr := i.ingestPages(ctx, connector, run, normalizeRunOptions(opts))
 	status := "completed"
 	message := result.ErrorMessage
 	if result.Halted {
@@ -58,7 +69,7 @@ func (i *Ingestor) RunConnector(ctx context.Context, connector provider.Connecto
 	if runErr != nil {
 		status = "failed"
 		if message == "" {
-			message = runErr.Error()
+			message = safeErrorMessage(runErr)
 		}
 	}
 	if finishErr := i.db.FinishExtractionRun(run.ID, status, message); finishErr != nil && runErr == nil {
@@ -67,10 +78,10 @@ func (i *Ingestor) RunConnector(ctx context.Context, connector provider.Connecto
 	return result, runErr
 }
 
-func (i *Ingestor) ingestPages(ctx context.Context, connector provider.Connector, run *database.ExtractionRun) (Result, error) {
+func (i *Ingestor) ingestPages(ctx context.Context, connector provider.Connector, run *database.ExtractionRun, opts RunOptions) (Result, error) {
 	var result Result
 	providerID := connector.Provider().ID
-	req := provider.PageRequest{Page: 1}
+	req := provider.PageRequest{Page: opts.StartPage}
 
 	for {
 		select {
@@ -87,11 +98,12 @@ func (i *Ingestor) ingestPages(ctx context.Context, connector provider.Connector
 				return result, nil
 			}
 			if handledErr != nil {
-				result.ErrorMessage = handledErr.Error()
+				result.ErrorMessage = safeErrorMessage(handledErr)
 				return result, handledErr
 			}
 			if isRetryableProviderError(err) {
-				continue
+				result.ErrorMessage = safeErrorMessage(err)
+				return result, err
 			}
 			return result, nil
 		}
@@ -129,7 +141,7 @@ func (i *Ingestor) ingestPages(ctx context.Context, connector provider.Connector
 
 			kept, err := i.scraper.IsMediaAlreadyKept(item)
 			if err != nil {
-				result.ErrorMessage = err.Error()
+				result.ErrorMessage = safeErrorMessage(err)
 				return result, err
 			}
 			if kept {
@@ -155,7 +167,7 @@ func (i *Ingestor) ingestPages(ctx context.Context, connector provider.Connector
 
 			photo, err := i.scraper.DownloadResolvedMedia(ctx, *resolved, providerID)
 			if err != nil {
-				if dbErr := i.db.RecordFailedDownload(dedupeKey, err.Error()); dbErr != nil {
+				if dbErr := i.db.RecordFailedDownload(dedupeKey, safeErrorMessage(err)); dbErr != nil {
 					i.logger.Warn().Err(dbErr).Str("dedupe_key", dedupeKey).Msg("Failed to record failed download")
 				}
 				result.PhotosFailed++
@@ -195,6 +207,14 @@ func (i *Ingestor) ingestPages(ctx context.Context, connector provider.Connector
 		if req.Page == 0 {
 			req.Page = result.PagesProcessed + 1
 		}
+		if !opts.pageAllowed(req.Page) {
+			nextPage, ok := opts.nextAllowedAfter(req.Page)
+			if !ok {
+				return result, nil
+			}
+			req.Page = nextPage
+			req.Cursor = ""
+		}
 	}
 }
 
@@ -215,15 +235,15 @@ func (i *Ingestor) handleProviderError(ctx context.Context, providerID string, d
 		if dedupeKey == "" {
 			dedupeKey = fmt.Sprintf("%s:discovery-error", providerID)
 		}
-		if dbErr := i.db.RecordFailedDownload(dedupeKey, providerErr.Error()); dbErr != nil {
+		if dbErr := i.db.RecordFailedDownload(dedupeKey, safeErrorMessage(providerErr)); dbErr != nil {
 			return false, dbErr
 		}
 		result.PhotosFailed++
 		return false, nil
 	case provider.ErrorKindPermission:
 		result.Halted = true
-		result.ErrorMessage = providerErr.Error()
-		run.ErrorMessage = providerErr.Error()
+		result.ErrorMessage = safeErrorMessage(providerErr)
+		run.ErrorMessage = result.ErrorMessage
 		if dbErr := i.db.UpdateExtractionRun(run); dbErr != nil {
 			return true, dbErr
 		}
@@ -233,9 +253,55 @@ func (i *Ingestor) handleProviderError(ctx context.Context, providerID string, d
 	}
 }
 
+func normalizeRunOptions(opts RunOptions) RunOptions {
+	if opts.StartPage <= 0 {
+		opts.StartPage = 1
+	}
+	if len(opts.AllowedPages) == 0 {
+		return opts
+	}
+	pages := append([]int(nil), opts.AllowedPages...)
+	sort.Ints(pages)
+	opts.AllowedPages = pages
+	if opts.StartPage == 1 {
+		opts.StartPage = pages[0]
+	}
+	return opts
+}
+
+func (opts RunOptions) pageAllowed(page int) bool {
+	if len(opts.AllowedPages) == 0 {
+		return true
+	}
+	for _, allowed := range opts.AllowedPages {
+		if allowed == page {
+			return true
+		}
+	}
+	return false
+}
+
+func (opts RunOptions) nextAllowedAfter(page int) (int, bool) {
+	for _, allowed := range opts.AllowedPages {
+		if allowed > page {
+			return allowed, true
+		}
+	}
+	return 0, false
+}
+
 func isRetryableProviderError(err error) bool {
 	var providerErr *provider.ProviderError
 	return errors.As(err, &providerErr) && providerErr.Retryable()
+}
+
+var telegramTokenInURLPattern = regexp.MustCompile(`(https?://[^\s"'<>]+/(?:file/)?bot)[^/\s"'<>]+`)
+
+func safeErrorMessage(err error) string {
+	if err == nil {
+		return ""
+	}
+	return telegramTokenInURLPattern.ReplaceAllString(err.Error(), "${1}<redacted>")
 }
 
 func sleepBackoff(ctx context.Context, delay time.Duration) error {

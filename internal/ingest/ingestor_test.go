@@ -100,6 +100,43 @@ func TestRunConnectorCursorProvenanceHashAndEpochBatches(t *testing.T) {
 	}
 }
 
+func TestRunConnectorWithOptionsHonorsAllowedPages(t *testing.T) {
+	ctx := context.Background()
+	body := []byte("fixture image bytes")
+	imageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(body)
+	}))
+	defer imageServer.Close()
+
+	connector := &fakeConnector{
+		pagesByPage: map[int]*provider.PageResult{
+			3: {
+				Items: []provider.DiscoveredMedia{fakeItem("three", imageServer.URL+"/three.jpg")},
+				Pagination: provider.Pagination{
+					Page:     3,
+					NextPage: 4,
+					HasNext:  true,
+				},
+			},
+			4: {
+				Items: []provider.DiscoveredMedia{fakeItem("four", imageServer.URL+"/four.jpg")},
+			},
+		},
+	}
+	_, _, ing := setupIngestorTest(t, connector)
+
+	result, err := ing.RunConnectorWithOptions(ctx, connector, RunOptions{AllowedPages: []int{3}})
+	if err != nil {
+		t.Fatalf("RunConnectorWithOptions failed: %v", err)
+	}
+	if result.PagesProcessed != 1 || result.PhotosDownloaded != 1 {
+		t.Fatalf("unexpected result: %#v", result)
+	}
+	if !reflect.DeepEqual(connector.requests, []provider.PageRequest{{Page: 3}}) {
+		t.Fatalf("unexpected page requests: %#v", connector.requests)
+	}
+}
+
 func TestRunConnectorSkipsSeenBeforeResolve(t *testing.T) {
 	ctx := context.Background()
 	imageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -200,11 +237,15 @@ func TestRunConnectorProviderErrorRouting(t *testing.T) {
 
 func TestRunConnectorDiscoveryProviderErrorRouting(t *testing.T) {
 	tests := []struct {
-		name       string
-		kind       provider.ErrorKind
-		wantFailed int
-		wantHalted bool
+		name        string
+		kind        provider.ErrorKind
+		wantFailed  int
+		wantHalted  bool
+		wantErr     bool
+		wantBackoff time.Duration
 	}{
+		{name: "temporary", kind: provider.ErrorKindTemporary, wantErr: true, wantBackoff: 25 * time.Millisecond},
+		{name: "rate_limit", kind: provider.ErrorKindRateLimit, wantErr: true, wantBackoff: 25 * time.Millisecond},
 		{name: "parse", kind: provider.ErrorKindParse, wantFailed: 1},
 		{name: "permission", kind: provider.ErrorKindPermission, wantHalted: true},
 	}
@@ -215,17 +256,29 @@ func TestRunConnectorDiscoveryProviderErrorRouting(t *testing.T) {
 				discoverErr: &provider.ProviderError{
 					ProviderID: "fixture",
 					Kind:       tt.kind,
+					RetryAfter: tt.wantBackoff,
 					Err:        errors.New(string(tt.kind)),
 				},
 			}
 			db, _, ing := setupIngestorTest(t, connector)
+			var backedOff []time.Duration
+			ing.backoff = func(_ context.Context, delay time.Duration) error {
+				backedOff = append(backedOff, delay)
+				return nil
+			}
 
 			result, err := ing.RunConnector(context.Background(), connector)
-			if err != nil {
+			if err != nil && !tt.wantErr {
 				t.Fatalf("RunConnector failed: %v", err)
+			}
+			if err == nil && tt.wantErr {
+				t.Fatal("expected RunConnector to fail after bounded discovery retry")
 			}
 			if result.PhotosFailed != tt.wantFailed || result.Halted != tt.wantHalted {
 				t.Fatalf("unexpected result: %#v", result)
+			}
+			if tt.wantBackoff > 0 && !reflect.DeepEqual(backedOff, []time.Duration{tt.wantBackoff}) {
+				t.Fatalf("expected retry backoff %v, got %#v", tt.wantBackoff, backedOff)
 			}
 			if tt.wantFailed > 0 {
 				var failed database.DownloadedPhoto
@@ -243,6 +296,42 @@ func TestRunConnectorDiscoveryProviderErrorRouting(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestRunConnectorRedactsTelegramTokenFromFailedDownload(t *testing.T) {
+	ctx := context.Background()
+	token := "123456:secret-token"
+	imageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	downloadURL := imageServer.URL + "/file/bot" + token + "/photos/file.jpg"
+	imageServer.Close()
+	connector := &fakeConnector{
+		pages: map[string]*provider.PageResult{
+			"": {Items: []provider.DiscoveredMedia{fakeItem("telegram", downloadURL)}},
+		},
+		providerID: "telegram",
+	}
+	db, _, ing := setupIngestorTest(t, connector)
+
+	result, err := ing.RunConnector(ctx, connector)
+	if err != nil {
+		t.Fatalf("RunConnector failed: %v", err)
+	}
+	if result.PhotosFailed != 1 {
+		t.Fatalf("expected failed download, got %#v", result)
+	}
+
+	var failed database.DownloadedPhoto
+	if err := db.Where("url = ? AND status = ?", "fixture:telegram", "failed").First(&failed).Error; err != nil {
+		t.Fatalf("expected failed download record: %v", err)
+	}
+	if strings.Contains(failed.ErrorMessage, token) {
+		t.Fatalf("token leaked in failed download error: %q", failed.ErrorMessage)
+	}
+	if !strings.Contains(failed.ErrorMessage, "bot<redacted>/photos/file.jpg") {
+		t.Fatalf("expected redacted telegram URL, got %q", failed.ErrorMessage)
 	}
 }
 
@@ -311,6 +400,7 @@ func fakeItem(id string, mediaURL string) provider.DiscoveredMedia {
 type fakeConnector struct {
 	providerID  string
 	pages       map[string]*provider.PageResult
+	pagesByPage map[int]*provider.PageResult
 	discoverErr error
 	resolveErr  error
 	requests    []provider.PageRequest
@@ -330,6 +420,13 @@ func (c *fakeConnector) DiscoverPage(_ context.Context, req provider.PageRequest
 	if c.discoverErr != nil {
 		return nil, c.discoverErr
 	}
+	if c.pagesByPage != nil {
+		page := c.pagesByPage[req.Page]
+		if page == nil {
+			return &provider.PageResult{}, nil
+		}
+		return page, nil
+	}
 	page := c.pages[req.Cursor]
 	if page == nil {
 		return &provider.PageResult{}, nil
@@ -343,6 +440,7 @@ func (c *fakeConnector) ResolveMedia(_ context.Context, item provider.Discovered
 		return nil, c.resolveErr
 	}
 	out := item
+	out.ProviderID = c.Provider().ID
 	if out.Media.URL == "" {
 		out.Media.URL = "https://fixture.test/media/" + out.Media.FileName
 	}

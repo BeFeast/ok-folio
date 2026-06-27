@@ -8,6 +8,7 @@ import (
 	"ok-folio/internal/config"
 	"ok-folio/internal/ingest"
 	"ok-folio/internal/provider"
+	"ok-folio/internal/provider/webgallery"
 
 	"github.com/robfig/cron/v3"
 	"github.com/rs/zerolog"
@@ -81,7 +82,11 @@ func (s *Scheduler) runExtraction() {
 	for _, connector := range s.connectors {
 		providerID := connector.Provider().ID
 		s.logger.Info().Str("provider", providerID).Msg("Running connector ingestion")
-		result, err := s.ingestor.RunConnector(ctx, connector)
+		opts := ingest.RunOptions{}
+		if providerID == webgallery.ProviderID && len(s.cfg.Scheduler.Pages) > 0 {
+			opts.AllowedPages = s.cfg.Scheduler.Pages
+		}
+		result, err := s.ingestor.RunConnectorWithOptions(ctx, connector, opts)
 		if err != nil {
 			s.logger.Error().Err(err).Str("provider", providerID).Msg("Connector ingestion failed")
 		}

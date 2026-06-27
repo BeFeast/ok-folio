@@ -154,14 +154,16 @@ func buildConnectors(cfg *config.Config, logger zerolog.Logger) []provider.Conne
 		MaxDelay:     cfg.Retry.MaxDelay,
 		Multiplier:   cfg.Retry.Multiplier,
 	}
-	return []provider.Connector{
+	connectors := []provider.Connector{
 		webgallery.New(webgallery.Config{
 			BaseURL:          cfg.Source.BaseURL,
 			UserAgent:        cfg.Download.UserAgent,
 			RateLimitBackoff: cfg.Download.RateLimitBackoff,
 			Retry:            retryConfig,
 		}, client, logger.With().Str("provider", webgallery.ProviderID).Logger()),
-		telegram.New(telegram.Config{
+	}
+	if cfg.Telegram.BotToken != "" {
+		connectors = append(connectors, telegram.New(telegram.Config{
 			BotToken:         cfg.Telegram.BotToken,
 			BaseURL:          cfg.Telegram.BaseURL,
 			FileBaseURL:      cfg.Telegram.FileBaseURL,
@@ -170,8 +172,9 @@ func buildConnectors(cfg *config.Config, logger zerolog.Logger) []provider.Conne
 			Limit:            cfg.Telegram.Limit,
 			RateLimitBackoff: cfg.Download.RateLimitBackoff,
 			Retry:            retryConfig,
-		}, client, logger.With().Str("provider", telegram.ProviderID).Logger()),
+		}, client, logger.With().Str("provider", telegram.ProviderID).Logger()))
 	}
+	return connectors
 }
 
 func setupLogger(cfg *config.Config) zerolog.Logger {
