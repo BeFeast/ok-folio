@@ -591,6 +591,103 @@ func TestGetConnectorStates(t *testing.T) {
 	}
 }
 
+func TestLoadConnectorStateMissing(t *testing.T) {
+	db := setupTestDB(t)
+
+	state, err := db.LoadConnectorState("telegram")
+	if err != nil {
+		t.Fatalf("LoadConnectorState failed: %v", err)
+	}
+	if state != nil {
+		t.Fatalf("Expected nil state for missing connector, got %#v", state)
+	}
+}
+
+func TestSaveConnectorStateUpsertsProvider(t *testing.T) {
+	db := setupTestDB(t)
+
+	firstRun := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+	if err := db.SaveConnectorState(ConnectorState{
+		ProviderID: "telegram",
+		Cursor:     "1003",
+		LastRunAt:  &firstRun,
+		LastStatus: "running",
+	}); err != nil {
+		t.Fatalf("SaveConnectorState insert failed: %v", err)
+	}
+
+	secondRun := firstRun.Add(time.Hour)
+	if err := db.SaveConnectorState(ConnectorState{
+		ProviderID:   "telegram",
+		Cursor:       "1005",
+		LastRunAt:    &secondRun,
+		LastStatus:   "completed",
+		ErrorMessage: "",
+	}); err != nil {
+		t.Fatalf("SaveConnectorState update failed: %v", err)
+	}
+
+	state, err := db.LoadConnectorState("telegram")
+	if err != nil {
+		t.Fatalf("LoadConnectorState failed: %v", err)
+	}
+	if state == nil {
+		t.Fatal("Expected saved connector state")
+	}
+	if state.ProviderID != "telegram" || state.Cursor != "1005" || state.LastStatus != "completed" {
+		t.Fatalf("Unexpected connector state: %#v", state)
+	}
+	if state.LastRunAt == nil || !state.LastRunAt.Equal(secondRun) {
+		t.Fatalf("Expected updated last_run_at %v, got %#v", secondRun, state.LastRunAt)
+	}
+
+	var count int64
+	if err := db.Model(&ConnectorState{}).Where("provider_id = ?", "telegram").Count(&count).Error; err != nil {
+		t.Fatalf("Count connector_state rows failed: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("Expected one upserted connector_state row, got %d", count)
+	}
+}
+
+func TestSaveConnectorStateRequiresProviderID(t *testing.T) {
+	db := setupTestDB(t)
+
+	if err := db.SaveConnectorState(ConnectorState{LastStatus: "completed"}); err == nil {
+		t.Fatal("Expected provider ID validation error")
+	}
+}
+
+func TestMigrateConnectorStateDoubleBoot(t *testing.T) {
+	gormDB, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		t.Fatalf("Failed to open test database: %v", err)
+	}
+
+	if err := Migrate(gormDB); err != nil {
+		t.Fatalf("First Migrate failed: %v", err)
+	}
+	if err := Migrate(gormDB); err != nil {
+		t.Fatalf("Second Migrate failed: %v", err)
+	}
+
+	migrator := gormDB.Migrator()
+	for _, column := range []string{"provider_id", "cursor", "last_run_at", "last_status"} {
+		if !migrator.HasColumn(&ConnectorState{}, column) {
+			t.Fatalf("Expected connector_state.%s column", column)
+		}
+	}
+	var providerPK int
+	if err := gormDB.Raw(`SELECT pk FROM pragma_table_info('connector_state') WHERE name = ?`, "provider_id").Scan(&providerPK).Error; err != nil {
+		t.Fatalf("Failed to inspect connector_state primary key: %v", err)
+	}
+	if providerPK == 0 {
+		t.Fatal("Expected connector_state.provider_id primary key")
+	}
+}
+
 func TestGetDownloadStats_Empty(t *testing.T) {
 	db := setupTestDB(t)
 

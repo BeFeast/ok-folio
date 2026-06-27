@@ -606,6 +606,39 @@ func (db *DB) GetConnectorStates() ([]ConnectorState, error) {
 	return states, err
 }
 
+// LoadConnectorState returns the durable cursor and status for a provider. A
+// missing row is not an error; callers treat nil as the connector's zero cursor.
+func (db *DB) LoadConnectorState(providerID string) (*ConnectorState, error) {
+	var state ConnectorState
+	err := db.Where("provider_id = ?", providerID).First(&state).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &state, nil
+}
+
+// SaveConnectorState upserts the latest durable sync state for a provider.
+func (db *DB) SaveConnectorState(state ConnectorState) error {
+	if state.ProviderID == "" {
+		return fmt.Errorf("provider ID is required")
+	}
+	now := time.Now()
+	state.UpdatedAt = now
+	return db.Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "provider_id"}},
+		DoUpdates: clause.Assignments(map[string]interface{}{
+			"cursor":        state.Cursor,
+			"last_run_at":   state.LastRunAt,
+			"last_status":   state.LastStatus,
+			"error_message": state.ErrorMessage,
+			"updated_at":    state.UpdatedAt,
+		}),
+	}).Create(&state).Error
+}
+
 // GetDownloadStats returns download statistics using a single optimized query
 func (db *DB) GetDownloadStats() (map[string]interface{}, error) {
 	type StatsResult struct {

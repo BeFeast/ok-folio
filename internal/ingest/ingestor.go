@@ -32,6 +32,7 @@ type Result struct {
 	PhotosFailed     int
 	Halted           bool
 	ErrorMessage     string
+	Cursor           string
 }
 
 type RunOptions struct {
@@ -62,18 +63,24 @@ func (i *Ingestor) RunConnectorWithOptions(ctx context.Context, connector provid
 
 	result, runErr := i.ingestPages(ctx, connector, run, normalizeRunOptions(opts))
 	status := "completed"
+	stateStatus := "completed"
 	message := result.ErrorMessage
 	if result.Halted {
 		status = "failed"
+		stateStatus = "permission_halt"
 	}
 	if runErr != nil {
 		status = "failed"
+		stateStatus = "failed"
 		if message == "" {
 			message = safeErrorMessage(runErr)
 		}
 	}
 	if finishErr := i.db.FinishExtractionRun(run.ID, status, message); finishErr != nil && runErr == nil {
 		runErr = finishErr
+	}
+	if stateErr := i.saveConnectorState(providerID, result.Cursor, stateStatus, message); stateErr != nil && runErr == nil {
+		runErr = stateErr
 	}
 	return result, runErr
 }
@@ -82,6 +89,12 @@ func (i *Ingestor) ingestPages(ctx context.Context, connector provider.Connector
 	var result Result
 	providerID := connector.Provider().ID
 	req := provider.PageRequest{Page: opts.StartPage}
+	if state, err := i.db.LoadConnectorState(providerID); err != nil {
+		return result, err
+	} else if state != nil && state.Cursor != "" {
+		req.Cursor = state.Cursor
+		result.Cursor = state.Cursor
+	}
 
 	for {
 		select {
@@ -199,10 +212,18 @@ func (i *Ingestor) ingestPages(ctx context.Context, connector provider.Connector
 			return result, err
 		}
 
+		nextCursor := page.Pagination.NextCursor
+		if nextCursor != "" {
+			result.Cursor = nextCursor
+			if err := i.saveConnectorState(providerID, nextCursor, "running", ""); err != nil {
+				return result, err
+			}
+		}
+
 		if !page.Pagination.HasNext {
 			return result, nil
 		}
-		req.Cursor = page.Pagination.NextCursor
+		req.Cursor = nextCursor
 		req.Page = page.Pagination.NextPage
 		if req.Page == 0 {
 			req.Page = result.PagesProcessed + 1
@@ -216,6 +237,17 @@ func (i *Ingestor) ingestPages(ctx context.Context, connector provider.Connector
 			req.Cursor = ""
 		}
 	}
+}
+
+func (i *Ingestor) saveConnectorState(providerID string, cursor string, status string, message string) error {
+	now := time.Now()
+	return i.db.SaveConnectorState(database.ConnectorState{
+		ProviderID:   providerID,
+		Cursor:       cursor,
+		LastRunAt:    &now,
+		LastStatus:   status,
+		ErrorMessage: message,
+	})
 }
 
 func (i *Ingestor) handleProviderError(ctx context.Context, providerID string, dedupeKey string, err error, run *database.ExtractionRun, result *Result) (bool, error) {

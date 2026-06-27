@@ -100,6 +100,81 @@ func TestRunConnectorCursorProvenanceHashAndEpochBatches(t *testing.T) {
 	}
 }
 
+func TestRunConnectorPersistsCursorAndResumesAfterRestart(t *testing.T) {
+	ctx := context.Background()
+	body := []byte("fixture image bytes")
+	imageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(body)
+	}))
+	defer imageServer.Close()
+
+	firstConnector := &fakeConnector{
+		providerID: "telegram",
+		pages: map[string]*provider.PageResult{
+			"": {
+				Items: []provider.DiscoveredMedia{fakeItem("1000", imageServer.URL+"/1000.jpg")},
+				Pagination: provider.Pagination{
+					NextCursor: "1001",
+					HasNext:    true,
+				},
+			},
+			"1001": {
+				Items: []provider.DiscoveredMedia{fakeItem("1001", imageServer.URL+"/1001.jpg")},
+				Pagination: provider.Pagination{
+					NextCursor: "1002",
+					HasNext:    false,
+				},
+			},
+		},
+	}
+	db, _, firstIngestor := setupIngestorTest(t, firstConnector)
+
+	firstResult, err := firstIngestor.RunConnector(ctx, firstConnector)
+	if err != nil {
+		t.Fatalf("first RunConnector failed: %v", err)
+	}
+	if firstResult.PhotosDownloaded != 2 || firstResult.Cursor != "1002" {
+		t.Fatalf("unexpected first result: %#v", firstResult)
+	}
+
+	state, err := db.LoadConnectorState("telegram")
+	if err != nil {
+		t.Fatalf("LoadConnectorState failed: %v", err)
+	}
+	if state == nil || state.Cursor != "1002" || state.LastStatus != "completed" || state.LastRunAt == nil {
+		t.Fatalf("unexpected persisted connector state: %#v", state)
+	}
+
+	secondConnector := &fakeConnector{
+		providerID: "telegram",
+		pages: map[string]*provider.PageResult{
+			"1002": {
+				Items: []provider.DiscoveredMedia{fakeItem("1002", imageServer.URL+"/1002.jpg")},
+			},
+		},
+	}
+	_, secondIngestor := setupIngestorWithDB(t, db, secondConnector)
+
+	secondResult, err := secondIngestor.RunConnector(ctx, secondConnector)
+	if err != nil {
+		t.Fatalf("second RunConnector failed: %v", err)
+	}
+	if secondResult.PhotosDownloaded != 1 || secondResult.PhotosFound != 1 {
+		t.Fatalf("unexpected second result: %#v", secondResult)
+	}
+	if !reflect.DeepEqual(secondConnector.requests, []provider.PageRequest{{Page: 1, Cursor: "1002"}}) {
+		t.Fatalf("restart did not resume from persisted cursor: %#v", secondConnector.requests)
+	}
+
+	var photos []database.DownloadedPhoto
+	if err := db.Order("url").Find(&photos).Error; err != nil {
+		t.Fatalf("query photos: %v", err)
+	}
+	if len(photos) != 3 {
+		t.Fatalf("expected three total downloaded photos after restart, got %d", len(photos))
+	}
+}
+
 func TestRunConnectorWithOptionsHonorsAllowedPages(t *testing.T) {
 	ctx := context.Background()
 	body := []byte("fixture image bytes")
@@ -230,6 +305,13 @@ func TestRunConnectorProviderErrorRouting(t *testing.T) {
 				if run.Status != "failed" || run.ErrorMessage == "" {
 					t.Fatalf("expected halted connector surfaced in run record, got %#v", run)
 				}
+				state, err := db.LoadConnectorState("fixture")
+				if err != nil {
+					t.Fatalf("LoadConnectorState failed: %v", err)
+				}
+				if state == nil || state.LastStatus != "permission_halt" {
+					t.Fatalf("expected permission halt connector state, got %#v", state)
+				}
 			}
 		})
 	}
@@ -294,6 +376,13 @@ func TestRunConnectorDiscoveryProviderErrorRouting(t *testing.T) {
 				if run.Status != "failed" || run.ErrorMessage == "" {
 					t.Fatalf("expected halted discovery surfaced in run record, got %#v", run)
 				}
+				state, err := db.LoadConnectorState("fixture")
+				if err != nil {
+					t.Fatalf("LoadConnectorState failed: %v", err)
+				}
+				if state == nil || state.LastStatus != "permission_halt" {
+					t.Fatalf("expected permission halt connector state, got %#v", state)
+				}
 			}
 		})
 	}
@@ -349,6 +438,13 @@ func setupIngestorTest(t *testing.T, connector provider.Connector) (*database.DB
 	}
 	db := &database.DB{DB: gormDB}
 
+	c, ing := setupIngestorWithDB(t, db, connector)
+	return db, c, ing
+}
+
+func setupIngestorWithDB(t *testing.T, db *database.DB, connector provider.Connector) (*testCache, *Ingestor) {
+	t.Helper()
+
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = rdb.Close() })
@@ -366,7 +462,7 @@ func setupIngestorTest(t *testing.T, connector provider.Connector) (*database.DB
 	}
 	s := scraper.NewWithProvider(cfg, db, zerolog.New(os.Stderr).Level(zerolog.Disabled), connector)
 	ing := New(db, c.Client, s, zerolog.Nop())
-	return db, c, ing
+	return c, ing
 }
 
 type testCache struct {
