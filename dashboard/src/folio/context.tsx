@@ -14,6 +14,7 @@ import {
   type ReactNode,
 } from "react";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
 import {
   addToFavorites,
   fetchGalleryCatalog,
@@ -144,6 +145,11 @@ interface FolioContextValue {
 
   query: string;
   setQuery: (q: string) => void;
+  favoriteOnly: boolean;
+  setFavoriteOnly: (enabled: boolean) => void;
+  artist: string;
+  setArtist: (artist: string) => void;
+  filterByArtist: (artist: string) => void;
 
   mode: GalleryMode;
   setMode: (m: GalleryMode) => void;
@@ -183,9 +189,12 @@ export function useFolio(): FolioContextValue {
 }
 
 export function FolioProvider({ children }: { children: ReactNode }) {
+  const navigate = useNavigate();
   const [theme, setThemeState] = useState<ThemeName>(() => readStoredTheme());
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
+  const [favoriteOnly, setFavoriteOnly] = useState(false);
+  const [artist, setArtist] = useState("");
   const [mode, setMode] = useState<GalleryMode>("library");
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [addOpen, setAddOpen] = useState(false);
@@ -215,13 +224,14 @@ export function FolioProvider({ children }: { children: ReactNode }) {
   }, [query]);
 
   const catalog = useInfiniteQuery({
-    queryKey: ["folio-catalog", debouncedQuery],
-    queryFn: ({ pageParam }) =>
-      fetchGalleryCatalog(
-        PAGE_SIZE,
-        pageParam as number,
-        debouncedQuery ? { query: debouncedQuery } : {},
-      ),
+    queryKey: ["folio-catalog", debouncedQuery, favoriteOnly, artist],
+    queryFn: ({ pageParam }) => {
+      const filters: Parameters<typeof fetchGalleryCatalog>[2] = {};
+      if (debouncedQuery) filters.query = debouncedQuery;
+      if (favoriteOnly) filters.favorite = true;
+      if (artist) filters.artist = artist;
+      return fetchGalleryCatalog(PAGE_SIZE, pageParam as number, filters);
+    },
     initialPageParam: 0,
     getNextPageParam: (lastPage, allPages) => {
       const loaded = allPages.reduce((n, pg) => n + pg.photos.length, 0);
@@ -273,6 +283,16 @@ export function FolioProvider({ children }: { children: ReactNode }) {
 
   const openPiece = useCallback((id: number) => setSelectedId(id), []);
   const closePiece = useCallback(() => setSelectedId(null), []);
+  const filterByArtist = useCallback(
+    (name: string) => {
+      const next = name.trim();
+      if (!next || next === "Unknown") return;
+      setArtist(next);
+      setSelectedId(null);
+      void navigate("/");
+    },
+    [navigate],
+  );
   const stepPiece = useCallback(
     (dir: number) => {
       setSelectedId((cur) => {
@@ -301,6 +321,11 @@ export function FolioProvider({ children }: { children: ReactNode }) {
     toggleTheme,
     query,
     setQuery,
+    favoriteOnly,
+    setFavoriteOnly,
+    artist,
+    setArtist,
+    filterByArtist,
     mode,
     setMode,
     pieces,

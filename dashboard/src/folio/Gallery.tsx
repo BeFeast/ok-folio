@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { getPhotoThumbnailUrl } from "../api";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { fetchArtists, getPhotoThumbnailUrl } from "../api";
 import { useFolio, type GalleryMode, type PieceVM } from "./context";
-import { HeartIcon, OkfImage, PageHeader } from "./ui";
+import { CloseIcon, HeartIcon, Hov, OkfImage, PageHeader } from "./ui";
 
 const MODES: { key: GalleryMode; label: string }[] = [
   { key: "magazine", label: "Magazine" },
@@ -47,6 +48,190 @@ function ModeTabs() {
           </button>
         );
       })}
+    </div>
+  );
+}
+
+function GalleryFilterBar() {
+  const { favoriteOnly, setFavoriteOnly, artist, setArtist } = useFolio();
+  const [draft, setDraft] = useState("");
+  const [open, setOpen] = useState(false);
+  const artistsQuery = useQuery({
+    queryKey: ["folio-artists"],
+    queryFn: () => fetchArtists(500, 0, "count"),
+  });
+  const normalized = draft.trim().toLowerCase();
+  const suggestions = useMemo(() => {
+    const artists = artistsQuery.data?.artists ?? [];
+    return artists
+      .filter((item) => !normalized || item.artist.toLowerCase().includes(normalized))
+      .slice(0, 8);
+  }, [artistsQuery.data?.artists, normalized]);
+
+  const chooseArtist = (name: string) => {
+    setArtist(name);
+    setDraft("");
+    setOpen(false);
+  };
+
+  const showSuggestions = open && suggestions.length > 0;
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        flexWrap: "wrap",
+        padding: "18px 0 0",
+      }}
+    >
+      <Hov
+        as="button"
+        type="button"
+        aria-pressed={favoriteOnly}
+        onClick={() => setFavoriteOnly(!favoriteOnly)}
+        style={{
+          appearance: "none",
+          cursor: "pointer",
+          height: 39,
+          padding: "0 15px",
+          borderRadius: 99,
+          border: `1px solid ${favoriteOnly ? "var(--accent)" : "var(--line)"}`,
+          background: favoriteOnly ? "var(--accent)" : "var(--surface)",
+          color: favoriteOnly ? "var(--on-accent)" : "var(--graphite)",
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 8,
+          fontFamily: "var(--sans)",
+          fontSize: 13.5,
+          fontWeight: 500,
+          boxShadow: favoriteOnly ? "0 1px 7px var(--shadow)" : "none",
+        }}
+        hover={{ borderColor: "var(--accent-line)" }}
+      >
+        <HeartIcon size={15} fill={favoriteOnly ? "currentColor" : "transparent"} stroke="currentColor" />
+        Favorites
+      </Hov>
+
+      <div style={{ position: "relative", width: "min(320px, 100%)" }}>
+        <input
+          value={draft}
+          onChange={(e: ChangeEvent<HTMLInputElement>) => {
+            setDraft(e.target.value);
+            setOpen(true);
+          }}
+          onFocus={() => setOpen(true)}
+          onBlur={() => window.setTimeout(() => setOpen(false), 120)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && suggestions[0]) {
+              e.preventDefault();
+              chooseArtist(suggestions[0].artist);
+            }
+            if (e.key === "Escape") setOpen(false);
+          }}
+          placeholder="Filter by author or artist"
+          aria-label="Filter by author or artist"
+          style={{
+            width: "100%",
+            height: 39,
+            boxSizing: "border-box",
+            borderRadius: 99,
+            border: "1px solid var(--line)",
+            outline: "none",
+            background: "var(--surface)",
+            color: "var(--ink)",
+            padding: "0 15px",
+            fontFamily: "var(--sans)",
+            fontSize: 13.5,
+          }}
+        />
+        {showSuggestions ? (
+          <div
+            style={{
+              position: "absolute",
+              top: "calc(100% + 7px)",
+              left: 0,
+              right: 0,
+              zIndex: 12,
+              border: "1px solid var(--line)",
+              borderRadius: 8,
+              background: "var(--surface)",
+              boxShadow: "0 12px 30px var(--shadow)",
+              overflow: "hidden",
+            }}
+          >
+            {suggestions.map((item) => (
+              <button
+                key={item.artist}
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => chooseArtist(item.artist)}
+                style={{
+                  appearance: "none",
+                  cursor: "pointer",
+                  width: "100%",
+                  border: 0,
+                  borderBottom: "1px solid var(--line)",
+                  background: "transparent",
+                  color: "var(--ink)",
+                  padding: "10px 12px",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 14,
+                  fontFamily: "var(--sans)",
+                  fontSize: 13,
+                  textAlign: "left",
+                }}
+              >
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.artist}</span>
+                <span style={{ flex: "none", color: "var(--muted)", fontSize: 12 }}>{item.photo_count.toLocaleString()}</span>
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
+
+      {artist ? (
+        <div
+          style={{
+            height: 39,
+            borderRadius: 99,
+            border: "1px solid var(--accent-line)",
+            background: "var(--surface-2)",
+            color: "var(--ink)",
+            padding: "0 8px 0 14px",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 8,
+            fontFamily: "var(--sans)",
+            fontSize: 13,
+          }}
+        >
+          <span style={{ maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{artist}</span>
+          <button
+            type="button"
+            aria-label="Clear artist filter"
+            onClick={() => setArtist("")}
+            style={{
+              appearance: "none",
+              cursor: "pointer",
+              width: 25,
+              height: 25,
+              borderRadius: 99,
+              border: 0,
+              background: "transparent",
+              color: "var(--graphite)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <CloseIcon size={14} />
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -414,6 +599,7 @@ export default function Gallery() {
   return (
     <div>
       <PageHeader eyebrow="Gallery" title="Your gathered pieces" subcopy={subcopy} action={<ModeTabs />} pad="54px 0 26px" />
+      <GalleryFilterBar />
       {isError ? (
         <div style={{ padding: "90px 0", textAlign: "center", fontFamily: "var(--serif)", fontStyle: "italic", fontSize: 22, color: "var(--graphite)" }}>
           The gallery could not be reached.

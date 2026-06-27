@@ -37,7 +37,7 @@ function stop(e: React.MouseEvent) {
 }
 
 export default function PieceViewer() {
-  const { selected, closePiece, stepPiece, isFav, toggleFav, selIndex, selCount } = useFolio();
+  const { selected, closePiece, stepPiece, isFav, toggleFav, selIndex, selCount, filterByArtist } = useFolio();
 
   useEffect(() => {
     if (!selected) return;
@@ -54,6 +54,7 @@ export default function PieceViewer() {
   const p = selected;
   const fav = isFav(p.id);
   const eyebrow = [p.kind || p.src, p.y].filter(Boolean).join(" · ");
+  const canFilterArtist = p.a !== "Unknown";
 
   return (
     <div
@@ -258,7 +259,25 @@ export default function PieceViewer() {
         </div>
         <div style={ROW}>
           <div style={ROW_KEY}>Artist</div>
-          <div style={ROW_VAL}>{p.a}</div>
+          <button
+            type="button"
+            disabled={!canFilterArtist}
+            onClick={() => filterByArtist(p.a)}
+            style={{
+              ...ROW_VAL,
+              appearance: "none",
+              cursor: canFilterArtist ? "pointer" : "default",
+              border: 0,
+              background: "transparent",
+              padding: 0,
+              textAlign: "left",
+              textDecoration: canFilterArtist ? "underline" : "none",
+              textDecorationColor: "rgba(251,246,238,0.32)",
+              textUnderlineOffset: 3,
+            }}
+          >
+            {p.a}
+          </button>
         </div>
         <div style={ROW}>
           <div style={ROW_KEY}>Date</div>
