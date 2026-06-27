@@ -59,15 +59,18 @@ type DownloadedPhoto struct {
 	Title      string `gorm:"type:text;index"`
 	// Artist carries its own single-column index plus position 2 of the
 	// (downloaded_at, artist) composite. Values are preserved byte-for-byte.
-	Artist     string     `gorm:"type:text;index;index:idx_downloaded_photos_downloaded_at_artist,priority:2"`
-	UploadDate *time.Time `gorm:"index"`
-	FilePath   string     `gorm:"type:text;default:''"`
-	FileName   string     `gorm:"type:text;index"`
+	Artist      string     `gorm:"type:text;index;index:idx_downloaded_photos_downloaded_at_artist,priority:2"`
+	UploadDate  *time.Time `gorm:"index"`
+	FilePath    string     `gorm:"type:text;default:''"`
+	FileName    string     `gorm:"type:text;index"`
+	ImageWidth  int
+	ImageHeight int
 	// DownloadedAt is position 1 of the composite index; its leading column also
 	// serves ORDER BY downloaded_at, so the redundant standalone downloaded_at
 	// index is intentionally dropped.
 	DownloadedAt *time.Time `gorm:"autoCreateTime;index:idx_downloaded_photos_downloaded_at_artist,priority:1"`
 	FileSize     int64
+	Notes        string `gorm:"type:text"`
 	// Favorite is OK Folio-owned and never written by the ETL.
 	Favorite bool `gorm:"not null;default:false;index"`
 	// Provider is set on INSERT only; it is text, NOT a Postgres ENUM.
@@ -586,18 +589,22 @@ func (db *DB) RecordDownload(photo *DownloadedPhoto) error {
 
 func downloadAssignments(photo *DownloadedPhoto) map[string]interface{} {
 	return map[string]interface{}{
-		"source_page":   photo.SourcePage,
-		"title":         photo.Title,
-		"artist":        photo.Artist,
-		"category":      resolveCategory(photo),
-		"upload_date":   photo.UploadDate,
-		"file_path":     photo.FilePath,
-		"file_name":     photo.FileName,
-		"file_size":     photo.FileSize,
-		"provider":      photo.Provider,
-		"content_hash":  photo.ContentHash,
-		"status":        photo.Status,
-		"error_message": "",
+		"source_page":     photo.SourcePage,
+		"title":           photo.Title,
+		"artist":          photo.Artist,
+		"category":        resolveCategory(photo),
+		"upload_date":     photo.UploadDate,
+		"file_path":       photo.FilePath,
+		"file_name":       photo.FileName,
+		"image_width":     photo.ImageWidth,
+		"image_height":    photo.ImageHeight,
+		"file_size":       photo.FileSize,
+		"notes":           photo.Notes,
+		"provider":        photo.Provider,
+		"content_hash":    photo.ContentHash,
+		"perceptual_hash": photo.PerceptualHash,
+		"status":          photo.Status,
+		"error_message":   "",
 	}
 }
 

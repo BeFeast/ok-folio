@@ -136,10 +136,14 @@ func (s *Server) handleImageFull(w http.ResponseWriter, r *http.Request) {
 		contentType = "image/jpeg"
 	case ".png":
 		contentType = "image/png"
+	case ".tif", ".tiff":
+		contentType = "image/tiff"
 	case ".gif":
 		contentType = "image/gif"
 	case ".webp":
 		contentType = "image/webp"
+	case ".heic", ".heif":
+		contentType = "image/heic"
 	default:
 		contentType = "application/octet-stream"
 	}

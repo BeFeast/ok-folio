@@ -123,14 +123,14 @@ function mapPhoto(p: Photo): PieceVM {
     src: hostFrom(p.SourcePage) || p.SourcePage || "—",
     med: "",
     kind: "",
-    note: "",
+    note: (p.Notes || "").trim(),
     folio: "",
     img: getPhotoImageUrl(p.ID),
     thumb: getPhotoThumbnailUrl(p.ID, 400),
     fav: !!p.Favorite,
     file: p.FileName || "—",
     size: formatBytes(p.FileSize),
-    dim: "",
+    dim: p.ImageWidth && p.ImageHeight ? `${p.ImageWidth} x ${p.ImageHeight}` : "",
     added: relativeAdded(p.DownloadedAt),
   };
 }
