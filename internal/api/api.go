@@ -11,6 +11,7 @@ import (
 	okfcache "ok-folio/internal/cache"
 	"ok-folio/internal/config"
 	"ok-folio/internal/database"
+	"ok-folio/internal/derivatives"
 	"ok-folio/internal/scraper"
 
 	"github.com/go-chi/chi/v5"
@@ -46,7 +47,7 @@ type Server struct {
 	limiter    *rate.Limiter
 	statsCache *StatsCache
 	cache      *okfcache.Client
-	thumbCache *thumbnailCache
+	thumbCache *derivatives.Cache
 }
 
 func New(cfg *config.Config, db *database.DB, scraper *scraper.Scraper, logger zerolog.Logger) *Server {
@@ -65,7 +66,7 @@ func New(cfg *config.Config, db *database.DB, scraper *scraper.Scraper, logger z
 		limiter:    rate.NewLimiter(RateLimitPerSecond, RateLimitBurst),
 		statsCache: NewStatsCache(5 * time.Minute), // Cache stats for 5 minutes
 		cache:      cacheClient,
-		thumbCache: newThumbnailCache(cfg.Storage),
+		thumbCache: derivatives.NewCache(cfg.Storage),
 	}
 
 	// Start worker pool for extraction jobs

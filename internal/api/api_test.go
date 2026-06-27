@@ -20,6 +20,7 @@ import (
 	okfcache "ok-folio/internal/cache"
 	"ok-folio/internal/config"
 	"ok-folio/internal/database"
+	"ok-folio/internal/derivatives"
 	"ok-folio/internal/gallery"
 	"ok-folio/internal/scraper"
 	"ok-folio/internal/testguard"
@@ -999,12 +1000,12 @@ func TestImageThumbnailCacheInvalidatesByContentHash(t *testing.T) {
 
 func TestThumbnailCachePrunesToConfiguredSize(t *testing.T) {
 	dir := t.TempDir()
-	cache := &thumbnailCache{dir: dir, maxBytes: 50}
+	cache := derivatives.NewCacheForDir(dir, 50)
 
-	oldEntry := cache.entry(&database.DownloadedPhoto{ID: 1, ContentHash: bytes.Repeat([]byte{0x11}, 32)}, 320, "")
-	newEntry := cache.entry(&database.DownloadedPhoto{ID: 2, ContentHash: bytes.Repeat([]byte{0x22}, 32)}, 320, "")
-	oldPath := oldEntry.path
-	newPath := newEntry.path
+	oldEntry := cache.Entry(&database.DownloadedPhoto{ID: 1, ContentHash: bytes.Repeat([]byte{0x11}, 32)}, 320, "")
+	newEntry := cache.Entry(&database.DownloadedPhoto{ID: 2, ContentHash: bytes.Repeat([]byte{0x22}, 32)}, 320, "")
+	oldPath := oldEntry.Path
+	newPath := newEntry.Path
 	nonCachePath := filepath.Join(dir, "existing-media", "original.jpg")
 	if err := os.MkdirAll(filepath.Dir(oldPath), 0o755); err != nil {
 		t.Fatalf("Failed to create old shard: %v", err)
@@ -1032,7 +1033,7 @@ func TestThumbnailCachePrunesToConfiguredSize(t *testing.T) {
 		t.Fatalf("Failed to set non-cache time: %v", err)
 	}
 
-	if err := cache.prune(); err != nil {
+	if err := cache.Prune(); err != nil {
 		t.Fatalf("Prune failed: %v", err)
 	}
 	if _, err := os.Stat(oldPath); !os.IsNotExist(err) {

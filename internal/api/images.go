@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/hex"
 	"fmt"
 	"net/http"
 	"os"
@@ -12,18 +11,16 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"ok-folio/internal/database"
+	"ok-folio/internal/derivatives"
 )
 
 const (
 	// DefaultThumbnailSize is the bounding box (longest side, px) when no size
 	// is requested. Sized up from the original 128px so grid tiles stay crisp
 	// on HiDPI displays. Callers may request a size via ?w= (clamped below).
-	DefaultThumbnailSize = 400
-	MinThumbnailSize     = 64
-	MaxThumbnailSize     = 1024
-	// JPEG quality for thumbnails
-	ThumbnailQuality = 82
+	DefaultThumbnailSize = derivatives.DefaultThumbnailSize
+	MinThumbnailSize     = derivatives.MinThumbnailSize
+	MaxThumbnailSize     = derivatives.MaxThumbnailSize
 
 	immutableImageCacheControl = "public, max-age=31536000, immutable"
 )
@@ -55,7 +52,7 @@ func (s *Server) handleImageThumbnail(w http.ResponseWriter, r *http.Request) {
 	// The validator is the content-hash ETag (shared with the full image).
 	// Each requested size is a distinct URL (?w=), so HTTP caches key on the
 	// URL and never serve one size's bytes for another.
-	etag, err := imageETag(photo, filePath)
+	etag, err := derivatives.Validator(photo, filePath)
 	if err != nil {
 		s.logger.Error().Err(err).Str("file_path", photo.FilePath).Msg("Failed to build image validator")
 		s.writeError(w, http.StatusNotFound, "Image file not found")
@@ -75,13 +72,13 @@ func (s *Server) handleImageThumbnail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entry := s.thumbCache.entry(photo, size, etag)
+	entry := s.thumbCache.Entry(photo, size, etag)
 	if s.serveThumbnailFromCache(w, r, entry) {
 		return
 	}
 	w.Header().Set("X-OK-Folio-Thumbnail-Cache", "miss")
 
-	data, err := s.generateThumbnail(r.Context(), filePath, size)
+	data, err := derivatives.GenerateThumbnail(r.Context(), filePath, size)
 	if err != nil {
 		s.logger.Error().Err(err).Str("file_path", photo.FilePath).Msg("Failed to generate thumbnail")
 		s.writeError(w, http.StatusNotFound, "Image file not found")
@@ -113,7 +110,7 @@ func (s *Server) handleImageFull(w http.ResponseWriter, r *http.Request) {
 		filePath = filepath.Join(s.cfg.Storage.BaseDirectory, filePath)
 	}
 
-	etag, err := imageETag(photo, filePath)
+	etag, err := derivatives.Validator(photo, filePath)
 	if err != nil {
 		s.logger.Error().Err(err).Str("file_path", photo.FilePath).Msg("Failed to build image validator")
 		s.writeError(w, http.StatusNotFound, "Image file not found")
@@ -156,31 +153,8 @@ func (s *Server) handleImageFull(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, filePath)
 }
 
-func imageETag(photo *database.DownloadedPhoto, filePath string) (string, error) {
-	if len(photo.ContentHash) > 0 {
-		return quoteETag(fmt.Sprintf("%d-%s", photo.ID, hex.EncodeToString(photo.ContentHash))), nil
-	}
-
-	if filePath == "" {
-		filePath = photo.FilePath
-	}
-	info, err := os.Stat(filePath)
-	if err != nil {
-		return "", err
-	}
-
-	// Rows created before the hashing backfill may not have content_hash yet.
-	// The fallback validator is intentionally derived from stable row identity
-	// plus observed file metadata so it is never empty or falsely shared.
-	fileSize := photo.FileSize
-	if fileSize <= 0 {
-		fileSize = info.Size()
-	}
-	return quoteETag(fmt.Sprintf("%d-%d-%d", photo.ID, fileSize, info.ModTime().UnixNano())), nil
-}
-
 func quoteETag(value string) string {
-	return `"` + value + `"`
+	return derivatives.QuoteETag(value)
 }
 
 // thumbnailSize returns the requested thumbnail bounding size (longest side),

@@ -1,14 +1,19 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"ok-folio/internal/config"
 	"ok-folio/internal/database"
+	"ok-folio/internal/derivatives"
 	"ok-folio/internal/legacyetl"
+
+	"github.com/rs/zerolog"
 )
 
 func main() {
@@ -23,6 +28,8 @@ func main() {
 		hashContent(os.Args[2:])
 	case "smoke-read-paths":
 		smokeReadPaths(os.Args[2:])
+	case "warm-thumbnails":
+		warmThumbnails(os.Args[2:])
 	case "print-legacy-checks":
 		printLegacyChecks(os.Args[2:])
 	default:
@@ -120,8 +127,73 @@ func printLegacyChecks(args []string) {
 	fmt.Println(strings.Join(dumpArgs, " "))
 }
 
+func warmThumbnails(args []string) {
+	fs := flag.NewFlagSet("warm-thumbnails", flag.ExitOnError)
+	configPath := fs.String("config", "/config/config.yaml", "Path to OK Folio configuration")
+	widthsFlag := fs.String("widths", "400,700", "Comma-separated thumbnail widths to generate")
+	concurrency := fs.Int("concurrency", 2, "Maximum concurrent thumbnail generators")
+	batchSize := fs.Int("batch-size", 500, "Catalog rows fetched per database batch")
+	limit := fs.Int("limit", 0, "Maximum catalog rows to scan; 0 scans all downloaded rows")
+	progress := fs.Int("progress", 100, "Log progress every N scanned rows")
+	if err := fs.Parse(args); err != nil {
+		exitErr(err)
+	}
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		exitErr(err)
+	}
+	db, err := database.New(&cfg.Database)
+	if err != nil {
+		exitErr(err)
+	}
+	widths, err := parseWidths(*widthsFlag)
+	if err != nil {
+		exitErr(err)
+	}
+	logger := zerolog.New(os.Stdout).With().Timestamp().Logger()
+	result, err := derivatives.WarmThumbnails(context.Background(), db, cfg.Storage, derivatives.WarmOptions{
+		Widths:      widths,
+		Concurrency: *concurrency,
+		BatchSize:   *batchSize,
+		Limit:       *limit,
+		Progress:    *progress,
+	}, logger)
+	if err != nil {
+		exitErr(err)
+	}
+	fmt.Printf("warm_thumbnails scanned=%d generated=%d skipped=%d missing=%d failed=%d\n",
+		result.Scanned,
+		result.Generated,
+		result.Skipped,
+		result.Missing,
+		result.Failed,
+	)
+	if result.Failed > 0 {
+		os.Exit(1)
+	}
+}
+
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: ok-folio-etl <load-dump|hash-content|smoke-read-paths|print-legacy-checks> [flags]")
+	fmt.Fprintln(os.Stderr, "usage: ok-folio-etl <load-dump|hash-content|smoke-read-paths|warm-thumbnails|print-legacy-checks> [flags]")
+}
+
+func parseWidths(value string) ([]int, error) {
+	var widths []int
+	for _, part := range strings.Split(value, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		width, err := strconv.Atoi(part)
+		if err != nil || width <= 0 {
+			return nil, fmt.Errorf("invalid width %q", part)
+		}
+		widths = append(widths, width)
+	}
+	if len(widths) == 0 {
+		return nil, derivatives.ErrNoWidths
+	}
+	return widths, nil
 }
 
 func splitTables(value string) []string {
