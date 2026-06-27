@@ -22,7 +22,7 @@ func setupTestDB(t *testing.T) *DB {
 	}
 
 	// Auto-migrate schemas
-	if err := gormDB.AutoMigrate(&DownloadedPhoto{}, &ExtractionRun{}, &InboxItem{}, &ConnectorState{}); err != nil {
+	if err := gormDB.AutoMigrate(&DownloadedPhoto{}, &ExtractionRun{}, &InboxItem{}, &ConnectorState{}, &ConnectorSource{}); err != nil {
 		t.Fatalf("Failed to migrate test database: %v", err)
 	}
 
@@ -698,6 +698,99 @@ func TestLoadAndSaveConnectorState(t *testing.T) {
 	}
 }
 
+func TestConnectorSourcesCRUDAndScopes(t *testing.T) {
+	db := setupTestDB(t)
+
+	scopes, managed, err := db.ConnectorSourceScopes("telegram")
+	if err != nil {
+		t.Fatalf("ConnectorSourceScopes empty failed: %v", err)
+	}
+	if managed || len(scopes) != 0 {
+		t.Fatalf("expected unmanaged empty scopes, got managed=%v scopes=%v", managed, scopes)
+	}
+
+	first, err := db.CreateConnectorSource(ConnectorSource{
+		Type:    "telegram",
+		ChatID:  "-100123",
+		Label:   "First",
+		Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateConnectorSource first failed: %v", err)
+	}
+	second, err := db.CreateConnectorSource(ConnectorSource{
+		Type:    "telegram",
+		ChatID:  "-100456",
+		Label:   "Second",
+		Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateConnectorSource second failed: %v", err)
+	}
+	disabled, err := db.CreateConnectorSource(ConnectorSource{
+		Type:    "telegram",
+		ChatID:  "-100789",
+		Label:   "Disabled",
+		Enabled: false,
+	})
+	if err != nil {
+		t.Fatalf("CreateConnectorSource disabled failed: %v", err)
+	}
+	if disabled.Enabled {
+		t.Fatalf("expected disabled create to persist disabled: %#v", disabled)
+	}
+
+	scopes, managed, err = db.ConnectorSourceScopes("telegram")
+	if err != nil {
+		t.Fatalf("ConnectorSourceScopes enabled failed: %v", err)
+	}
+	if !managed || strings.Join(scopes, ",") != "-100123,-100456" {
+		t.Fatalf("expected enabled managed scopes, got managed=%v scopes=%v", managed, scopes)
+	}
+
+	disabledEnabled := false
+	updated, err := db.UpdateConnectorSource(second.ID, ConnectorSourceUpdates{Enabled: &disabledEnabled})
+	if err != nil {
+		t.Fatalf("UpdateConnectorSource disable failed: %v", err)
+	}
+	if updated.Enabled {
+		t.Fatalf("expected source to be disabled: %#v", updated)
+	}
+	emptyLabel := ""
+	updated, err = db.UpdateConnectorSource(second.ID, ConnectorSourceUpdates{Label: &emptyLabel})
+	if err != nil {
+		t.Fatalf("UpdateConnectorSource clear label failed: %v", err)
+	}
+	if updated.Enabled || updated.Label != "" {
+		t.Fatalf("expected label-only update to preserve disabled state and clear label: %#v", updated)
+	}
+
+	scopes, managed, err = db.ConnectorSourceScopes("telegram")
+	if err != nil {
+		t.Fatalf("ConnectorSourceScopes disabled failed: %v", err)
+	}
+	if !managed || len(scopes) != 1 || scopes[0] != "-100123" {
+		t.Fatalf("expected only first enabled scope, got managed=%v scopes=%v", managed, scopes)
+	}
+
+	if err := db.DeleteConnectorSource(first.ID); err != nil {
+		t.Fatalf("DeleteConnectorSource first failed: %v", err)
+	}
+	if err := db.DeleteConnectorSource(second.ID); err != nil {
+		t.Fatalf("DeleteConnectorSource second failed: %v", err)
+	}
+	if err := db.DeleteConnectorSource(disabled.ID); err != nil {
+		t.Fatalf("DeleteConnectorSource disabled failed: %v", err)
+	}
+	scopes, managed, err = db.ConnectorSourceScopes("telegram")
+	if err != nil {
+		t.Fatalf("ConnectorSourceScopes after delete failed: %v", err)
+	}
+	if managed || len(scopes) != 0 {
+		t.Fatalf("expected unmanaged after deleting all rows, got managed=%v scopes=%v", managed, scopes)
+	}
+}
+
 func TestGetDownloadStats_Empty(t *testing.T) {
 	db := setupTestDB(t)
 
@@ -1128,7 +1221,7 @@ func TestGalleryFavoriteColumnPrefersCanonicalFavorite(t *testing.T) {
 	`).Error; err != nil {
 		t.Fatalf("Failed to create legacy photos table: %v", err)
 	}
-	if err := gormDB.AutoMigrate(&DownloadedPhoto{}, &ExtractionRun{}, &ConnectorState{}); err != nil {
+	if err := gormDB.AutoMigrate(&DownloadedPhoto{}, &ExtractionRun{}, &ConnectorState{}, &ConnectorSource{}); err != nil {
 		t.Fatalf("Failed to migrate test database: %v", err)
 	}
 

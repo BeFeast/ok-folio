@@ -113,6 +113,12 @@ photoprism:
   auto_index: false
 
 telegram:
+  chat_id: "12345"
+  sources:
+    - chat_id: "-1001234567890"
+      label: "Fixture channel"
+    - chat_id: "-1009876543210"
+      label: "Legacy fixture channel"
   schedule: "0 0 * * * *"
 
 logging:
@@ -215,6 +221,12 @@ download:
 	}
 	if cfg.Telegram.Schedule != "0 0 * * * *" {
 		t.Errorf("Expected Telegram Schedule '0 0 * * * *', got '%s'", cfg.Telegram.Schedule)
+	}
+	if cfg.Telegram.ChatID != "12345" {
+		t.Errorf("Expected Telegram ChatID '12345', got '%s'", cfg.Telegram.ChatID)
+	}
+	if len(cfg.Telegram.Sources) != 2 || cfg.Telegram.Sources[0].ChatID != "-1001234567890" || cfg.Telegram.Sources[1].Label != "Legacy fixture channel" {
+		t.Errorf("Expected Telegram sources to load, got %#v", cfg.Telegram.Sources)
 	}
 
 	// Test retry config

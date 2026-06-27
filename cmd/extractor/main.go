@@ -87,7 +87,7 @@ func main() {
 
 	// Create scraper
 	scraperInstance := scraper.New(cfg, db, logger)
-	connectors := buildConnectors(cfg, logger)
+	connectors := buildConnectors(cfg, db, logger)
 
 	// Create and start API server
 	var apiServer *api.Server
@@ -147,7 +147,7 @@ func main() {
 	logger.Info().Msg("Shutdown complete")
 }
 
-func buildConnectors(cfg *config.Config, logger zerolog.Logger) []provider.Connector {
+func buildConnectors(cfg *config.Config, db *database.DB, logger zerolog.Logger) []provider.Connector {
 	client := &http.Client{Timeout: cfg.Download.Timeout}
 	retryConfig := retry.Config{
 		MaxAttempts:  cfg.Retry.MaxAttempts,
@@ -165,16 +165,25 @@ func buildConnectors(cfg *config.Config, logger zerolog.Logger) []provider.Conne
 		}, client, logger.With().Str("provider", webgallery.ProviderID).Logger()),
 	}
 	if cfg.Telegram.BotToken != "" {
+		sources := make([]telegram.SourceConfig, 0, len(cfg.Telegram.Sources))
+		for _, source := range cfg.Telegram.Sources {
+			sources = append(sources, telegram.SourceConfig{
+				ChatID: source.ChatID,
+				Label:  source.Label,
+			})
+		}
 		connectors = append(connectors, telegram.New(telegram.Config{
 			BotToken:         cfg.Telegram.BotToken,
 			BaseURL:          cfg.Telegram.BaseURL,
 			FileBaseURL:      cfg.Telegram.FileBaseURL,
 			ChatID:           cfg.Telegram.ChatID,
+			Sources:          sources,
 			DisplayName:      cfg.Telegram.DisplayName,
 			Limit:            cfg.Telegram.Limit,
 			Schedule:         cfg.Telegram.Schedule,
 			RateLimitBackoff: cfg.Download.RateLimitBackoff,
 			Retry:            retryConfig,
+			SourceStore:      db,
 		}, client, logger.With().Str("provider", telegram.ProviderID).Logger()))
 	}
 	return connectors

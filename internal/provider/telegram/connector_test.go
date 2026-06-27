@@ -164,6 +164,79 @@ func TestDiscoverPageFiltersConfiguredChat(t *testing.T) {
 	}
 }
 
+func TestDiscoverPageFiltersConfiguredSourceChats(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, "testdata/updates.json")
+	}))
+	defer server.Close()
+
+	connector := New(Config{
+		BotToken:    "fixture-credential",
+		BaseURL:     server.URL,
+		FileBaseURL: server.URL + "/file",
+		Sources: []SourceConfig{
+			{ChatID: "-1001234567890", Label: "Fixture Channel"},
+			{ChatID: "-1009876543210", Label: "Legacy Fixture Channel"},
+		},
+		Retry: retry.Config{MaxAttempts: 1},
+	}, server.Client(), zerolog.New(os.Stdout))
+
+	result, err := connector.DiscoverPage(context.Background(), provider.PageRequest{})
+	if err != nil {
+		t.Fatalf("DiscoverPage returned error: %v", err)
+	}
+	if len(result.Items) != 2 {
+		t.Fatalf("expected both configured source chats, got %d", len(result.Items))
+	}
+}
+
+func TestDiscoverPageUsesManagedSourcesAtRuntime(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, "testdata/updates.json")
+	}))
+	defer server.Close()
+	store := &fakeSourceStore{scopes: []string{"-1009876543210"}, managed: true}
+
+	connector := New(Config{
+		BotToken:    "fixture-credential",
+		BaseURL:     server.URL,
+		FileBaseURL: server.URL + "/file",
+		ChatID:      "-1001234567890",
+		SourceStore: store,
+		Retry:       retry.Config{MaxAttempts: 1},
+	}, server.Client(), zerolog.New(os.Stdout))
+
+	result, err := connector.DiscoverPage(context.Background(), provider.PageRequest{})
+	if err != nil {
+		t.Fatalf("DiscoverPage returned error: %v", err)
+	}
+	if len(result.Items) != 1 || result.Items[0].Source.CollectionID != "-1009876543210" {
+		t.Fatalf("expected managed source to override config, got %#v", result.Items)
+	}
+
+	store.scopes = nil
+	result, err = connector.DiscoverPage(context.Background(), provider.PageRequest{})
+	if err != nil {
+		t.Fatalf("DiscoverPage returned error after disabling source: %v", err)
+	}
+	if len(result.Items) != 0 {
+		t.Fatalf("expected disabled managed sources to poll nothing, got %d", len(result.Items))
+	}
+}
+
+type fakeSourceStore struct {
+	scopes  []string
+	managed bool
+	err     error
+}
+
+func (s *fakeSourceStore) ConnectorSourceScopes(providerID string) ([]string, bool, error) {
+	if providerID != ProviderID {
+		return nil, false, nil
+	}
+	return s.scopes, s.managed, s.err
+}
+
 func TestDiscoverPageFallsBackToBotMessageDedupe(t *testing.T) {
 	item, ok := discoveredMedia(Message{
 		MessageID: 12,

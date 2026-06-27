@@ -44,7 +44,7 @@ func setupTestServer(t *testing.T) (*Server, *database.DB) {
 		t.Fatalf("Failed to create test database: %v", err)
 	}
 
-	if err := gormDB.AutoMigrate(&database.DownloadedPhoto{}, &database.ExtractionRun{}, &database.InboxItem{}, &database.ConnectorState{}); err != nil {
+	if err := gormDB.AutoMigrate(&database.DownloadedPhoto{}, &database.ExtractionRun{}, &database.InboxItem{}, &database.ConnectorState{}, &database.ConnectorSource{}); err != nil {
 		t.Fatalf("Failed to migrate test database: %v", err)
 	}
 
@@ -198,6 +198,126 @@ func TestHandleGalleryDecision(t *testing.T) {
 	}
 	if err := gallery.ValidateDecision(response); err != nil {
 		t.Fatalf("Expected response to validate: %v", err)
+	}
+}
+
+func TestConnectorSourceSettingsCRUD(t *testing.T) {
+	server, _ := setupTestServer(t)
+	defer safeShutdown(server)
+
+	createBody := bytes.NewBufferString(`{"type":"telegram","chat_id":"-1001234567890","label":"Fixture channel"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/connector-sources", createBody)
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create status=%d body=%q", w.Code, w.Body.String())
+	}
+	var created database.ConnectorSource
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode created connector source: %v", err)
+	}
+	if created.ID == 0 || created.Type != "telegram" || created.ChatID != "-1001234567890" || !created.Enabled {
+		t.Fatalf("unexpected created connector source: %#v", created)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/settings/connector-sources?type=telegram", nil)
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("list status=%d body=%q", w.Code, w.Body.String())
+	}
+	var listed connectorSourcesResponse
+	if err := json.NewDecoder(w.Body).Decode(&listed); err != nil {
+		t.Fatalf("decode connector source list: %v", err)
+	}
+	if len(listed.Sources) != 1 || listed.Sources[0].ChatID != "-1001234567890" {
+		t.Fatalf("unexpected connector source list: %#v", listed)
+	}
+
+	patchBody := bytes.NewBufferString(`{"type":"telegram","chat_id":"-1001234567890","label":"Fixture channel","enabled":false}`)
+	req = httptest.NewRequest(http.MethodPatch, "/api/v1/settings/connector-sources/"+strconv.FormatUint(created.ID, 10), patchBody)
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("patch status=%d body=%q", w.Code, w.Body.String())
+	}
+	var updated database.ConnectorSource
+	if err := json.NewDecoder(w.Body).Decode(&updated); err != nil {
+		t.Fatalf("decode updated connector source: %v", err)
+	}
+	if updated.Enabled {
+		t.Fatalf("expected disabled connector source: %#v", updated)
+	}
+
+	patchBody = bytes.NewBufferString(`{"label":""}`)
+	req = httptest.NewRequest(http.MethodPatch, "/api/v1/settings/connector-sources/"+strconv.FormatUint(created.ID, 10), patchBody)
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("patch label status=%d body=%q", w.Code, w.Body.String())
+	}
+	if err := json.NewDecoder(w.Body).Decode(&updated); err != nil {
+		t.Fatalf("decode label-updated connector source: %v", err)
+	}
+	if updated.Enabled || updated.Label != "" {
+		t.Fatalf("expected label-only patch to preserve disabled source and clear label: %#v", updated)
+	}
+
+	req = httptest.NewRequest(http.MethodDelete, "/api/v1/settings/connector-sources/"+strconv.FormatUint(created.ID, 10), nil)
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("delete status=%d body=%q", w.Code, w.Body.String())
+	}
+}
+
+func TestConnectorSourceSettingsCreateDisabled(t *testing.T) {
+	server, _ := setupTestServer(t)
+	defer safeShutdown(server)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/connector-sources", bytes.NewBufferString(`{"type":"telegram","chat_id":"-1001234567890","label":"Paused channel","enabled":false}`))
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create status=%d body=%q", w.Code, w.Body.String())
+	}
+	var created database.ConnectorSource
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode created connector source: %v", err)
+	}
+	if created.Enabled {
+		t.Fatalf("expected disabled connector source create to remain disabled: %#v", created)
+	}
+}
+
+func TestConnectorSourceSettingsRejectInvalidTelegramChatID(t *testing.T) {
+	server, _ := setupTestServer(t)
+	defer safeShutdown(server)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/connector-sources", bytes.NewBufferString(`{"type":"telegram","chat_id":"channel-name"}`))
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected invalid chat ID to return 400, got %d body=%q", w.Code, w.Body.String())
+	}
+}
+
+func TestConnectorSourceSettingsAllowForwardedTelegramSourceWithoutChatAccess(t *testing.T) {
+	telegramAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("settings validation should not call Telegram getChat for forwarded source IDs")
+	}))
+	defer telegramAPI.Close()
+
+	server, _ := setupTestServer(t)
+	defer safeShutdown(server)
+	server.cfg.Telegram.BotToken = "test-token"
+	server.cfg.Telegram.BaseURL = telegramAPI.URL
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/connector-sources", bytes.NewBufferString(`{"type":"telegram","chat_id":"-1001234567890","label":"Forwarded channel"}`))
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected forwarded source create to succeed without getChat access, got %d body=%q", w.Code, w.Body.String())
 	}
 }
 
