@@ -80,6 +80,9 @@ type MediaMetadata struct {
 	MIMEType   string
 	FileName   string
 	ExternalID string
+	// ContentHash is a raw exact-content hash when the connector can provide or
+	// compute it before the catalog insert path.
+	ContentHash []byte
 }
 
 // ErrorKind classifies provider failures for retry and operator handling.

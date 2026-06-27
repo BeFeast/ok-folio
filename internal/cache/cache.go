@@ -185,6 +185,22 @@ func (c *Client) MarkDedupeHash(ctx context.Context, contentHash []byte, dedupeK
 	return nil
 }
 
+func (c *Client) DedupeHashOwner(ctx context.Context, contentHash []byte) (string, bool, error) {
+	if c == nil || c.Passthrough() || len(contentHash) == 0 {
+		return "", false, nil
+	}
+	owner, err := c.r.Get(ctx, DedupeHashKey(contentHash)).Result()
+	if errors.Is(err, redis.Nil) {
+		return "", false, nil
+	}
+	if err != nil {
+		c.passthrough.Store(true)
+		c.logger.Warn().Err(err).Msg("Content-hash cache read failed; using passthrough")
+		return "", false, nil
+	}
+	return owner, owner != "", nil
+}
+
 func (c *Client) Delete(ctx context.Context, keys ...string) error {
 	if c == nil || c.Passthrough() || len(keys) == 0 {
 		return nil

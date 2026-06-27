@@ -231,9 +231,17 @@ func (s *Scraper) downloadPhoto(ctx context.Context, item provider.DiscoveredMed
 // DownloadResolvedMedia persists a provider-resolved media item while preserving
 // the legacy scraper's storage, EXIF, and daily symlink behavior.
 func (s *Scraper) DownloadResolvedMedia(ctx context.Context, resolved provider.DiscoveredMedia, providerID string) (*database.DownloadedPhoto, error) {
+	photo, _, err := s.DownloadResolvedMediaOrDuplicate(ctx, resolved, providerID)
+	return photo, err
+}
+
+// DownloadResolvedMediaOrDuplicate persists a provider-resolved media item and
+// reports whether it won the catalog insert. Exact duplicate losers are routed
+// to Inbox and are not returned as errors.
+func (s *Scraper) DownloadResolvedMediaOrDuplicate(ctx context.Context, resolved provider.DiscoveredMedia, providerID string) (*database.DownloadedPhoto, bool, error) {
 	dedupeKey := StableDedupeKey(resolved)
 	if dedupeKey == "" {
-		return nil, fmt.Errorf("missing connector dedupe key")
+		return nil, false, fmt.Errorf("missing connector dedupe key")
 	}
 	if providerID == "" {
 		providerID = resolved.ProviderID
@@ -248,12 +256,12 @@ func (s *Scraper) DownloadResolvedMedia(ctx context.Context, resolved provider.D
 
 	// Validate artist directory path
 	if err := validatePath(s.cfg.Storage.BaseDirectory, artistDir); err != nil {
-		return nil, fmt.Errorf("invalid artist directory path: %w", err)
+		return nil, false, fmt.Errorf("invalid artist directory path: %w", err)
 	}
 
 	// Create artist directory
 	if err := os.MkdirAll(artistDir, DefaultDirPermissions); err != nil {
-		return nil, fmt.Errorf("failed to create artist directory: %w", err)
+		return nil, false, fmt.Errorf("failed to create artist directory: %w", err)
 	}
 
 	// Download image
@@ -265,12 +273,12 @@ func (s *Scraper) DownloadResolvedMedia(ctx context.Context, resolved provider.D
 
 	// Validate file path
 	if err := validatePath(s.cfg.Storage.BaseDirectory, filePath); err != nil {
-		return nil, fmt.Errorf("invalid file path: %w", err)
+		return nil, false, fmt.Errorf("invalid file path: %w", err)
 	}
 
 	fileSize, contentHash, err := s.downloadFile(ctx, resolved.Media.URL, filePath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to download image file: %w", err)
+		return nil, false, fmt.Errorf("failed to download image file: %w", err)
 	}
 
 	// Set EXIF metadata
@@ -301,9 +309,28 @@ func (s *Scraper) DownloadResolvedMedia(ctx context.Context, resolved provider.D
 		ContentHash: contentHash,
 	}
 
-	if err := s.db.RecordDownload(photo); err != nil {
+	duplicate := &database.InboxItem{
+		ProviderID: providerID,
+		DedupeKey:  dedupeKey,
+		SourceID:   resolved.Source.ExternalID,
+		MediaID:    resolved.Media.ExternalID,
+		SourceURL:  resolved.Source.URL,
+		Title:      resolved.Title,
+		Artist:     resolved.Artist,
+		Status:     "duplicate",
+		Reason:     "exact content hash already kept",
+	}
+	kept, err := s.db.RecordDownloadOrDuplicate(photo, duplicate)
+	if err != nil {
 		s.logger.Error().Err(err).Msg("Failed to record download in database")
-		return nil, fmt.Errorf("failed to record download in database: %w", err)
+		return nil, false, fmt.Errorf("failed to record download in database: %w", err)
+	}
+	if !kept {
+		s.logger.Info().
+			Str("file", fileName).
+			Str("artist", resolved.Artist).
+			Msg("Routed duplicate photo to Inbox")
+		return photo, false, nil
 	}
 
 	// Create daily symlink
@@ -321,7 +348,7 @@ func (s *Scraper) DownloadResolvedMedia(ctx context.Context, resolved provider.D
 		Str("artist", resolved.Artist).
 		Msg("Successfully downloaded photo")
 
-	return photo, nil
+	return photo, true, nil
 }
 
 func (s *Scraper) recordInboxException(item provider.DiscoveredMedia, status string, reason string) error {
