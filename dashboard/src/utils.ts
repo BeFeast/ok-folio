@@ -10,8 +10,10 @@ export function formatNumber(num: number): string {
   return num.toLocaleString();
 }
 
-export function formatDate(dateString: string): string {
+export function formatDate(dateString: string | null | undefined): string {
+  if (!dateString || dateString === '0001-01-01T00:00:00Z') return '—';
   const date = new Date(dateString);
+  if (Number.isNaN(date.getTime())) return '—';
   return date.toLocaleString();
 }
 

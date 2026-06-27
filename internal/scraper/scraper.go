@@ -307,12 +307,13 @@ func (s *Scraper) DownloadResolvedMediaOrDuplicate(ctx context.Context, resolved
 	}
 
 	// Record in database
+	uploadDate := publishedAtPtr(resolved.PublishedAt)
 	photo := &database.DownloadedPhoto{
 		URL:         dedupeKey,
 		SourcePage:  resolved.Source.URL,
 		Title:       resolved.Title,
 		Artist:      resolved.Artist,
-		UploadDate:  &resolved.PublishedAt,
+		UploadDate:  uploadDate,
 		FilePath:    filePath,
 		FileName:    fileName,
 		FileSize:    fileSize,
@@ -362,6 +363,13 @@ func (s *Scraper) DownloadResolvedMediaOrDuplicate(ctx context.Context, resolved
 	s.scheduleWarmThumbnailsOnIngest(*photo)
 
 	return photo, true, nil
+}
+
+func publishedAtPtr(publishedAt time.Time) *time.Time {
+	if publishedAt.IsZero() {
+		return nil
+	}
+	return &publishedAt
 }
 
 func (s *Scraper) scheduleWarmThumbnailsOnIngest(photo database.DownloadedPhoto) {

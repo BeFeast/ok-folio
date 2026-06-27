@@ -70,11 +70,14 @@ func TestDiscoverPageMapsTelegramFixture(t *testing.T) {
 	if item.DedupeKey.Value != "-1001234567890:42:photo-large-unique-id" {
 		t.Fatalf("unexpected dedupe key: %s", item.DedupeKey.Value)
 	}
-	if item.Artist != "Fixture Artist" {
-		t.Fatalf("expected forward author signature as artist, got %q", item.Artist)
+	if item.Title != "Fixture channel photo" {
+		t.Fatalf("unexpected title: %q", item.Title)
 	}
-	if item.PublishedAt != time.Unix(1700000000, 0).UTC() {
-		t.Fatalf("unexpected published date: %s", item.PublishedAt)
+	if item.Artist != "" {
+		t.Fatalf("expected fixture caption without artist signal to leave artist empty, got %q", item.Artist)
+	}
+	if !item.PublishedAt.IsZero() {
+		t.Fatalf("expected fixture caption without artwork year to leave published date empty, got %s", item.PublishedAt)
 	}
 
 	legacy := result.Items[1]
@@ -92,6 +95,12 @@ func TestDiscoverPageMapsTelegramFixture(t *testing.T) {
 	}
 	if legacy.DedupeKey.Value != "-1009876543210:88:document-unique-id" {
 		t.Fatalf("unexpected legacy dedupe key: %s", legacy.DedupeKey.Value)
+	}
+	if legacy.Source.URL != "https://t.me/legacy_fixture/88" {
+		t.Fatalf("unexpected legacy source URL: %s", legacy.Source.URL)
+	}
+	if legacy.Artist != "" {
+		t.Fatalf("expected legacy fixture caption without artist signal to leave artist empty, got %q", legacy.Artist)
 	}
 }
 
@@ -189,6 +198,12 @@ func TestDiscoverPageFallsBackToBotMessageDedupe(t *testing.T) {
 	if item.Source.CollectionName != "Hidden Sender" {
 		t.Fatalf("expected hidden sender provenance, got %q", item.Source.CollectionName)
 	}
+	if item.Source.URL != "Hidden Sender" {
+		t.Fatalf("expected source URL fallback to provenance label, got %q", item.Source.URL)
+	}
+	if item.Artist != "" {
+		t.Fatalf("expected missing caption to leave artist empty, got %q", item.Artist)
+	}
 }
 
 func TestDiscoverPageUsesForwardOriginSenderChat(t *testing.T) {
@@ -233,8 +248,120 @@ func TestDiscoverPageUsesForwardOriginSenderChat(t *testing.T) {
 	if item.DedupeKey.Value != "12345:15:sender-chat-photo-unique-id" {
 		t.Fatalf("unexpected dedupe key: %q", item.DedupeKey.Value)
 	}
-	if item.Artist != "Origin Author" {
-		t.Fatalf("expected author signature as artist, got %q", item.Artist)
+	if item.Artist != "" {
+		t.Fatalf("expected caption without artist signal to leave artist empty, got %q", item.Artist)
+	}
+}
+
+func TestDiscoveredMediaParsesArtworkCaptionFields(t *testing.T) {
+	const channelName = "Нимфы и Музы"
+
+	tests := []struct {
+		name        string
+		caption     string
+		wantTitle   string
+		wantArtist  string
+		wantYear    int
+		wantMedium  string
+		wantNoDate  bool
+		wantNoTitle bool
+	}{
+		{
+			name:       "artist first without artwork year",
+			caption:    "Тереза Кондеминас Солер (Teresa Condeminas Soler, 1905 — 2003)\nУтро\n\nСекретный контент 🔞",
+			wantTitle:  "Утро",
+			wantArtist: "Тереза Кондеминас Солер (Teresa Condeminas Soler, 1905 — 2003)",
+			wantNoDate: true,
+		},
+		{
+			name:       "title first with artwork year",
+			caption:    "Обнаженная на софе 1933 г.\n\nГовард Чандлер Кристи (США, 1873 - 1952)\n\nСекретный контент 🔞",
+			wantTitle:  "Обнаженная на софе",
+			wantArtist: "Говард Чандлер Кристи (США, 1873 - 1952)",
+			wantYear:   1933,
+		},
+		{
+			name:       "title medium artist",
+			caption:    "\"Scinscape\" 1965 г.\n\nхолст, масло\n\nРальф Гоингс (США, 1928 - 2016)\n\nСекретный контент 🔞",
+			wantTitle:  "Scinscape",
+			wantArtist: "Ральф Гоингс (США, 1928 - 2016)",
+			wantYear:   1965,
+			wantMedium: "холст, масло",
+		},
+		{
+			name:        "all junk",
+			caption:     "Секретный контент 🔞\n\n",
+			wantNoDate:  true,
+			wantNoTitle: true,
+		},
+		{
+			name:        "captionless",
+			caption:     "",
+			wantNoDate:  true,
+			wantNoTitle: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			message := telegramArtworkMessage(channelName, tt.caption)
+			item, ok := discoveredMedia(message)
+			if !ok {
+				t.Fatal("expected media item")
+			}
+			parsed := parseArtworkCaption(tt.caption)
+
+			wantTitle := tt.wantTitle
+			if tt.wantNoTitle {
+				wantTitle = "fixture.jpg"
+			}
+			if item.Title != wantTitle {
+				t.Fatalf("unexpected title: got %q want %q", item.Title, wantTitle)
+			}
+			if item.Artist != tt.wantArtist {
+				t.Fatalf("unexpected artist: got %q want %q", item.Artist, tt.wantArtist)
+			}
+			if item.Source.URL != channelName {
+				t.Fatalf("expected source to be channel name, got %q", item.Source.URL)
+			}
+			if strings.Contains(item.Title, "Секретный контент") || strings.Contains(item.Title, "🔞") ||
+				strings.Contains(item.Artist, "Секретный контент") || strings.Contains(item.Artist, "🔞") ||
+				strings.Contains(parsed.Medium, "Секретный контент") || strings.Contains(parsed.Medium, "🔞") {
+				t.Fatalf("junk leaked into parsed fields: item=%+v medium=%q", item, parsed.Medium)
+			}
+			if parsed.Medium != tt.wantMedium {
+				t.Fatalf("unexpected medium: got %q want %q", parsed.Medium, tt.wantMedium)
+			}
+			if tt.wantNoDate {
+				if !item.PublishedAt.IsZero() {
+					t.Fatalf("expected empty artwork date, got %s", item.PublishedAt)
+				}
+				return
+			}
+			wantDate := time.Date(tt.wantYear, 1, 1, 0, 0, 0, 0, time.UTC)
+			if !item.PublishedAt.Equal(wantDate) {
+				t.Fatalf("unexpected artwork date: got %s want %s", item.PublishedAt, wantDate)
+			}
+		})
+	}
+}
+
+func telegramArtworkMessage(channelName string, caption string) Message {
+	return Message{
+		MessageID: 41,
+		Date:      1700000900,
+		Caption:   caption,
+		Chat: Chat{
+			ID:    -1001112223334,
+			Type:  "channel",
+			Title: channelName,
+		},
+		Document: &Document{
+			FileID:       "fixture-file-id",
+			FileUniqueID: "fixture-unique-id",
+			FileName:     "fixture.jpg",
+			MIMEType:     "image/jpeg",
+		},
 	}
 }
 
