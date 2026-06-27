@@ -3,8 +3,8 @@
 # the deployment secret store for runtime environments.
 
 source:
-  base_url: "https://example.com/gallery/category/1/"
-  category_id: 1
+  base_url: "https://sight.photo/photos/category/15/"
+  category_id: 15
 
 storage:
   base_directory: "./data/originals"

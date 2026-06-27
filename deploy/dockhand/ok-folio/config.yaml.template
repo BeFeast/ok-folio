@@ -1,0 +1,77 @@
+# OK Folio runtime config template for Dockhand staging.
+# Render this file on the deployment host; keep concrete secrets out of git.
+
+source:
+  base_url: "https://sight.photo/photos/category/15/"
+  category_id: 15
+
+storage:
+  base_directory: "/photoprism/originals"
+  daily_directory: "/photoprism/_daily"
+  derivatives_directory: "/derivatives"
+  derivatives_max_bytes: 21474836480
+
+database:
+  host: "postgres"
+  port: 5432
+  user: "${DB_USER}"
+  password: "${DB_PASSWORD}"
+  database: "${DB_NAME}"
+  sslmode: "disable"
+  url: ""
+  max_open_conns: 15
+  max_idle_conns: 5
+  conn_max_lifetime: 10m
+
+cache:
+  host: "valkey"
+  port: 6379
+  password: "${VALKEY_PASSWORD}"
+
+api:
+  enabled: true
+  port: 8080
+  host: "0.0.0.0"
+
+scheduler:
+  enabled: false
+  schedule: "0 0 */6 * * *"
+  pages: [1, 2, 3]
+
+retry:
+  max_attempts: 3
+  initial_delay: 1s
+  max_delay: 30s
+  multiplier: 2.0
+
+exif:
+  set_artist: true
+  set_date: true
+  set_title: true
+
+photoprism:
+  enabled: false
+  service_url: "http://localhost:2342"
+  auto_index: false
+  username: ""
+  password: ""
+
+telegram:
+  bot_token: "${TELEGRAM_BOT_TOKEN}"
+  base_url: "https://api.telegram.org"
+  file_base_url: "https://api.telegram.org/file"
+  chat_id: "${TELEGRAM_CHAT_ID}"
+  display_name: "${TELEGRAM_USERNAME}"
+  limit: 100
+
+logging:
+  level: "info"
+  format: "json"
+  output: "stdout"
+
+download:
+  concurrent_limit: 2
+  timeout: 30s
+  user_agent: "OK-Folio/0.1"
+  delay_between: 2s
+  rate_limit_backoff: 60s

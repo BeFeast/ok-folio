@@ -5,6 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 compose_file="$repo_root/deploy/dockhand/ok-folio/compose.yaml"
 initdb_file="$repo_root/deploy/dockhand/ok-folio/initdb/010-vector-extensions.sh"
 valkey_template="$repo_root/deploy/dockhand/ok-folio/valkey.conf.template"
+config_template="$repo_root/deploy/dockhand/ok-folio/config.yaml.template"
 
 fail() {
   echo "ok-folio stack template check failed: $*" >&2
@@ -23,6 +24,7 @@ require_grep() {
 [ -f "$compose_file" ] || fail "missing $compose_file"
 [ -f "$initdb_file" ] || fail "missing $initdb_file"
 [ -f "$valkey_template" ] || fail "missing $valkey_template"
+[ -f "$config_template" ] || fail "missing $config_template"
 
 require_grep 'ghcr\.io/tensorchord/vchord-postgres:pg18-v[0-9]+\.[0-9]+\.[0-9]+' "$compose_file" "postgres must use a pinned VectorChord Postgres 18 image"
 require_grep 'PGDATA: /var/lib/postgresql/18/docker' "$compose_file" "postgres must set the Postgres 18 PGDATA path"
@@ -75,6 +77,19 @@ require_grep 'ok-folio:\$\{OK_FOLIO_IMAGE_SHA:\?' "$compose_file" "app image mus
 require_grep 'condition: service_healthy' "$compose_file" "app must depend on healthy services"
 require_grep 'external: true' "$compose_file" "legacy network must be external"
 require_grep 'OK_FOLIO_DERIVATIVES_HOST_PATH.*:/derivatives[[:space:]]*$' "$compose_file" "app must mount the writable derivatives cache at /derivatives"
+require_grep 'OK_FOLIO_CONFIG_HOST_PATH.*:/config/config.yaml:ro' "$compose_file" "app config must be mounted read-only"
+
+require_grep 'base_url:[[:space:]]*"https://sight\.photo/photos/category/15/"' "$config_template" "runtime config template must scrape the sight.photo category listing"
+require_grep 'category_id:[[:space:]]*15' "$config_template" "runtime config template must set the sight.photo category id"
+require_grep '^logging:' "$config_template" "runtime config template must include logging settings"
+require_grep 'level:[[:space:]]*"info"' "$config_template" "runtime config template must enable info logging"
+require_grep '^download:' "$config_template" "runtime config template must include download settings"
+require_grep 'concurrent_limit:[[:space:]]*[1-9][0-9]*' "$config_template" "runtime config template must set a non-zero download concurrency"
+require_grep 'timeout:[[:space:]]*[1-9][0-9]*s' "$config_template" "runtime config template must set a download timeout"
+require_grep 'delay_between:[[:space:]]*[1-9][0-9]*s' "$config_template" "runtime config template must set a download delay"
+require_grep 'rate_limit_backoff:[[:space:]]*[1-9][0-9]*s' "$config_template" "runtime config template must set a rate-limit backoff"
+require_grep 'user_agent:[[:space:]]*"OK-Folio/' "$config_template" "runtime config template must set an OK Folio user agent"
+require_grep 'chat_id:[[:space:]]*"\$\{TELEGRAM_CHAT_ID\}"' "$config_template" "runtime config template must scope Telegram ingestion to a rendered chat id"
 
 if grep -Eq 'DATABASE_URL' "$compose_file"; then
   fail "compose must not render DATABASE_URL alongside discrete DB_* settings"

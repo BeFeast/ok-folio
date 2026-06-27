@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -26,9 +27,9 @@ const (
 	DefaultDerivativesDirectory = "/derivatives"
 	// DefaultDerivativesMaxBytes bounds generated thumbnails at 20 GiB.
 	DefaultDerivativesMaxBytes int64 = 20 * 1024 * 1024 * 1024
-	// DefaultLoggingLevel keeps logs visible when no logging section is configured.
+	// DefaultLoggingLevel keeps logs visible when logging.level is omitted.
 	DefaultLoggingLevel = "info"
-	// DefaultLoggingFormat is machine-readable for container logs.
+	// DefaultLoggingFormat keeps container logs machine-readable.
 	DefaultLoggingFormat = "json"
 	// DefaultWarmOnIngestWidthSmall is the grid thumbnail width warmed on ingest.
 	DefaultWarmOnIngestWidthSmall = 400
@@ -165,6 +166,11 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
 
+	var sections map[string]any
+	if err := yaml.Unmarshal(data, &sections); err != nil {
+		return nil, fmt.Errorf("failed to inspect config sections: %w", err)
+	}
+
 	// Apply environment variable overrides. DB_* keys configure OK Folio's own
 	// Postgres; they are intentionally kept separate from any LEGACY_DB_* keys.
 	if dbHost := os.Getenv("DB_HOST"); dbHost != "" {
@@ -256,7 +262,90 @@ func Load(path string) (*Config, error) {
 	cfg.Cache.applyDefaults()
 	cfg.Logging.applyDefaults()
 
+	if err := cfg.validateCompleteness(sections); err != nil {
+		return nil, err
+	}
+
 	return &cfg, nil
+}
+
+func (c *Config) validateCompleteness(sections map[string]any) error {
+	for _, section := range []string{"source", "logging", "download"} {
+		if _, ok := sections[section]; !ok {
+			return fmt.Errorf("config section %q is required", section)
+		}
+	}
+
+	if strings.TrimSpace(c.Source.BaseURL) == "" {
+		return fmt.Errorf("source.base_url is required")
+	}
+	if c.Source.CategoryID <= 0 {
+		return fmt.Errorf("source.category_id must be greater than zero")
+	}
+	if err := validateSourceURL(c.Source.BaseURL); err != nil {
+		return err
+	}
+
+	if strings.TrimSpace(c.Logging.Level) == "" {
+		return fmt.Errorf("logging.level is required")
+	}
+	if strings.TrimSpace(c.Logging.Format) == "" {
+		return fmt.Errorf("logging.format is required")
+	}
+	if strings.TrimSpace(c.Logging.Output) == "" {
+		return fmt.Errorf("logging.output is required")
+	}
+
+	if c.Download.ConcurrentLimit <= 0 {
+		return fmt.Errorf("download.concurrent_limit must be greater than zero")
+	}
+	if c.Download.Timeout <= 0 {
+		return fmt.Errorf("download.timeout must be greater than zero")
+	}
+	if strings.TrimSpace(c.Download.UserAgent) == "" {
+		return fmt.Errorf("download.user_agent is required")
+	}
+	if c.Download.DelayBetween <= 0 {
+		return fmt.Errorf("download.delay_between must be greater than zero")
+	}
+	if c.Download.RateLimitBackoff <= 0 {
+		return fmt.Errorf("download.rate_limit_backoff must be greater than zero")
+	}
+
+	return nil
+}
+
+func validateSourceURL(raw string) error {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("source.base_url is invalid: %w", err)
+	}
+	if parsed.Scheme == "" || parsed.Host == "" {
+		return fmt.Errorf("source.base_url must be an absolute URL")
+	}
+	if !strings.EqualFold(parsed.Host, "sight.photo") {
+		return nil
+	}
+
+	if hasCategoryQuery(parsed.Query()) {
+		return nil
+	}
+	if strings.Contains(parsed.Path, "/photos/category/") && !strings.HasSuffix(parsed.Path, "/") {
+		return fmt.Errorf("source.base_url for sight.photo category paths must end with a slash")
+	}
+	if !strings.Contains(parsed.Path, "/photos/category/") {
+		return fmt.Errorf("source.base_url for sight.photo must point at a category listing")
+	}
+	return nil
+}
+
+func hasCategoryQuery(values url.Values) bool {
+	for _, key := range []string{"category", "category_id", "cat"} {
+		if strings.TrimSpace(values.Get(key)) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *StorageConfig) applyDefaults() {

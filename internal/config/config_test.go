@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -60,8 +61,8 @@ func TestLoad_ValidConfig(t *testing.T) {
 
 	configContent := fmt.Sprintf(`
 source:
-  base_url: "https://example.com"
-  category_id: 1
+  base_url: "https://sight.photo/photos/category/15/"
+  category_id: 15
 
 storage:
   base_directory: %q
@@ -119,6 +120,8 @@ download:
   concurrent_limit: 5
   timeout: 30s
   user_agent: "PhotoExtractor/1.0"
+  delay_between: 2s
+  rate_limit_backoff: 60s
 `, filepath.Join(storageDir, "photos"), filepath.Join(storageDir, "daily"), filepath.Join(storageDir, "derivatives"))
 
 	err := os.WriteFile(configPath, []byte(configContent), 0644)
@@ -132,11 +135,11 @@ download:
 	}
 
 	// Test source config
-	if cfg.Source.BaseURL != "https://example.com" {
-		t.Errorf("Expected BaseURL 'https://example.com', got '%s'", cfg.Source.BaseURL)
+	if cfg.Source.BaseURL != "https://sight.photo/photos/category/15/" {
+		t.Errorf("Expected BaseURL 'https://sight.photo/photos/category/15/', got '%s'", cfg.Source.BaseURL)
 	}
-	if cfg.Source.CategoryID != 1 {
-		t.Errorf("Expected CategoryID 1, got %d", cfg.Source.CategoryID)
+	if cfg.Source.CategoryID != 15 {
+		t.Errorf("Expected CategoryID 15, got %d", cfg.Source.CategoryID)
 	}
 
 	// Test storage config
@@ -265,14 +268,14 @@ func TestLoad_EnvironmentOverrides(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.yaml")
 
-	configContent := `
+	configContent := completeConfig(`
 database:
   host: "localhost"
   port: 3306
   user: "testuser"
   password: "testpass"
   database: "testdb"
-`
+`)
 
 	err := os.WriteFile(configPath, []byte(configContent), 0644)
 	if err != nil {
@@ -350,14 +353,14 @@ func TestLoad_PhotoPrismEnvironmentOverrides(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.yaml")
 
-	configContent := `
+	configContent := completeConfig(`
 photoprism:
   enabled: true
   service_url: "http://photoprism:2342"
   auto_index: true
   username: "config-user"
   password: "config-pass"
-`
+`)
 
 	err := os.WriteFile(configPath, []byte(configContent), 0644)
 	if err != nil {
@@ -388,14 +391,14 @@ func TestLoad_PartialEnvironmentOverrides(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.yaml")
 
-	configContent := `
+	configContent := completeConfig(`
 database:
   host: "localhost"
   port: 3306
   user: "testuser"
   password: "testpass"
   database: "testdb"
-`
+`)
 
 	err := os.WriteFile(configPath, []byte(configContent), 0644)
 	if err != nil {
@@ -479,7 +482,7 @@ func TestLoad_DatabaseEnvOverridesAndDefaults(t *testing.T) {
 	configPath := filepath.Join(tmpDir, "config.yaml")
 
 	// Minimal config without a database block exercises the applied defaults.
-	if err := os.WriteFile(configPath, []byte("source:\n  base_url: \"https://example.com\"\n"), 0644); err != nil {
+	if err := os.WriteFile(configPath, []byte(completeConfig("")), 0644); err != nil {
 		t.Fatalf("Failed to write config: %v", err)
 	}
 
@@ -509,7 +512,7 @@ func TestLoad_DatabaseEnvOverridesAndDefaults(t *testing.T) {
 func TestLoad_DefaultsPointAtPostgresService(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.yaml")
-	if err := os.WriteFile(configPath, []byte("source:\n  base_url: \"https://example.com\"\n"), 0644); err != nil {
+	if err := os.WriteFile(configPath, []byte(completeConfig("")), 0644); err != nil {
 		t.Fatalf("Failed to write config: %v", err)
 	}
 
@@ -526,7 +529,7 @@ func TestLoad_DefaultsPointAtPostgresService(t *testing.T) {
 func TestLoad_DefaultsPointAtValkeyService(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.yaml")
-	if err := os.WriteFile(configPath, []byte("source:\n  base_url: \"https://example.com\"\n"), 0644); err != nil {
+	if err := os.WriteFile(configPath, []byte(completeConfig("")), 0644); err != nil {
 		t.Fatalf("Failed to write config: %v", err)
 	}
 
@@ -543,10 +546,25 @@ func TestLoad_DefaultsPointAtValkeyService(t *testing.T) {
 	}
 }
 
-func TestLoad_DefaultsLogging(t *testing.T) {
+func TestLoad_DefaultsLoggingFieldsWhenSectionPresent(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.yaml")
-	if err := os.WriteFile(configPath, []byte("source:\n  base_url: \"https://example.com\"\n"), 0644); err != nil {
+	configContent := `
+source:
+  base_url: "https://sight.photo/photos/category/15/"
+  category_id: 15
+
+logging:
+  output: "stdout"
+
+download:
+  concurrent_limit: 2
+  timeout: 30s
+  user_agent: "OK-Folio/0.1"
+  delay_between: 2s
+  rate_limit_backoff: 60s
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
 		t.Fatalf("Failed to write config: %v", err)
 	}
 
@@ -562,10 +580,27 @@ func TestLoad_DefaultsLogging(t *testing.T) {
 	}
 }
 
+func TestLoad_AcceptsSightPhotoCategoryQueryURL(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	configContent := strings.Replace(completeConfig(""), "https://sight.photo/photos/category/15/", "https://sight.photo/photos/?category=15", 1)
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("Failed to write config: %v", err)
+	}
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Failed to load config: %v", err)
+	}
+	if cfg.Source.BaseURL != "https://sight.photo/photos/?category=15" {
+		t.Fatalf("Expected query category URL, got %q", cfg.Source.BaseURL)
+	}
+}
+
 func TestLoad_DefaultsThumbnailDerivatives(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.yaml")
-	if err := os.WriteFile(configPath, []byte("source:\n  base_url: \"https://example.com\"\n"), 0644); err != nil {
+	if err := os.WriteFile(configPath, []byte(completeConfig("")), 0644); err != nil {
 		t.Fatalf("Failed to write config: %v", err)
 	}
 
@@ -584,7 +619,7 @@ func TestLoad_DefaultsThumbnailDerivatives(t *testing.T) {
 func TestLoad_InvalidDBPort(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.yaml")
-	if err := os.WriteFile(configPath, []byte("source:\n  base_url: \"https://example.com\"\n"), 0644); err != nil {
+	if err := os.WriteFile(configPath, []byte(completeConfig("")), 0644); err != nil {
 		t.Fatalf("Failed to write config: %v", err)
 	}
 
@@ -597,7 +632,7 @@ func TestLoad_InvalidDBPort(t *testing.T) {
 func TestLoad_InvalidCachePort(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.yaml")
-	if err := os.WriteFile(configPath, []byte("source:\n  base_url: \"https://example.com\"\n"), 0644); err != nil {
+	if err := os.WriteFile(configPath, []byte(completeConfig("")), 0644); err != nil {
 		t.Fatalf("Failed to write config: %v", err)
 	}
 
@@ -610,7 +645,7 @@ func TestLoad_InvalidCachePort(t *testing.T) {
 func TestLoad_InvalidDerivativesMaxBytes(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.yaml")
-	if err := os.WriteFile(configPath, []byte("source:\n  base_url: \"https://example.com\"\n"), 0644); err != nil {
+	if err := os.WriteFile(configPath, []byte(completeConfig("")), 0644); err != nil {
 		t.Fatalf("Failed to write config: %v", err)
 	}
 
@@ -625,12 +660,7 @@ func TestLoad_MinimalConfig(t *testing.T) {
 	configPath := filepath.Join(tmpDir, "minimal.yaml")
 	storageDir := filepath.Join(tmpDir, "storage")
 
-	// Minimal config with just required fields
-	configContent := fmt.Sprintf(`
-source:
-  base_url: "https://example.com"
-  category_id: 1
-
+	configContent := completeConfig(fmt.Sprintf(`
 storage:
   base_directory: %q
   daily_directory: %q
@@ -641,7 +671,7 @@ database:
   user: "user"
   password: "testpass"
   database: "testdb"
-`, filepath.Join(storageDir, "originals"), filepath.Join(storageDir, "daily"))
+`, filepath.Join(storageDir, "originals"), filepath.Join(storageDir, "daily")))
 
 	err := os.WriteFile(configPath, []byte(configContent), 0644)
 	if err != nil {
@@ -660,4 +690,97 @@ database:
 	if cfg.Database.Host == "" {
 		t.Error("Database host should not be empty")
 	}
+}
+
+func TestLoad_RejectsIncompleteRuntimeConfig(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{
+			name: "missing download section",
+			content: `
+source:
+  base_url: "https://sight.photo/photos/category/15/"
+  category_id: 15
+logging:
+  level: "info"
+  format: "json"
+  output: "stdout"
+`,
+			want: `config section "download" is required`,
+		},
+		{
+			name: "missing logging section",
+			content: `
+source:
+  base_url: "https://sight.photo/photos/category/15/"
+  category_id: 15
+download:
+  concurrent_limit: 2
+  timeout: 30s
+  user_agent: "OK-Folio/0.1"
+  delay_between: 2s
+  rate_limit_backoff: 60s
+`,
+			want: `config section "logging" is required`,
+		},
+		{
+			name:    "zero concurrent limit",
+			content: strings.Replace(completeConfig(""), "concurrent_limit: 2", "concurrent_limit: 0", 1),
+			want:    "download.concurrent_limit must be greater than zero",
+		},
+		{
+			name:    "sight homepage source",
+			content: strings.Replace(completeConfig(""), "https://sight.photo/photos/category/15/", "https://sight.photo/", 1),
+			want:    "source.base_url for sight.photo must point at a category listing",
+		},
+		{
+			name:    "sight category path without trailing slash",
+			content: strings.Replace(completeConfig(""), "https://sight.photo/photos/category/15/", "https://sight.photo/photos/category/15", 1),
+			want:    "source.base_url for sight.photo category paths must end with a slash",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			configPath := filepath.Join(t.TempDir(), "config.yaml")
+			if err := os.WriteFile(configPath, []byte(tt.content), 0644); err != nil {
+				t.Fatalf("Failed to write config: %v", err)
+			}
+
+			_, err := Load(configPath)
+			if err == nil {
+				t.Fatal("Expected config validation error, got nil")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("Expected error containing %q, got %v", tt.want, err)
+			}
+		})
+	}
+}
+
+func completeConfig(extra string) string {
+	base := `
+source:
+  base_url: "https://sight.photo/photos/category/15/"
+  category_id: 15
+
+logging:
+  level: "info"
+  format: "json"
+  output: "stdout"
+
+download:
+  concurrent_limit: 2
+  timeout: 30s
+  user_agent: "OK-Folio/0.1"
+  delay_between: 2s
+  rate_limit_backoff: 60s
+`
+	if strings.TrimSpace(extra) == "" {
+		return base
+	}
+	return base + "\n" + extra
 }
