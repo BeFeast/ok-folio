@@ -89,6 +89,40 @@ func TestWarmThumbnailsSkipsMissingOriginals(t *testing.T) {
 	}
 }
 
+func TestWarmOnePhotoGeneratesConfiguredWidths(t *testing.T) {
+	db := setupWarmDB(t)
+	storage := warmStorage(t)
+	photo := createWarmPhoto(t, db, storage, "ingested.jpg")
+	hotCache := &recordingHotCache{values: map[string][]byte{}}
+
+	result, err := WarmOnePhoto(context.Background(), storage, &photo, WarmPhotoOptions{
+		Widths:   []int{700, 400},
+		HotCache: hotCache,
+		HotTTL:   time.Hour,
+	}, zerolog.Nop())
+	if err != nil {
+		t.Fatalf("WarmOnePhoto failed: %v", err)
+	}
+	if result.Scanned != 1 || result.Generated != 2 || result.Skipped != 0 || result.Missing != 0 || result.Failed != 0 {
+		t.Fatalf("unexpected warm-one result: %#v", result)
+	}
+
+	cache := NewCache(storage)
+	validator, err := Validator(&photo, resolveOriginalPath(storage, photo.FilePath))
+	if err != nil {
+		t.Fatalf("Validator failed: %v", err)
+	}
+	for _, width := range []int{400, 700} {
+		entry := cache.Entry(&photo, width, validator)
+		if _, err := os.Stat(entry.Path); err != nil {
+			t.Fatalf("expected warmed derivative for width %d: %v", width, err)
+		}
+		if len(hotCache.values[entry.Key]) == 0 {
+			t.Fatalf("expected hot cache write for width %d", width)
+		}
+	}
+}
+
 func TestNormalizeWidthsDedupesSortsAndClamps(t *testing.T) {
 	widths, err := normalizeWidths([]int{700, 400, 700, 2048})
 	if err != nil {
@@ -184,4 +218,12 @@ func createWarmJPEG(t *testing.T, path string) {
 
 func ptrWarmTime(t time.Time) *time.Time {
 	return &t
+}
+
+type recordingHotCache struct {
+	values map[string][]byte
+}
+
+func (c *recordingHotCache) SetBytes(_ context.Context, key string, value []byte, _ time.Duration) {
+	c.values[key] = append([]byte(nil), value...)
 }

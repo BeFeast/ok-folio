@@ -42,6 +42,16 @@ type WarmResult struct {
 	Failed    int
 }
 
+type HotCache interface {
+	SetBytes(context.Context, string, []byte, time.Duration)
+}
+
+type WarmPhotoOptions struct {
+	Widths   []int
+	HotCache HotCache
+	HotTTL   time.Duration
+}
+
 type warmJob struct {
 	photo    database.DownloadedPhoto
 	filePath string
@@ -113,15 +123,9 @@ func WarmThumbnails(ctx context.Context, db *database.DB, cfg config.StorageConf
 			defer workers.Done()
 			var result WarmResult
 			for job := range jobs {
-				data, err := GenerateThumbnail(ctx, job.filePath, job.width)
-				if err != nil {
+				if err := warmEntry(ctx, cacheWriter, job, nil, 0); err != nil {
 					result.Failed++
-					logger.Warn().Err(err).Uint64("photo_id", job.photo.ID).Int("width", job.width).Str("file_path", job.photo.FilePath).Msg("Thumbnail warm failed")
-					continue
-				}
-				if err := cacheWriter.Write(job.entry, data); err != nil {
-					result.Failed++
-					logger.Warn().Err(err).Uint64("photo_id", job.photo.ID).Int("width", job.width).Str("path", job.entry.Path).Msg("Thumbnail cache write failed")
+					logger.Warn().Err(err).Uint64("photo_id", job.photo.ID).Int("width", job.width).Str("path", job.entry.Path).Msg("Thumbnail warm failed")
 					continue
 				}
 				result.Generated++
@@ -154,6 +158,61 @@ func WarmThumbnails(ctx context.Context, db *database.DB, cfg config.StorageConf
 		Int("failed", result.Failed).
 		Msg("Thumbnail warm completed")
 	return result, nil
+}
+
+func WarmOnePhoto(ctx context.Context, cfg config.StorageConfig, photo *database.DownloadedPhoto, opts WarmPhotoOptions, logger zerolog.Logger) (WarmResult, error) {
+	widths, err := normalizeWidths(opts.Widths)
+	if err != nil {
+		return WarmResult{}, err
+	}
+	if photo == nil {
+		return WarmResult{}, fmt.Errorf("photo is required")
+	}
+
+	cache := NewCache(cfg)
+	cacheWriter := &warmCacheWriter{cache: cache, pruneEvery: 1}
+	result := WarmResult{Scanned: 1}
+	filePath := resolveOriginalPath(cfg, photo.FilePath)
+	if _, err := os.Stat(filePath); err != nil {
+		result.Missing += len(widths)
+		logger.Warn().Err(err).Uint64("photo_id", photo.ID).Str("file_path", photo.FilePath).Msg("Original file missing; skipping thumbnails")
+		return result, nil
+	}
+	validator, err := Validator(photo, filePath)
+	if err != nil {
+		result.Missing += len(widths)
+		logger.Warn().Err(err).Uint64("photo_id", photo.ID).Str("file_path", photo.FilePath).Msg("Original file unavailable; skipping thumbnails")
+		return result, nil
+	}
+	for _, width := range widths {
+		entry := cache.Entry(photo, width, validator)
+		if cache.Exists(entry) {
+			result.Skipped++
+			continue
+		}
+		job := warmJob{photo: *photo, filePath: filePath, width: width, entry: entry}
+		if err := warmEntry(ctx, cacheWriter, job, opts.HotCache, opts.HotTTL); err != nil {
+			result.Failed++
+			logger.Warn().Err(err).Uint64("photo_id", photo.ID).Int("width", width).Str("path", entry.Path).Msg("Thumbnail warm failed")
+			continue
+		}
+		result.Generated++
+	}
+	return result, nil
+}
+
+func warmEntry(ctx context.Context, cacheWriter *warmCacheWriter, job warmJob, hotCache HotCache, hotTTL time.Duration) error {
+	data, err := GenerateThumbnail(ctx, job.filePath, job.width)
+	if err != nil {
+		return err
+	}
+	if err := cacheWriter.Write(job.entry, data); err != nil {
+		return err
+	}
+	if hotCache != nil && hotTTL > 0 {
+		hotCache.SetBytes(ctx, job.entry.Key, data, hotTTL)
+	}
+	return nil
 }
 
 func normalizeWarmConcurrency(concurrency int, logger zerolog.Logger) int {

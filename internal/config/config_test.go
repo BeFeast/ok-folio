@@ -16,12 +16,16 @@ func TestLoad_ValidConfig(t *testing.T) {
 	oldDBName := os.Getenv("DB_NAME")
 	oldDerivativesDir := os.Getenv("OK_FOLIO_DERIVATIVES_DIR")
 	oldDerivativesMaxBytes := os.Getenv("OK_FOLIO_DERIVATIVES_MAX_BYTES")
+	oldWarmOnIngest := os.Getenv("OK_FOLIO_WARM_ON_INGEST")
+	oldWarmOnIngestWidths := os.Getenv("OK_FOLIO_WARM_ON_INGEST_WIDTHS")
 	os.Unsetenv("DB_HOST")
 	os.Unsetenv("DB_USER")
 	os.Unsetenv("DB_PASSWORD")
 	os.Unsetenv("DB_NAME")
 	os.Unsetenv("OK_FOLIO_DERIVATIVES_DIR")
 	os.Unsetenv("OK_FOLIO_DERIVATIVES_MAX_BYTES")
+	os.Unsetenv("OK_FOLIO_WARM_ON_INGEST")
+	os.Unsetenv("OK_FOLIO_WARM_ON_INGEST_WIDTHS")
 	defer func() {
 		if oldDBHost != "" {
 			os.Setenv("DB_HOST", oldDBHost)
@@ -40,6 +44,12 @@ func TestLoad_ValidConfig(t *testing.T) {
 		}
 		if oldDerivativesMaxBytes != "" {
 			os.Setenv("OK_FOLIO_DERIVATIVES_MAX_BYTES", oldDerivativesMaxBytes)
+		}
+		if oldWarmOnIngest != "" {
+			os.Setenv("OK_FOLIO_WARM_ON_INGEST", oldWarmOnIngest)
+		}
+		if oldWarmOnIngestWidths != "" {
+			os.Setenv("OK_FOLIO_WARM_ON_INGEST_WIDTHS", oldWarmOnIngestWidths)
 		}
 	}()
 
@@ -138,6 +148,12 @@ download:
 	}
 	if cfg.Storage.DerivativesMaxBytes != 1048576 {
 		t.Errorf("Expected DerivativesMaxBytes 1048576, got %d", cfg.Storage.DerivativesMaxBytes)
+	}
+	if !cfg.Storage.WarmOnIngest {
+		t.Errorf("Expected WarmOnIngest default to be enabled")
+	}
+	if len(cfg.Storage.WarmOnIngestWidths) != 2 || cfg.Storage.WarmOnIngestWidths[0] != 400 || cfg.Storage.WarmOnIngestWidths[1] != 700 {
+		t.Errorf("Expected WarmOnIngestWidths [400 700], got %v", cfg.Storage.WarmOnIngestWidths)
 	}
 
 	// Test database config
@@ -273,6 +289,8 @@ database:
 	os.Setenv("CACHE_PASSWORD", "override-cache-pass")
 	os.Setenv("OK_FOLIO_DERIVATIVES_DIR", filepath.Join(tmpDir, "override-derivatives"))
 	os.Setenv("OK_FOLIO_DERIVATIVES_MAX_BYTES", "2048")
+	os.Setenv("OK_FOLIO_WARM_ON_INGEST", "false")
+	os.Setenv("OK_FOLIO_WARM_ON_INGEST_WIDTHS", "320,640")
 	defer func() {
 		os.Unsetenv("DB_HOST")
 		os.Unsetenv("DB_USER")
@@ -283,6 +301,8 @@ database:
 		os.Unsetenv("CACHE_PASSWORD")
 		os.Unsetenv("OK_FOLIO_DERIVATIVES_DIR")
 		os.Unsetenv("OK_FOLIO_DERIVATIVES_MAX_BYTES")
+		os.Unsetenv("OK_FOLIO_WARM_ON_INGEST")
+		os.Unsetenv("OK_FOLIO_WARM_ON_INGEST_WIDTHS")
 	}()
 
 	cfg, err := Load(configPath)
@@ -317,6 +337,12 @@ database:
 	}
 	if cfg.Storage.DerivativesMaxBytes != 2048 {
 		t.Errorf("Expected derivative max bytes override, got %d", cfg.Storage.DerivativesMaxBytes)
+	}
+	if cfg.Storage.WarmOnIngest {
+		t.Errorf("Expected warm-on-ingest env override to disable warming")
+	}
+	if len(cfg.Storage.WarmOnIngestWidths) != 2 || cfg.Storage.WarmOnIngestWidths[0] != 320 || cfg.Storage.WarmOnIngestWidths[1] != 640 {
+		t.Errorf("Expected warm-on-ingest width override [320 640], got %v", cfg.Storage.WarmOnIngestWidths)
 	}
 }
 
