@@ -181,6 +181,42 @@ func TestFillMissingContentHashesReadsOriginalsAndIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestFillMissingContentHashesSkipsDuplicateOriginal(t *testing.T) {
+	db := setupSQLiteETLDB(t)
+	if err := db.Exec("CREATE UNIQUE INDEX idx_downloaded_photos_content_hash_unique ON downloaded_photos (content_hash) WHERE content_hash IS NOT NULL").Error; err != nil {
+		t.Fatalf("create content hash unique index: %v", err)
+	}
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "winner.jpg"), []byte("same-original-bytes"), 0o600); err != nil {
+		t.Fatalf("write winner original: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "loser.jpg"), []byte("same-original-bytes"), 0o600); err != nil {
+		t.Fatalf("write loser original: %v", err)
+	}
+	photos := []*database.DownloadedPhoto{
+		{URL: "https://example.test/winner.jpg", FilePath: "winner.jpg", Status: "downloaded"},
+		{URL: "https://example.test/loser.jpg", FilePath: "loser.jpg", Status: "downloaded"},
+	}
+	if err := db.Create(&photos).Error; err != nil {
+		t.Fatalf("insert photos: %v", err)
+	}
+
+	result, err := FillMissingContentHashes(db, root, 10)
+	if err != nil {
+		t.Fatalf("FillMissingContentHashes should skip duplicate content hash, got error: %v", err)
+	}
+	if result.Scanned != 2 || result.Updated != 1 || result.Skipped != 1 {
+		t.Fatalf("unexpected hash result: %#v", result)
+	}
+	var hashedRows int64
+	if err := db.Model(&database.DownloadedPhoto{}).Where("content_hash IS NOT NULL").Count(&hashedRows).Error; err != nil {
+		t.Fatalf("count hashed rows: %v", err)
+	}
+	if hashedRows != 1 {
+		t.Fatalf("expected one winning row to keep the duplicate content hash, got %d", hashedRows)
+	}
+}
+
 func setupSQLiteETLDB(t *testing.T) *database.DB {
 	t.Helper()
 	gormDB, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})

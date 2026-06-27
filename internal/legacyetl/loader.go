@@ -255,6 +255,10 @@ func FillMissingContentHashes(db *database.DB, originalsRoot string, limit int) 
 		}
 		sum := sha256.Sum256(data)
 		if err := db.Exec("UPDATE downloaded_photos SET content_hash = ? WHERE id = ? AND content_hash IS NULL", sum[:], row.ID).Error; err != nil {
+			if database.IsUniqueViolation(err) {
+				result.Skipped++
+				continue
+			}
 			return result, err
 		}
 		result.Updated++
