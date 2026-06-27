@@ -40,7 +40,9 @@ It must not include `--master-data`, `--source-data`, or `--lock-all-tables`
 because those can trigger `FLUSH TABLES WITH READ LOCK` and stall PhotoPrism.
 Binlog coordinates are not used; watermarks live in OK Folio Postgres.
 
-Use `cmd/ok-folio-etl` to print the exact checks and safe dump arguments:
+Use the release image's `/app/ok-folio-etl` binary to run ETL in-container. From
+a source checkout, `go run ./cmd/ok-folio-etl` runs the same command. Print the
+exact checks and safe dump arguments before dumping:
 
 ```bash
 go run ./cmd/ok-folio-etl print-legacy-checks --legacy-database "$LEGACY_DB_NAME"
