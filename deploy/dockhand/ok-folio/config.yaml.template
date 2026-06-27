@@ -4,6 +4,8 @@
 source:
   base_url: "https://sight.photo/photos/category/15/"
   category_id: 15
+  # Optional connector-specific 6-field cron. Leave unset to use scheduler.schedule.
+  # schedule: "0 0 */6 * * *"
 
 storage:
   base_directory: "/photoprism/originals"
@@ -63,6 +65,7 @@ telegram:
   chat_id: "${TELEGRAM_CHAT_ID}"
   display_name: "${TELEGRAM_USERNAME}"
   limit: 100
+  schedule: "0 0 * * * *"
 
 logging:
   level: "info"

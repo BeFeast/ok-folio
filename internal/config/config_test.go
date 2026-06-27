@@ -63,6 +63,7 @@ func TestLoad_ValidConfig(t *testing.T) {
 source:
   base_url: "https://sight.photo/photos/category/15/"
   category_id: 15
+  schedule: "0 0 */6 * * *"
 
 storage:
   base_directory: %q
@@ -111,6 +112,9 @@ photoprism:
   service_url: "http://photoprism:2342"
   auto_index: false
 
+telegram:
+  schedule: "0 0 * * * *"
+
 logging:
   level: "info"
   format: "json"
@@ -140,6 +144,9 @@ download:
 	}
 	if cfg.Source.CategoryID != 15 {
 		t.Errorf("Expected CategoryID 15, got %d", cfg.Source.CategoryID)
+	}
+	if cfg.Source.Schedule != "0 0 */6 * * *" {
+		t.Errorf("Expected Source Schedule '0 0 */6 * * *', got '%s'", cfg.Source.Schedule)
 	}
 
 	// Test storage config
@@ -205,6 +212,9 @@ download:
 	}
 	if len(cfg.Scheduler.Pages) != 3 {
 		t.Errorf("Expected 3 pages, got %d", len(cfg.Scheduler.Pages))
+	}
+	if cfg.Telegram.Schedule != "0 0 * * * *" {
+		t.Errorf("Expected Telegram Schedule '0 0 * * * *', got '%s'", cfg.Telegram.Schedule)
 	}
 
 	// Test retry config

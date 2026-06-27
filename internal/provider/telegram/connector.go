@@ -45,6 +45,7 @@ type Config struct {
 	ChatID           string
 	DisplayName      string
 	Limit            int
+	Schedule         string
 	RateLimitBackoff time.Duration
 	Retry            retry.Config
 }
@@ -90,6 +91,7 @@ func (c *Connector) Provider() provider.Source {
 		DisplayName: displayName,
 		BaseURL:     strings.TrimRight(c.cfg.BaseURL, "/"),
 		Scope:       c.cfg.ChatID,
+		Schedule:    c.cfg.Schedule,
 	}
 }
 

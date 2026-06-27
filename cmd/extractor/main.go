@@ -158,6 +158,7 @@ func buildConnectors(cfg *config.Config, logger zerolog.Logger) []provider.Conne
 	connectors := []provider.Connector{
 		webgallery.New(webgallery.Config{
 			BaseURL:          cfg.Source.BaseURL,
+			Schedule:         cfg.Source.Schedule,
 			UserAgent:        cfg.Download.UserAgent,
 			RateLimitBackoff: cfg.Download.RateLimitBackoff,
 			Retry:            retryConfig,
@@ -171,6 +172,7 @@ func buildConnectors(cfg *config.Config, logger zerolog.Logger) []provider.Conne
 			ChatID:           cfg.Telegram.ChatID,
 			DisplayName:      cfg.Telegram.DisplayName,
 			Limit:            cfg.Telegram.Limit,
+			Schedule:         cfg.Telegram.Schedule,
 			RateLimitBackoff: cfg.Download.RateLimitBackoff,
 			Retry:            retryConfig,
 		}, client, logger.With().Str("provider", telegram.ProviderID).Logger()))

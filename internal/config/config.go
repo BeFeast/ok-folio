@@ -55,6 +55,7 @@ type Config struct {
 type SourceConfig struct {
 	BaseURL    string `yaml:"base_url"`
 	CategoryID int    `yaml:"category_id"`
+	Schedule   string `yaml:"schedule"`
 }
 
 type StorageConfig struct {
@@ -138,6 +139,7 @@ type TelegramConfig struct {
 	ChatID      string `yaml:"chat_id"`
 	DisplayName string `yaml:"display_name"`
 	Limit       int    `yaml:"limit"`
+	Schedule    string `yaml:"schedule"`
 }
 
 type LoggingConfig struct {

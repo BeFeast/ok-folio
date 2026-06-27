@@ -3,6 +3,8 @@ package scheduler
 import (
 	"context"
 	"fmt"
+	"strings"
+	"sync"
 
 	okfcache "ok-folio/internal/cache"
 	"ok-folio/internal/config"
@@ -16,14 +18,24 @@ import (
 
 type Scheduler struct {
 	cfg        *config.Config
-	ingestor   *ingest.Ingestor
+	ingestor   connectorRunner
 	connectors []provider.Connector
 	cache      *okfcache.Client
 	indexer    interface {
 		TriggerPhotoprismIndex(context.Context) error
 	}
-	logger zerolog.Logger
-	cron   *cron.Cron
+	logger       zerolog.Logger
+	cron         *cron.Cron
+	extractionMu sync.Mutex
+}
+
+type connectorRunner interface {
+	RunConnectorWithOptions(context.Context, provider.Connector, ingest.RunOptions) (ingest.Result, error)
+}
+
+type connectorJob struct {
+	connector provider.Connector
+	mu        sync.Mutex
 }
 
 func New(cfg *config.Config, ingestor *ingest.Ingestor, connectors []provider.Connector, cache *okfcache.Client, indexer interface {
@@ -46,14 +58,29 @@ func (s *Scheduler) Start() error {
 		return nil
 	}
 
-	s.logger.Info().Str("schedule", s.cfg.Scheduler.Schedule).Msg("Starting scheduler")
+	s.logger.Info().Str("default_schedule", s.cfg.Scheduler.Schedule).Msg("Starting scheduler")
 
-	_, err := s.cron.AddFunc(s.cfg.Scheduler.Schedule, func() {
-		s.runExtraction()
-	})
+	seen := make(map[string]struct{}, len(s.connectors))
+	for _, connector := range s.connectors {
+		source := connector.Provider()
+		providerID := source.ID
+		if _, ok := seen[providerID]; ok {
+			return fmt.Errorf("duplicate connector provider %q", providerID)
+		}
+		seen[providerID] = struct{}{}
 
-	if err != nil {
-		return fmt.Errorf("failed to add cron job: %w", err)
+		schedule := connectorSchedule(source, s.cfg.Scheduler.Schedule)
+		job := &connectorJob{connector: connector}
+		if _, err := s.cron.AddFunc(schedule, func() {
+			s.runConnectorExtraction(job)
+		}); err != nil {
+			return fmt.Errorf("failed to add cron job for %s: %w", providerID, err)
+		}
+		s.logger.Info().
+			Str("provider", providerID).
+			Str("schedule", schedule).
+			Bool("uses_default_schedule", strings.TrimSpace(source.Schedule) == "").
+			Msg("Registered connector schedule")
 	}
 
 	s.cron.Start()
@@ -69,41 +96,46 @@ func (s *Scheduler) Stop() {
 	}
 }
 
-func (s *Scheduler) runExtraction() {
-	s.logger.Info().Msg("Starting scheduled extraction")
+func connectorSchedule(source provider.Source, fallback string) string {
+	if schedule := strings.TrimSpace(source.Schedule); schedule != "" {
+		return schedule
+	}
+	return strings.TrimSpace(fallback)
+}
+
+func (s *Scheduler) runConnectorExtraction(job *connectorJob) {
+	source := job.connector.Provider()
+	providerID := source.ID
+	if !job.mu.TryLock() {
+		s.logger.Warn().Str("provider", providerID).Msg("Skipping scheduled connector extraction because previous run is still active")
+		return
+	}
+	defer job.mu.Unlock()
+
+	s.logger.Info().Str("provider", providerID).Msg("Starting scheduled connector extraction")
 
 	ctx := context.Background()
-	var (
-		totalDownloaded int
-		totalSkipped    int
-		totalFailed     int
-	)
+	opts := ingest.RunOptions{}
+	if providerID == webgallery.ProviderID && len(s.cfg.Scheduler.Pages) > 0 {
+		opts.AllowedPages = s.cfg.Scheduler.Pages
+	}
+	s.extractionMu.Lock()
+	defer s.extractionMu.Unlock()
 
-	for _, connector := range s.connectors {
-		providerID := connector.Provider().ID
-		s.logger.Info().Str("provider", providerID).Msg("Running connector ingestion")
-		opts := ingest.RunOptions{}
-		if providerID == webgallery.ProviderID && len(s.cfg.Scheduler.Pages) > 0 {
-			opts.AllowedPages = s.cfg.Scheduler.Pages
-		}
-		result, err := s.ingestor.RunConnectorWithOptions(ctx, connector, opts)
-		if err != nil {
-			s.logger.Error().Err(err).Str("provider", providerID).Msg("Connector ingestion failed")
-		}
-
-		totalDownloaded += result.PhotosDownloaded
-		totalSkipped += result.PhotosSkipped
-		totalFailed += result.PhotosFailed
+	result, err := s.ingestor.RunConnectorWithOptions(ctx, job.connector, opts)
+	if err != nil {
+		s.logger.Error().Err(err).Str("provider", providerID).Msg("Connector ingestion failed")
 	}
 
 	s.logger.Info().
-		Int("downloaded", totalDownloaded).
-		Int("skipped", totalSkipped).
-		Int("failed", totalFailed).
-		Msg("Scheduled extraction completed")
+		Str("provider", providerID).
+		Int("downloaded", result.PhotosDownloaded).
+		Int("skipped", result.PhotosSkipped).
+		Int("failed", result.PhotosFailed).
+		Msg("Scheduled connector extraction completed")
 
 	// Trigger PhotoPrism indexing if photos were downloaded
-	if totalDownloaded > 0 {
+	if result.PhotosDownloaded > 0 {
 		if s.cache != nil {
 			s.logger.Debug().Msg("Catalog cache epoch bumped by ingestor batches")
 		}
