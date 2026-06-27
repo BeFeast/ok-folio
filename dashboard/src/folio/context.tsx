@@ -13,7 +13,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import {
   addToFavorites,
@@ -190,6 +190,7 @@ export function useFolio(): FolioContextValue {
 
 export function FolioProvider({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [theme, setThemeState] = useState<ThemeName>(() => readStoredTheme());
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
@@ -276,9 +277,10 @@ export function FolioProvider({ children }: { children: ReactNode }) {
         })
         .finally(() => {
           inFlight.current.delete(id);
+          void queryClient.invalidateQueries({ queryKey: ["folio-catalog"] });
         });
     },
-    [isFav],
+    [isFav, queryClient],
   );
 
   const openPiece = useCallback((id: number) => setSelectedId(id), []);

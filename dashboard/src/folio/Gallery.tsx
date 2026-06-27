@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { fetchArtists, getPhotoThumbnailUrl } from "../api";
+import { fetchArtists, fetchGalleryCatalog, getPhotoThumbnailUrl } from "../api";
 import { useFolio, type GalleryMode, type PieceVM } from "./context";
 import { CloseIcon, HeartIcon, Hov, OkfImage, PageHeader } from "./ui";
 
@@ -53,25 +53,50 @@ function ModeTabs() {
 }
 
 function GalleryFilterBar() {
-  const { favoriteOnly, setFavoriteOnly, artist, setArtist } = useFolio();
+  const { query, favoriteOnly, setFavoriteOnly, artist, setArtist } = useFolio();
   const [draft, setDraft] = useState("");
   const [open, setOpen] = useState(false);
+  const trimmedQuery = query.trim();
+  const useScopedSuggestions = favoriteOnly || !!trimmedQuery;
   const artistsQuery = useQuery({
     queryKey: ["folio-artists"],
     queryFn: () => fetchArtists(500, 0, "count"),
+    enabled: !useScopedSuggestions,
+  });
+  const scopedArtistsQuery = useQuery({
+    queryKey: ["folio-artist-facets", trimmedQuery, favoriteOnly],
+    queryFn: () => {
+      const filters: Parameters<typeof fetchGalleryCatalog>[2] = {};
+      if (trimmedQuery) filters.query = trimmedQuery;
+      if (favoriteOnly) filters.favorite = true;
+      return fetchGalleryCatalog(1, 0, filters);
+    },
+    enabled: useScopedSuggestions,
   });
   const normalized = draft.trim().toLowerCase();
   const suggestions = useMemo(() => {
-    const artists = artistsQuery.data?.artists ?? [];
+    const artists = useScopedSuggestions
+      ? (scopedArtistsQuery.data?.facets.artists ?? []).map((item) => ({
+          artist: item.display_name,
+          photo_count: item.count,
+        }))
+      : (artistsQuery.data?.artists ?? []);
     return artists
       .filter((item) => !normalized || item.artist.toLowerCase().includes(normalized))
       .slice(0, 8);
-  }, [artistsQuery.data?.artists, normalized]);
+  }, [artistsQuery.data?.artists, normalized, scopedArtistsQuery.data?.facets.artists, useScopedSuggestions]);
 
   const chooseArtist = (name: string) => {
-    setArtist(name);
+    const next = name.trim();
+    if (!next) return;
+    setArtist(next);
     setDraft("");
     setOpen(false);
+  };
+  const submitArtist = () => {
+    const exact = suggestions.find((item) => item.artist.toLowerCase() === normalized);
+    const fallback = suggestions[0]?.artist ?? draft.trim();
+    chooseArtist(exact?.artist ?? fallback);
   };
 
   const showSuggestions = open && suggestions.length > 0;
@@ -124,9 +149,9 @@ function GalleryFilterBar() {
           onFocus={() => setOpen(true)}
           onBlur={() => window.setTimeout(() => setOpen(false), 120)}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && suggestions[0]) {
+            if (e.key === "Enter" && (draft.trim() || suggestions[0])) {
               e.preventDefault();
-              chooseArtist(suggestions[0].artist);
+              submitArtist();
             }
             if (e.key === "Escape") setOpen(false);
           }}
