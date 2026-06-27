@@ -257,6 +257,25 @@ func TestConnectorSourceSettingsCRUD(t *testing.T) {
 	}
 }
 
+func TestConnectorSourceSettingsCreateDisabled(t *testing.T) {
+	server, _ := setupTestServer(t)
+	defer safeShutdown(server)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/connector-sources", bytes.NewBufferString(`{"type":"telegram","chat_id":"-1001234567890","label":"Paused channel","enabled":false}`))
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create status=%d body=%q", w.Code, w.Body.String())
+	}
+	var created database.ConnectorSource
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode created connector source: %v", err)
+	}
+	if created.Enabled {
+		t.Fatalf("expected disabled connector source create to remain disabled: %#v", created)
+	}
+}
+
 func TestConnectorSourceSettingsRejectInvalidTelegramChatID(t *testing.T) {
 	server, _ := setupTestServer(t)
 	defer safeShutdown(server)
@@ -266,6 +285,25 @@ func TestConnectorSourceSettingsRejectInvalidTelegramChatID(t *testing.T) {
 	server.router.ServeHTTP(w, req)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected invalid chat ID to return 400, got %d body=%q", w.Code, w.Body.String())
+	}
+}
+
+func TestConnectorSourceSettingsAllowForwardedTelegramSourceWithoutChatAccess(t *testing.T) {
+	telegramAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("settings validation should not call Telegram getChat for forwarded source IDs")
+	}))
+	defer telegramAPI.Close()
+
+	server, _ := setupTestServer(t)
+	defer safeShutdown(server)
+	server.cfg.Telegram.BotToken = "test-token"
+	server.cfg.Telegram.BaseURL = telegramAPI.URL
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/connector-sources", bytes.NewBufferString(`{"type":"telegram","chat_id":"-1001234567890","label":"Forwarded channel"}`))
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected forwarded source create to succeed without getChat access, got %d body=%q", w.Code, w.Body.String())
 	}
 }
 

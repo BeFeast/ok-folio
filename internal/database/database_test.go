@@ -727,6 +727,18 @@ func TestConnectorSourcesCRUDAndScopes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateConnectorSource second failed: %v", err)
 	}
+	disabled, err := db.CreateConnectorSource(ConnectorSource{
+		Type:    "telegram",
+		ChatID:  "-100789",
+		Label:   "Disabled",
+		Enabled: false,
+	})
+	if err != nil {
+		t.Fatalf("CreateConnectorSource disabled failed: %v", err)
+	}
+	if disabled.Enabled {
+		t.Fatalf("expected disabled create to persist disabled: %#v", disabled)
+	}
 
 	scopes, managed, err = db.ConnectorSourceScopes("telegram")
 	if err != nil {
@@ -757,6 +769,9 @@ func TestConnectorSourcesCRUDAndScopes(t *testing.T) {
 	}
 	if err := db.DeleteConnectorSource(second.ID); err != nil {
 		t.Fatalf("DeleteConnectorSource second failed: %v", err)
+	}
+	if err := db.DeleteConnectorSource(disabled.ID); err != nil {
+		t.Fatalf("DeleteConnectorSource disabled failed: %v", err)
 	}
 	scopes, managed, err = db.ConnectorSourceScopes("telegram")
 	if err != nil {

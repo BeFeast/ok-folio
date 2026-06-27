@@ -1,15 +1,12 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
-	"time"
 
 	"ok-folio/internal/database"
 	"ok-folio/internal/provider/telegram"
@@ -43,7 +40,7 @@ func (s *Server) handleCreateConnectorSource(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	if err := s.validateConnectorSource(r.Context(), input); err != nil {
+	if err := s.validateConnectorSource(input); err != nil {
 		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -75,7 +72,7 @@ func (s *Server) handleUpdateConnectorSource(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	if err := s.validateConnectorSource(r.Context(), input); err != nil {
+	if err := s.validateConnectorSource(input); err != nil {
 		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -130,7 +127,7 @@ func (s *Server) readConnectorSourceRequest(w http.ResponseWriter, r *http.Reque
 	return input, true
 }
 
-func (s *Server) validateConnectorSource(ctx context.Context, input connectorSourceRequest) error {
+func (s *Server) validateConnectorSource(input connectorSourceRequest) error {
 	if input.Type != telegram.ProviderID {
 		return fmt.Errorf("only Telegram connector sources are supported")
 	}
@@ -139,46 +136,6 @@ func (s *Server) validateConnectorSource(ctx context.Context, input connectorSou
 	}
 	if _, err := strconv.ParseInt(input.ChatID, 10, 64); err != nil {
 		return fmt.Errorf("Telegram chat ID must be a numeric ID")
-	}
-	return s.validateTelegramChatReadable(ctx, input.ChatID)
-}
-
-func (s *Server) validateTelegramChatReadable(ctx context.Context, chatID string) error {
-	if strings.TrimSpace(s.cfg.Telegram.BotToken) == "" {
-		return nil
-	}
-	baseURL := strings.TrimRight(s.cfg.Telegram.BaseURL, "/")
-	if baseURL == "" {
-		baseURL = "https://api.telegram.org"
-	}
-	endpoint := fmt.Sprintf("%s/bot%s/getChat", baseURL, url.PathEscape(s.cfg.Telegram.BotToken))
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return fmt.Errorf("failed to validate Telegram chat")
-	}
-	q := req.URL.Query()
-	q.Set("chat_id", chatID)
-	req.URL.RawQuery = q.Encode()
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("Telegram chat validation failed")
-	}
-	defer resp.Body.Close()
-
-	var payload struct {
-		OK          bool   `json:"ok"`
-		Description string `json:"description"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return fmt.Errorf("Telegram chat validation returned an unreadable response")
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 || !payload.OK {
-		if payload.Description == "" {
-			return fmt.Errorf("Telegram bot cannot read chat %s", chatID)
-		}
-		return fmt.Errorf("Telegram bot cannot read chat %s: %s", chatID, payload.Description)
 	}
 	return nil
 }

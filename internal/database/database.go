@@ -147,7 +147,7 @@ type ConnectorSource struct {
 	Type       string     `gorm:"column:type;type:text;not null;index;uniqueIndex:idx_connector_sources_type_chat_id" json:"type"`
 	ChatID     string     `gorm:"column:chat_id;type:text;not null;uniqueIndex:idx_connector_sources_type_chat_id" json:"chat_id"`
 	Label      string     `gorm:"column:label;type:text" json:"label"`
-	Enabled    bool       `gorm:"column:enabled;not null;default:true;index" json:"enabled"`
+	Enabled    bool       `gorm:"column:enabled;not null;index" json:"enabled"`
 	LastError  string     `gorm:"column:last_error;type:text" json:"last_error,omitempty"`
 	LastSeenAt *time.Time `gorm:"column:last_seen_at" json:"last_seen_at,omitempty"`
 	CreatedAt  time.Time  `gorm:"autoCreateTime" json:"created_at"`
