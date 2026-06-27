@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/disintegration/imaging"
@@ -27,11 +28,19 @@ const (
 	MinThumbnailSize     = 64
 	MaxThumbnailSize     = 1024
 	ThumbnailQuality     = 82
+
+	defaultPruneDebounce = 5 * time.Second
 )
 
+var pruneDebounce = defaultPruneDebounce
+
 type Cache struct {
-	dir      string
-	maxBytes int64
+	dir            string
+	maxBytes       int64
+	pruneMu        sync.Mutex
+	pruneTimer     *time.Timer
+	pruneRunning   bool
+	pruneRequested bool
 }
 
 type Entry struct {
@@ -117,11 +126,20 @@ func (c *Cache) Read(entry Entry) ([]byte, bool) {
 	return data, true
 }
 
+func (c *Cache) Touch(entry Entry) {
+	if c == nil {
+		return
+	}
+	now := time.Now()
+	_ = os.Chtimes(entry.Path, now, now)
+}
+
 func (c *Cache) Write(entry Entry, data []byte) error {
 	if err := c.write(entry, data); err != nil {
 		return err
 	}
-	return c.Prune()
+	c.SchedulePrune()
+	return nil
 }
 
 func (c *Cache) write(entry Entry, data []byte) error {
@@ -151,6 +169,39 @@ func (c *Cache) write(entry Entry, data []byte) error {
 		return err
 	}
 	return nil
+}
+
+func (c *Cache) SchedulePrune() {
+	if c == nil || c.maxBytes <= 0 {
+		return
+	}
+
+	c.pruneMu.Lock()
+	defer c.pruneMu.Unlock()
+	if c.pruneRunning {
+		c.pruneRequested = true
+		return
+	}
+	if c.pruneTimer == nil {
+		c.pruneTimer = time.AfterFunc(pruneDebounce, c.runScheduledPrune)
+	}
+}
+
+func (c *Cache) runScheduledPrune() {
+	c.pruneMu.Lock()
+	c.pruneTimer = nil
+	c.pruneRunning = true
+	c.pruneMu.Unlock()
+
+	_ = c.Prune()
+
+	c.pruneMu.Lock()
+	c.pruneRunning = false
+	if c.pruneRequested {
+		c.pruneRequested = false
+		c.pruneTimer = time.AfterFunc(pruneDebounce, c.runScheduledPrune)
+	}
+	c.pruneMu.Unlock()
 }
 
 func (c *Cache) Prune() error {
@@ -200,6 +251,36 @@ func (c *Cache) Prune() error {
 		}
 	}
 	return nil
+}
+
+func (c *Cache) SweepTempFiles(maxAge time.Duration) error {
+	if c == nil {
+		return nil
+	}
+	cutoff := time.Now().Add(-maxAge)
+	err := filepath.WalkDir(c.dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() || !strings.HasPrefix(d.Name(), ".thumb-") || !strings.HasSuffix(d.Name(), ".tmp") {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return nil
+		}
+		if maxAge > 0 && info.ModTime().After(cutoff) {
+			return nil
+		}
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	})
+	if os.IsNotExist(err) {
+		return nil
+	}
+	return err
 }
 
 func (c *Cache) IsCacheFile(path string) bool {

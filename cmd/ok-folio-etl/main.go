@@ -5,8 +5,10 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"ok-folio/internal/config"
 	"ok-folio/internal/database"
@@ -131,7 +133,7 @@ func warmThumbnails(args []string) {
 	fs := flag.NewFlagSet("warm-thumbnails", flag.ExitOnError)
 	configPath := fs.String("config", "/config/config.yaml", "Path to OK Folio configuration")
 	widthsFlag := fs.String("widths", "400,700", "Comma-separated thumbnail widths to generate")
-	concurrency := fs.Int("concurrency", 2, "Maximum concurrent thumbnail generators")
+	concurrency := fs.Int("concurrency", 2, fmt.Sprintf("Maximum concurrent thumbnail generators (clamped to %d)", derivatives.MaxWarmConcurrency))
 	batchSize := fs.Int("batch-size", 500, "Catalog rows fetched per database batch")
 	limit := fs.Int("limit", 0, "Maximum catalog rows to scan; 0 scans all downloaded rows")
 	progress := fs.Int("progress", 100, "Log progress every N scanned rows")
@@ -151,7 +153,9 @@ func warmThumbnails(args []string) {
 		exitErr(err)
 	}
 	logger := zerolog.New(os.Stdout).With().Timestamp().Logger()
-	result, err := derivatives.WarmThumbnails(context.Background(), db, cfg.Storage, derivatives.WarmOptions{
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	result, err := derivatives.WarmThumbnails(ctx, db, cfg.Storage, derivatives.WarmOptions{
 		Widths:      widths,
 		Concurrency: *concurrency,
 		BatchSize:   *batchSize,

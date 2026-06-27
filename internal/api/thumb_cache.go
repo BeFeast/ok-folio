@@ -15,6 +15,7 @@ func (s *Server) serveThumbnailFromCache(w http.ResponseWriter, r *http.Request,
 		return false
 	}
 	if data, ok := s.cache.GetBytes(r.Context(), entry.Key); ok {
+		s.thumbCache.Touch(entry)
 		w.Header().Set("X-OK-Folio-Thumbnail-Cache", "valkey-hit")
 		_, _ = w.Write(data)
 		return true

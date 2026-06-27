@@ -49,15 +49,13 @@ func (s *Server) handleImageThumbnail(w http.ResponseWriter, r *http.Request) {
 
 	size := thumbnailSize(r)
 
-	// The validator is the content-hash ETag (shared with the full image).
-	// Each requested size is a distinct URL (?w=), so HTTP caches key on the
-	// URL and never serve one size's bytes for another.
-	etag, err := derivatives.Validator(photo, filePath)
+	baseETag, err := derivatives.Validator(photo, filePath)
 	if err != nil {
 		s.logger.Error().Err(err).Str("file_path", photo.FilePath).Msg("Failed to build image validator")
 		s.writeError(w, http.StatusNotFound, "Image file not found")
 		return
 	}
+	etag := thumbnailETag(baseETag, size)
 	w.Header().Set("Cache-Control", immutableImageCacheControl)
 	w.Header().Set("ETag", etag)
 	w.Header().Set("Content-Type", "image/jpeg")
@@ -72,7 +70,7 @@ func (s *Server) handleImageThumbnail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entry := s.thumbCache.Entry(photo, size, etag)
+	entry := s.thumbCache.Entry(photo, size, baseETag)
 	if s.serveThumbnailFromCache(w, r, entry) {
 		return
 	}
@@ -155,6 +153,10 @@ func (s *Server) handleImageFull(w http.ResponseWriter, r *http.Request) {
 
 func quoteETag(value string) string {
 	return derivatives.QuoteETag(value)
+}
+
+func thumbnailETag(baseETag string, width int) string {
+	return quoteETag(fmt.Sprintf("thumb-w%d-%s", width, strings.Trim(baseETag, `"`)))
 }
 
 // thumbnailSize returns the requested thumbnail bounding size (longest side),
