@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -24,6 +25,11 @@ const (
 	defaultFileBaseURL    = "https://api.telegram.org/file"
 	defaultLimit          = 100
 	defaultRateLimitDelay = 60 * time.Second
+)
+
+var (
+	captionArtistPattern = regexp.MustCompile(`(?i)^.+?\s*\((?:[^)]*,\s*)?\d{4}\s*[-–—]\s*\d{4}\)`)
+	captionYearPattern   = regexp.MustCompile(`\s+(\d{4})\s*г\.?\s*$`)
 )
 
 type Config struct {
@@ -218,13 +224,14 @@ func discoveredMedia(message Message) (provider.DiscoveredMedia, bool) {
 	if source.MessageID > 0 {
 		itemID = strconv.Itoa(source.MessageID)
 	}
-	title := message.Caption
+	parsedCaption := parseArtworkCaption(message.Caption)
+	title := parsedCaption.Title
 	if title == "" {
 		title = ref.FileName
 	}
-	artist := collectionName
-	if source.Author != "" {
-		artist = source.Author
+	sourceURL := source.URL
+	if sourceURL == "" {
+		sourceURL = ProviderID
 	}
 
 	return provider.DiscoveredMedia{
@@ -234,7 +241,7 @@ func discoveredMedia(message Message) (provider.DiscoveredMedia, bool) {
 			Value:      telegramDedupeValue(externalID, ref),
 		},
 		Source: provider.SourceMetadata{
-			URL:            source.URL,
+			URL:            sourceURL,
 			ExternalID:     externalID,
 			CollectionID:   collectionID,
 			CollectionName: collectionName,
@@ -246,9 +253,129 @@ func discoveredMedia(message Message) (provider.DiscoveredMedia, bool) {
 			ExternalID: ref.FileID,
 		},
 		Title:       title,
-		Artist:      artist,
-		PublishedAt: time.Unix(message.Date, 0).UTC(),
+		Artist:      parsedCaption.Artist,
+		PublishedAt: parsedCaption.Date,
 	}, true
+}
+
+type parsedArtworkCaption struct {
+	Title  string
+	Artist string
+	Date   time.Time
+	Medium string
+}
+
+func parseArtworkCaption(caption string) parsedArtworkCaption {
+	lines := captionLines(caption)
+	if len(lines) == 0 {
+		return parsedArtworkCaption{}
+	}
+
+	artistIndex := -1
+	mediumIndex := -1
+	parsed := parsedArtworkCaption{}
+	for idx, line := range lines {
+		if parsed.Artist == "" && captionArtistPattern.MatchString(line) {
+			parsed.Artist = line
+			artistIndex = idx
+			continue
+		}
+		if parsed.Medium == "" && isMediumLine(line) {
+			parsed.Medium = line
+			mediumIndex = idx
+		}
+	}
+
+	for idx, line := range lines {
+		if idx == artistIndex || idx == mediumIndex {
+			continue
+		}
+		parsed.Title, parsed.Date = parseTitleAndDate(line)
+		if parsed.Title != "" {
+			return parsed
+		}
+	}
+
+	parsed.Title = lines[0]
+	return parsed
+}
+
+func captionLines(caption string) []string {
+	rawLines := strings.Split(caption, "\n")
+	lines := make([]string, 0, len(rawLines))
+	for _, line := range rawLines {
+		line = strings.TrimSpace(line)
+		if line == "" || isJunkCaptionLine(line) {
+			continue
+		}
+		lines = append(lines, line)
+	}
+	return lines
+}
+
+func isJunkCaptionLine(line string) bool {
+	normalized := strings.ToLower(line)
+	return strings.Contains(line, "🔞") ||
+		strings.Contains(normalized, "секретный контент") ||
+		strings.Contains(normalized, "secret content")
+}
+
+func isMediumLine(line string) bool {
+	normalized := strings.ToLower(line)
+	if captionYearPattern.MatchString(normalized) {
+		return false
+	}
+
+	keywords := map[string]struct{}{
+		"холст": {}, "масло": {}, "бумага": {}, "акварель": {}, "картон": {}, "темпера": {},
+		"гуашь": {}, "пастель": {}, "карандаш": {}, "тушь": {}, "уголь": {}, "сангина": {},
+		"дерево": {}, "медь": {}, "бронза": {}, "мрамор": {}, "canvas": {}, "oil": {},
+		"paper": {}, "watercolor": {}, "gouache": {}, "tempera": {}, "pastel": {},
+		"pencil": {}, "ink": {}, "charcoal": {}, "board": {},
+	}
+	connectors := map[string]struct{}{
+		"на": {}, "по": {}, "и": {}, "с": {}, "on": {}, "and": {},
+	}
+
+	materialCount := 0
+	tokens := strings.FieldsFunc(normalized, func(r rune) bool {
+		return r == ',' || r == ';' || r == '/' || r == '\\' || r == '+' || r == '&' || r == '.' || r == ':' || r == '(' || r == ')' || r == '\t' || r == ' '
+	})
+	for _, token := range tokens {
+		token = strings.TrimSpace(token)
+		if token == "" {
+			continue
+		}
+		if _, ok := keywords[token]; ok {
+			materialCount++
+			continue
+		}
+		if _, ok := connectors[token]; ok {
+			continue
+		}
+		return false
+	}
+	if materialCount == 0 {
+		return false
+	}
+	if strings.ContainsAny(line, ",;/\\+&") || materialCount > 1 {
+		return true
+	}
+	return line == normalized
+}
+
+func parseTitleAndDate(line string) (string, time.Time) {
+	title := line
+	var date time.Time
+	if match := captionYearPattern.FindStringSubmatch(line); len(match) == 2 {
+		if year, err := strconv.Atoi(match[1]); err == nil {
+			date = time.Date(year, 1, 1, 0, 0, 0, 0, time.UTC)
+		}
+		title = captionYearPattern.ReplaceAllString(line, "")
+	}
+	title = strings.TrimSpace(title)
+	title = strings.Trim(title, `"'“”«»`)
+	return title, date
 }
 
 func fallbackExternalID(message Message) string {

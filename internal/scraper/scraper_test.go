@@ -81,6 +81,18 @@ func TestScrapePageAutoKeepsNewMediaByStableDedupeKey(t *testing.T) {
 	}
 }
 
+func TestPublishedAtPtrLeavesZeroDateEmpty(t *testing.T) {
+	if got := publishedAtPtr(time.Time{}); got != nil {
+		t.Fatalf("expected zero published date to map to nil, got %s", got)
+	}
+
+	publishedAt := time.Date(1933, 1, 1, 0, 0, 0, 0, time.UTC)
+	got := publishedAtPtr(publishedAt)
+	if got == nil || !got.Equal(publishedAt) {
+		t.Fatalf("expected non-zero published date to be preserved, got %v", got)
+	}
+}
+
 func TestScrapePageRecordsDuplicateAndAmbiguousInboxExceptions(t *testing.T) {
 	db := setupScraperTestDB(t)
 	cfg := setupScraperTestConfig(t)
