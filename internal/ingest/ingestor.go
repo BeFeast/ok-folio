@@ -117,11 +117,8 @@ func (i *Ingestor) ingestPages(ctx context.Context, connector provider.Connector
 				result.ErrorMessage = safeErrorMessage(handledErr)
 				return result, handledErr
 			}
-			if isRetryableProviderError(err) {
-				result.ErrorMessage = safeErrorMessage(err)
-				return result, err
-			}
-			return result, nil
+			result.ErrorMessage = safeErrorMessage(err)
+			return result, err
 		}
 		if page == nil {
 			return result, nil
@@ -177,6 +174,10 @@ func (i *Ingestor) ingestPages(ctx context.Context, connector provider.Connector
 				if handledErr != nil {
 					result.ErrorMessage = handledErr.Error()
 					return result, handledErr
+				}
+				if isRetryableProviderError(err) {
+					result.ErrorMessage = safeErrorMessage(err)
+					return result, err
 				}
 				continue
 			}

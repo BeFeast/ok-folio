@@ -256,10 +256,11 @@ func TestRunConnectorProviderErrorRouting(t *testing.T) {
 		kind        provider.ErrorKind
 		wantFailed  int
 		wantHalted  bool
+		wantErr     bool
 		wantBackoff time.Duration
 	}{
-		{name: "temporary", kind: provider.ErrorKindTemporary, wantBackoff: 25 * time.Millisecond},
-		{name: "rate_limit", kind: provider.ErrorKindRateLimit, wantBackoff: 25 * time.Millisecond},
+		{name: "temporary", kind: provider.ErrorKindTemporary, wantErr: true, wantBackoff: 25 * time.Millisecond},
+		{name: "rate_limit", kind: provider.ErrorKindRateLimit, wantErr: true, wantBackoff: 25 * time.Millisecond},
 		{name: "not_found", kind: provider.ErrorKindNotFound, wantFailed: 1},
 		{name: "parse", kind: provider.ErrorKindParse, wantFailed: 1},
 		{name: "missing_media", kind: provider.ErrorKindMissingMedia, wantFailed: 1},
@@ -286,8 +287,11 @@ func TestRunConnectorProviderErrorRouting(t *testing.T) {
 			}
 
 			result, err := ing.RunConnector(context.Background(), connector)
-			if err != nil {
+			if err != nil && !tt.wantErr {
 				t.Fatalf("RunConnector failed: %v", err)
+			}
+			if err == nil && tt.wantErr {
+				t.Fatal("expected RunConnector to fail after bounded item retry")
 			}
 			if result.PhotosFailed != tt.wantFailed || result.Halted != tt.wantHalted {
 				t.Fatalf("unexpected result: %#v", result)
@@ -299,6 +303,15 @@ func TestRunConnectorProviderErrorRouting(t *testing.T) {
 				var failed database.DownloadedPhoto
 				if err := db.Where("url = ? AND status = ?", item.DedupeKey.String(), "failed").First(&failed).Error; err != nil {
 					t.Fatalf("expected failed download record: %v", err)
+				}
+			}
+			if tt.wantErr {
+				state, err := db.LoadConnectorState("fixture")
+				if err != nil {
+					t.Fatalf("load connector state: %v", err)
+				}
+				if state == nil || state.Cursor != "" || state.LastStatus != "failed" {
+					t.Fatalf("expected failed connector state without cursor advance, got %#v", state)
 				}
 			}
 			if tt.wantHalted {
@@ -332,7 +345,7 @@ func TestRunConnectorDiscoveryProviderErrorRouting(t *testing.T) {
 	}{
 		{name: "temporary", kind: provider.ErrorKindTemporary, wantErr: true, wantBackoff: 25 * time.Millisecond},
 		{name: "rate_limit", kind: provider.ErrorKindRateLimit, wantErr: true, wantBackoff: 25 * time.Millisecond},
-		{name: "parse", kind: provider.ErrorKindParse, wantFailed: 1},
+		{name: "parse", kind: provider.ErrorKindParse, wantErr: true, wantFailed: 1},
 		{name: "permission", kind: provider.ErrorKindPermission, wantHalted: true},
 	}
 
@@ -389,6 +402,96 @@ func TestRunConnectorDiscoveryProviderErrorRouting(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestRunConnectorDoesNotAdvanceCursorPastRetryableItemFailure(t *testing.T) {
+	ctx := context.Background()
+	connector := &fakeConnector{
+		pages: map[string]*provider.PageResult{
+			"100": {
+				Items: []provider.DiscoveredMedia{fakeItem("retry", "https://fixture.test/retry.jpg")},
+				Pagination: provider.Pagination{
+					NextCursor: "101",
+					HasNext:    true,
+				},
+			},
+		},
+		resolveErr: &provider.ProviderError{
+			ProviderID: "fixture",
+			Kind:       provider.ErrorKindTemporary,
+			RetryAfter: time.Millisecond,
+			Err:        errors.New("temporary media failure"),
+		},
+	}
+	db, _, ing := setupIngestorTest(t, connector)
+	if err := db.SaveConnectorState(database.ConnectorState{ProviderID: "fixture", Cursor: "100", LastStatus: "completed"}); err != nil {
+		t.Fatalf("seed connector state: %v", err)
+	}
+	ing.backoff = func(_ context.Context, _ time.Duration) error { return nil }
+
+	result, err := ing.RunConnector(ctx, connector)
+	if err == nil {
+		t.Fatal("expected retryable item failure to fail the run")
+	}
+	if result.Cursor != "100" {
+		t.Fatalf("expected result cursor to remain at retry point 100, got %#v", result)
+	}
+
+	state, err := db.LoadConnectorState("fixture")
+	if err != nil {
+		t.Fatalf("load connector state: %v", err)
+	}
+	if state == nil || state.Cursor != "100" || state.LastStatus != "failed" {
+		t.Fatalf("expected failed state without advancing to 101, got %#v", state)
+	}
+}
+
+func TestRunConnectorDiscoveryErrorAfterPageKeepsRetryCursorFailed(t *testing.T) {
+	ctx := context.Background()
+	body := []byte("fixture image bytes")
+	imageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(body)
+	}))
+	defer imageServer.Close()
+
+	connector := &fakeConnector{
+		pages: map[string]*provider.PageResult{
+			"": {
+				Items: []provider.DiscoveredMedia{fakeItem("one", imageServer.URL+"/one.jpg")},
+				Pagination: provider.Pagination{
+					NextCursor: "2",
+					HasNext:    true,
+				},
+			},
+		},
+		discoverErrByCursor: map[string]error{
+			"2": &provider.ProviderError{
+				ProviderID: "fixture",
+				Kind:       provider.ErrorKindParse,
+				Err:        errors.New("parse next page"),
+			},
+		},
+	}
+	db, _, ing := setupIngestorTest(t, connector)
+
+	result, err := ing.RunConnector(ctx, connector)
+	if err == nil {
+		t.Fatal("expected discovery parse error to fail the run")
+	}
+	if result.Cursor != "2" {
+		t.Fatalf("expected retry cursor 2, got %#v", result)
+	}
+
+	state, err := db.LoadConnectorState("fixture")
+	if err != nil {
+		t.Fatalf("load connector state: %v", err)
+	}
+	if state == nil || state.Cursor != "2" || state.LastStatus != "failed" {
+		t.Fatalf("expected failed state at retry cursor 2, got %#v", state)
+	}
+	if !reflect.DeepEqual(connector.requests, []provider.PageRequest{{Page: 1}, {Page: 2, Cursor: "2"}}) {
+		t.Fatalf("unexpected page requests: %#v", connector.requests)
 	}
 }
 
@@ -496,13 +599,14 @@ func fakeItem(id string, mediaURL string) provider.DiscoveredMedia {
 }
 
 type fakeConnector struct {
-	providerID  string
-	pages       map[string]*provider.PageResult
-	pagesByPage map[int]*provider.PageResult
-	discoverErr error
-	resolveErr  error
-	requests    []provider.PageRequest
-	resolved    []string
+	providerID          string
+	pages               map[string]*provider.PageResult
+	pagesByPage         map[int]*provider.PageResult
+	discoverErrByCursor map[string]error
+	discoverErr         error
+	resolveErr          error
+	requests            []provider.PageRequest
+	resolved            []string
 }
 
 func (c *fakeConnector) Provider() provider.Source {
@@ -517,6 +621,9 @@ func (c *fakeConnector) DiscoverPage(_ context.Context, req provider.PageRequest
 	c.requests = append(c.requests, req)
 	if c.discoverErr != nil {
 		return nil, c.discoverErr
+	}
+	if c.discoverErrByCursor != nil && c.discoverErrByCursor[req.Cursor] != nil {
+		return nil, c.discoverErrByCursor[req.Cursor]
 	}
 	if c.pagesByPage != nil {
 		page := c.pagesByPage[req.Page]
