@@ -993,6 +993,20 @@ func TestGalleryCatalogCacheUsesEpochInvalidation(t *testing.T) {
 	if favoriteCount(first.Facets.Favorites, true) != 0 {
 		t.Fatalf("Expected initial favorites count 0, got %#v", first.Facets.Favorites)
 	}
+	oldKey, err := okfcache.CatalogKey(0, cacheGalleryCatalogFilters{}, 50, 0)
+	if err != nil {
+		t.Fatalf("Failed to build legacy catalog cache key: %v", err)
+	}
+	newKey, err := okfcache.CatalogKey(0, galleryCatalogCacheShape(cacheGalleryCatalogFilters{}), 50, 0)
+	if err != nil {
+		t.Fatalf("Failed to build versioned catalog cache key: %v", err)
+	}
+	if mr.Exists(oldKey) {
+		t.Fatalf("Expected catalog response not to use legacy unversioned cache key %q", oldKey)
+	}
+	if !mr.Exists(newKey) {
+		t.Fatalf("Expected catalog response to use versioned cache key %q", newKey)
+	}
 
 	favoriteURL := "/api/v1/photos/" + strconv.Itoa(int(photo.ID)) + "/favorite"
 	req = httptest.NewRequest(http.MethodPost, favoriteURL, nil)

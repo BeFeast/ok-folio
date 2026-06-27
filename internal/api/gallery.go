@@ -77,12 +77,14 @@ type cacheGalleryCatalogFilters struct {
 }
 
 type cacheGalleryCatalogETagShape struct {
+	Version int                        `json:"version"`
 	Filters cacheGalleryCatalogFilters `json:"filters"`
 	Limit   int                        `json:"limit"`
 	Offset  int                        `json:"offset"`
 }
 
 const catalogCacheControl = "private, no-cache, stale-while-revalidate=120"
+const catalogCacheVersion = 2
 
 func (s *Server) handleGalleryCatalog(w http.ResponseWriter, r *http.Request) {
 	limit, offset := s.parsePagination(r)
@@ -100,7 +102,7 @@ func (s *Server) handleGalleryCatalog(w http.ResponseWriter, r *http.Request) {
 
 	epoch := s.cache.Epoch(r.Context())
 	canUseConditionalResponse := !s.cache.Passthrough()
-	key, err := okfcache.CatalogKey(epoch, cacheFilters, limit, offset)
+	key, err := okfcache.CatalogKey(epoch, galleryCatalogCacheShape(cacheFilters), limit, offset)
 	if err != nil {
 		s.logger.Error().Err(err).Msg("Failed to build gallery cache key")
 		s.writeError(w, http.StatusInternalServerError, "Failed to fetch gallery catalog")
@@ -134,6 +136,7 @@ func (s *Server) handleGalleryCatalog(w http.ResponseWriter, r *http.Request) {
 
 func galleryCatalogETag(epoch int64, filters cacheGalleryCatalogFilters, limit int, offset int) (string, error) {
 	hash, err := okfcache.FilterHash(cacheGalleryCatalogETagShape{
+		Version: catalogCacheVersion,
 		Filters: filters,
 		Limit:   limit,
 		Offset:  offset,
@@ -142,6 +145,16 @@ func galleryCatalogETag(epoch int64, filters cacheGalleryCatalogFilters, limit i
 		return "", err
 	}
 	return quoteETag(fmt.Sprintf("catalog-e%d-%s", epoch, hash)), nil
+}
+
+func galleryCatalogCacheShape(filters cacheGalleryCatalogFilters) any {
+	return struct {
+		Version int                        `json:"version"`
+		Filters cacheGalleryCatalogFilters `json:"filters"`
+	}{
+		Version: catalogCacheVersion,
+		Filters: filters,
+	}
 }
 
 func (s *Server) galleryCatalogResponse(_ context.Context, limit int, offset int, filters database.GalleryCatalogFilters) (galleryCatalogResponse, error) {
