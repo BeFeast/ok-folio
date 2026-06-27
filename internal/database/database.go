@@ -636,7 +636,13 @@ func (db *DB) updateNonDownloadedURLHashOwner(photo *DownloadedPhoto) (bool, err
 	result := db.Model(&DownloadedPhoto{}).
 		Where("url_hash = ? AND status <> ?", HashURL(photo.URL), "downloaded").
 		Updates(downloadAssignments(photo))
-	return result.RowsAffected > 0, result.Error
+	if result.Error != nil || result.RowsAffected == 0 {
+		return false, result.Error
+	}
+	if err := db.Where("url_hash = ?", HashURL(photo.URL)).First(photo).Error; err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (db *DB) routeDuplicateToInbox(duplicate *InboxItem) (bool, error) {

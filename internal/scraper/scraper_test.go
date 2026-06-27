@@ -2,6 +2,9 @@ package scraper
 
 import (
 	"context"
+	"image"
+	"image/color"
+	"image/jpeg"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,6 +15,7 @@ import (
 
 	"ok-folio/internal/config"
 	"ok-folio/internal/database"
+	"ok-folio/internal/derivatives"
 	"ok-folio/internal/provider"
 	"ok-folio/internal/testguard"
 
@@ -239,6 +243,132 @@ func TestScrapePageRecognizesLegacyWebGallerySourceURLAsDuplicate(t *testing.T) 
 	}
 }
 
+func TestDownloadResolvedMediaWarmsThumbnailsOnIngest(t *testing.T) {
+	imageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "image/jpeg")
+		writeScraperTestJPEG(t, w)
+	}))
+	defer imageServer.Close()
+
+	db := setupScraperTestDB(t)
+	cfg := setupScraperTestConfig(t)
+	cfg.Storage.DerivativesDirectory = filepath.Join(t.TempDir(), "derivatives")
+	cfg.Storage.DerivativesMaxBytes = 50 * 1024 * 1024
+	cfg.Storage.WarmOnIngest = true
+	cfg.Storage.WarmOnIngestWidths = []int{400, 700}
+	s := NewWithProvider(cfg, db, zerolog.New(os.Stderr).Level(zerolog.Disabled), &fakeConnector{})
+	s.thumbHotCache = nil
+
+	publishedAt := time.Date(2026, 6, 27, 12, 0, 0, 0, time.UTC)
+	photo, kept, err := s.DownloadResolvedMediaOrDuplicate(context.Background(), provider.DiscoveredMedia{
+		ProviderID:  "fixture",
+		DedupeKey:   provider.DedupeKey{ProviderID: "fixture", Value: "source-1:media-1"},
+		Source:      provider.SourceMetadata{URL: "https://fixture.test/source/1", ExternalID: "source-1"},
+		Media:       provider.MediaMetadata{URL: imageServer.URL + "/media-1.jpg", ExternalID: "media-1", FileName: "media-1.jpg"},
+		Title:       "Warm Fixture",
+		Artist:      "Fixture Artist",
+		PublishedAt: publishedAt,
+	}, "fixture")
+	if err != nil {
+		t.Fatalf("DownloadResolvedMediaOrDuplicate failed: %v", err)
+	}
+	if !kept {
+		t.Fatal("expected new media to be kept")
+	}
+
+	cache := derivatives.NewCache(cfg.Storage)
+	validator, err := derivatives.Validator(photo, photo.FilePath)
+	if err != nil {
+		t.Fatalf("Validator failed: %v", err)
+	}
+	for _, width := range []int{400, 700} {
+		entry := cache.Entry(photo, width, validator)
+		waitForFile(t, entry.Path)
+	}
+}
+
+func TestDownloadResolvedMediaWarmsRecoveredFailedRowWithPersistedID(t *testing.T) {
+	imageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "image/jpeg")
+		writeScraperTestJPEG(t, w)
+	}))
+	defer imageServer.Close()
+
+	db := setupScraperTestDB(t)
+	cfg := setupScraperTestConfig(t)
+	cfg.Storage.DerivativesDirectory = filepath.Join(t.TempDir(), "derivatives")
+	cfg.Storage.DerivativesMaxBytes = 50 * 1024 * 1024
+	cfg.Storage.WarmOnIngest = true
+	cfg.Storage.WarmOnIngestWidths = []int{400}
+	s := NewWithProvider(cfg, db, zerolog.New(os.Stderr).Level(zerolog.Disabled), &fakeConnector{})
+	s.thumbHotCache = nil
+
+	dedupeKey := provider.DedupeKey{ProviderID: "fixture", Value: "source-retry:media-retry"}.String()
+	if err := db.RecordFailedDownload(dedupeKey, "temporary failure"); err != nil {
+		t.Fatalf("RecordFailedDownload failed: %v", err)
+	}
+
+	publishedAt := time.Date(2026, 6, 27, 12, 0, 0, 0, time.UTC)
+	photo, kept, err := s.DownloadResolvedMediaOrDuplicate(context.Background(), provider.DiscoveredMedia{
+		ProviderID:  "fixture",
+		DedupeKey:   provider.DedupeKey{ProviderID: "fixture", Value: "source-retry:media-retry"},
+		Source:      provider.SourceMetadata{URL: "https://fixture.test/source/retry", ExternalID: "source-retry"},
+		Media:       provider.MediaMetadata{URL: imageServer.URL + "/media-retry.jpg", ExternalID: "media-retry", FileName: "media-retry.jpg"},
+		Title:       "Recovered Warm Fixture",
+		Artist:      "Fixture Artist",
+		PublishedAt: publishedAt,
+	}, "fixture")
+	if err != nil {
+		t.Fatalf("DownloadResolvedMediaOrDuplicate failed: %v", err)
+	}
+	if !kept {
+		t.Fatal("expected recovered media to be kept")
+	}
+	if photo.ID == 0 {
+		t.Fatalf("expected recovered photo to include persisted ID, got %#v", photo)
+	}
+
+	var stored database.DownloadedPhoto
+	if err := db.Where("url_hash = ?", database.HashURL(dedupeKey)).First(&stored).Error; err != nil {
+		t.Fatalf("failed to load recovered photo: %v", err)
+	}
+	if stored.ID != photo.ID {
+		t.Fatalf("expected returned photo ID %d to match stored ID %d", photo.ID, stored.ID)
+	}
+
+	cache := derivatives.NewCache(cfg.Storage)
+	validator, err := derivatives.Validator(&stored, stored.FilePath)
+	if err != nil {
+		t.Fatalf("Validator failed: %v", err)
+	}
+	entry := cache.Entry(&stored, 400, validator)
+	waitForFile(t, entry.Path)
+}
+
+func TestScheduleWarmThumbnailsOnIngestReturnsWhenWorkersFull(t *testing.T) {
+	cfg := setupScraperTestConfig(t)
+	cfg.Storage.WarmOnIngest = true
+	cfg.Storage.WarmOnIngestWidths = []int{400}
+	s := &Scraper{
+		cfg:          cfg,
+		logger:       zerolog.Nop(),
+		thumbWarmSem: make(chan struct{}, 1),
+	}
+	s.thumbWarmSem <- struct{}{}
+
+	done := make(chan struct{})
+	go func() {
+		s.scheduleWarmThumbnailsOnIngest(database.DownloadedPhoto{ID: 42})
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("scheduleWarmThumbnailsOnIngest blocked when workers were full")
+	}
+}
+
 func setupScraperTestDB(t *testing.T) *database.DB {
 	t.Helper()
 
@@ -278,6 +408,33 @@ func setupScraperTestConfig(t *testing.T) *config.Config {
 		t.Fatalf("unsafe scraper test config: %v", err)
 	}
 	return cfg
+}
+
+func writeScraperTestJPEG(t *testing.T, w http.ResponseWriter) {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, 32, 24))
+	for y := 0; y < 24; y++ {
+		for x := 0; x < 32; x++ {
+			img.Set(x, y, color.RGBA{R: uint8(x * 5), G: uint8(y * 7), B: 160, A: 255})
+		}
+	}
+	if err := jpeg.Encode(w, img, &jpeg.Options{Quality: 90}); err != nil {
+		t.Fatalf("encode jpeg response: %v", err)
+	}
+}
+
+func waitForFile(t *testing.T, path string) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("expected warmed derivative %s: %v", path, err)
+	}
 }
 
 type fakeConnector struct {

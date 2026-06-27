@@ -14,8 +14,10 @@ import (
 	"sync"
 	"time"
 
+	okfcache "ok-folio/internal/cache"
 	"ok-folio/internal/config"
 	"ok-folio/internal/database"
+	"ok-folio/internal/derivatives"
 	"ok-folio/internal/exif"
 	"ok-folio/internal/photoprism"
 	"ok-folio/internal/provider"
@@ -48,6 +50,8 @@ type Scraper struct {
 	client           *http.Client
 	provider         provider.Connector
 	photoprismClient *photoprism.Client
+	thumbHotCache    *okfcache.Client
+	thumbWarmSem     chan struct{}
 }
 
 func New(cfg *config.Config, db *database.DB, logger zerolog.Logger) *Scraper {
@@ -63,6 +67,12 @@ func New(cfg *config.Config, db *database.DB, logger zerolog.Logger) *Scraper {
 
 	client := &http.Client{
 		Timeout: cfg.Download.Timeout,
+	}
+	var thumbHotCache *okfcache.Client
+	var thumbWarmSem chan struct{}
+	if cfg.Storage.WarmOnIngest {
+		thumbHotCache = okfcache.New(context.Background(), cfg.Cache, logger.With().Str("component", "thumbnail-warmer-cache").Logger())
+		thumbWarmSem = make(chan struct{}, 2)
 	}
 
 	return &Scraper{
@@ -82,6 +92,8 @@ func New(cfg *config.Config, db *database.DB, logger zerolog.Logger) *Scraper {
 				Multiplier:   cfg.Retry.Multiplier,
 			},
 		}, client, logger.With().Str("provider", webgallery.ProviderID).Logger()),
+		thumbHotCache: thumbHotCache,
+		thumbWarmSem:  thumbWarmSem,
 	}
 }
 
@@ -347,8 +359,45 @@ func (s *Scraper) DownloadResolvedMediaOrDuplicate(ctx context.Context, resolved
 		Str("file", fileName).
 		Str("artist", resolved.Artist).
 		Msg("Successfully downloaded photo")
+	s.scheduleWarmThumbnailsOnIngest(*photo)
 
 	return photo, true, nil
+}
+
+func (s *Scraper) scheduleWarmThumbnailsOnIngest(photo database.DownloadedPhoto) {
+	if !s.cfg.Storage.WarmOnIngest || len(s.cfg.Storage.WarmOnIngestWidths) == 0 || s.thumbWarmSem == nil {
+		return
+	}
+	widths := append([]int(nil), s.cfg.Storage.WarmOnIngestWidths...)
+	select {
+	case s.thumbWarmSem <- struct{}{}:
+	default:
+		s.logger.Warn().Uint64("photo_id", photo.ID).Msg("Thumbnail warm-on-ingest skipped because workers are full")
+		return
+	}
+	go func() {
+		defer func() { <-s.thumbWarmSem }()
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		result, err := derivatives.WarmOnePhoto(ctx, s.cfg.Storage, &photo, derivatives.WarmPhotoOptions{
+			Widths:   widths,
+			HotCache: s.thumbHotCache,
+			HotTTL:   24 * time.Hour,
+		}, s.logger.With().Str("component", "thumbnail-warmer").Logger())
+		if err != nil {
+			s.logger.Warn().Err(err).Uint64("photo_id", photo.ID).Msg("Thumbnail warm-on-ingest failed")
+			return
+		}
+		if result.Failed > 0 || result.Missing > 0 {
+			s.logger.Warn().
+				Uint64("photo_id", photo.ID).
+				Int("generated", result.Generated).
+				Int("skipped", result.Skipped).
+				Int("missing", result.Missing).
+				Int("failed", result.Failed).
+				Msg("Thumbnail warm-on-ingest completed with warnings")
+		}
+	}()
 }
 
 func (s *Scraper) recordInboxException(item provider.DiscoveredMedia, status string, reason string) error {

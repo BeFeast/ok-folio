@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -29,6 +30,10 @@ const (
 	DefaultLoggingLevel = "info"
 	// DefaultLoggingFormat is machine-readable for container logs.
 	DefaultLoggingFormat = "json"
+	// DefaultWarmOnIngestWidthSmall is the grid thumbnail width warmed on ingest.
+	DefaultWarmOnIngestWidthSmall = 400
+	// DefaultWarmOnIngestWidthLarge is the magazine thumbnail width warmed on ingest.
+	DefaultWarmOnIngestWidthLarge = 700
 )
 
 type Config struct {
@@ -56,6 +61,21 @@ type StorageConfig struct {
 	DailyDirectory       string `yaml:"daily_directory"`
 	DerivativesDirectory string `yaml:"derivatives_directory"`
 	DerivativesMaxBytes  int64  `yaml:"derivatives_max_bytes"`
+	WarmOnIngest         bool   `yaml:"warm_on_ingest"`
+	WarmOnIngestWidths   []int  `yaml:"warm_on_ingest_widths"`
+}
+
+func (c *StorageConfig) UnmarshalYAML(value *yaml.Node) error {
+	type rawStorageConfig StorageConfig
+	out := rawStorageConfig{
+		WarmOnIngest:       true,
+		WarmOnIngestWidths: defaultWarmOnIngestWidths(),
+	}
+	if err := value.Decode(&out); err != nil {
+		return err
+	}
+	*c = StorageConfig(out)
+	return nil
 }
 
 type DatabaseConfig struct {
@@ -216,6 +236,20 @@ func Load(path string) (*Config, error) {
 		}
 		cfg.Storage.DerivativesMaxBytes = maxBytes
 	}
+	if warmOnIngest := os.Getenv("OK_FOLIO_WARM_ON_INGEST"); warmOnIngest != "" {
+		enabled, err := strconv.ParseBool(warmOnIngest)
+		if err != nil {
+			return nil, fmt.Errorf("invalid OK_FOLIO_WARM_ON_INGEST %q: %w", warmOnIngest, err)
+		}
+		cfg.Storage.WarmOnIngest = enabled
+	}
+	if warmWidths := os.Getenv("OK_FOLIO_WARM_ON_INGEST_WIDTHS"); warmWidths != "" {
+		widths, err := parseWarmWidths(warmWidths)
+		if err != nil {
+			return nil, fmt.Errorf("invalid OK_FOLIO_WARM_ON_INGEST_WIDTHS %q: %w", warmWidths, err)
+		}
+		cfg.Storage.WarmOnIngestWidths = widths
+	}
 
 	cfg.Storage.applyDefaults()
 	cfg.Database.applyDefaults()
@@ -232,6 +266,33 @@ func (c *StorageConfig) applyDefaults() {
 	if c.DerivativesMaxBytes == 0 {
 		c.DerivativesMaxBytes = DefaultDerivativesMaxBytes
 	}
+	if len(c.WarmOnIngestWidths) == 0 {
+		c.WarmOnIngestWidths = defaultWarmOnIngestWidths()
+	}
+}
+
+func defaultWarmOnIngestWidths() []int {
+	return []int{DefaultWarmOnIngestWidthSmall, DefaultWarmOnIngestWidthLarge}
+}
+
+func parseWarmWidths(value string) ([]int, error) {
+	parts := strings.Split(value, ",")
+	widths := make([]int, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		width, err := strconv.Atoi(part)
+		if err != nil {
+			return nil, err
+		}
+		widths = append(widths, width)
+	}
+	if len(widths) == 0 {
+		return nil, fmt.Errorf("at least one width is required")
+	}
+	return widths, nil
 }
 
 // applyDefaults fills in the OK Folio Postgres defaults for any unset field so
