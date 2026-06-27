@@ -37,8 +37,9 @@ COPY . .
 # Copy built frontend into embed location
 COPY --from=frontend-builder /build/dashboard/dist ./internal/dashboard/dist
 
-# Build the application
+# Build the application and operator ETL CLI from source.
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o extractor ./cmd/extractor
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o ok-folio-etl ./cmd/ok-folio-etl
 
 # Runtime stage
 FROM alpine:3.19
@@ -55,8 +56,9 @@ RUN addgroup -g 1000 extractor && \
 
 WORKDIR /app
 
-# Copy binary from builder
+# Copy binaries from builder
 COPY --from=backend-builder /build/extractor /app/extractor
+COPY --from=backend-builder /build/ok-folio-etl /app/ok-folio-etl
 
 # Create directories for volumes
 RUN mkdir -p /config /photoprism/originals /photoprism/_daily && \

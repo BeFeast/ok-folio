@@ -56,14 +56,14 @@ type DownloadedPhoto struct {
 	Title      string `gorm:"type:text;index"`
 	// Artist carries its own single-column index plus position 2 of the
 	// (downloaded_at, artist) composite. Values are preserved byte-for-byte.
-	Artist     string    `gorm:"type:text;index;index:idx_downloaded_photos_downloaded_at_artist,priority:2"`
-	UploadDate time.Time `gorm:"index"`
-	FilePath   string    `gorm:"type:text;default:''"`
-	FileName   string    `gorm:"type:text;index"`
+	Artist     string     `gorm:"type:text;index;index:idx_downloaded_photos_downloaded_at_artist,priority:2"`
+	UploadDate *time.Time `gorm:"index"`
+	FilePath   string     `gorm:"type:text;default:''"`
+	FileName   string     `gorm:"type:text;index"`
 	// DownloadedAt is position 1 of the composite index; its leading column also
 	// serves ORDER BY downloaded_at, so the redundant standalone downloaded_at
 	// index is intentionally dropped.
-	DownloadedAt time.Time `gorm:"autoCreateTime;index:idx_downloaded_photos_downloaded_at_artist,priority:1"`
+	DownloadedAt *time.Time `gorm:"autoCreateTime;index:idx_downloaded_photos_downloaded_at_artist,priority:1"`
 	FileSize     int64
 	// Favorite is OK Folio-owned and never written by the ETL.
 	Favorite bool `gorm:"not null;default:false;index"`
@@ -104,8 +104,8 @@ type InboxItem struct {
 
 // ExtractionRun tracks extraction job runs
 type ExtractionRun struct {
-	ID               uint64    `gorm:"primarykey"`
-	StartTime        time.Time `gorm:"autoCreateTime"`
+	ID               uint64     `gorm:"primarykey"`
+	StartTime        *time.Time `gorm:"autoCreateTime"`
 	EndTime          *time.Time
 	Provider         string `gorm:"type:text;index"`
 	Status           string `gorm:"type:text;index;default:'running'"` // running, completed, failed
@@ -794,7 +794,7 @@ func (db *DB) GetDownloadStats() (map[string]interface{}, error) {
 			First(&latest).Error; err != nil {
 			return nil, err
 		}
-		if !latest.DownloadedAt.IsZero() {
+		if latest.DownloadedAt != nil && !latest.DownloadedAt.IsZero() {
 			stats["last_download"] = latest.DownloadedAt
 		}
 	}
@@ -1291,6 +1291,9 @@ func (db *DB) GetPhotosByRunID(runID uint64, limit int, offset int) ([]Downloade
 	var run ExtractionRun
 	if err := db.DB.First(&run, runID).Error; err != nil {
 		return nil, 0, err
+	}
+	if run.StartTime == nil {
+		return photos, 0, nil
 	}
 
 	// If run hasn't ended yet, use current time

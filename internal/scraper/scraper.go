@@ -300,7 +300,7 @@ func (s *Scraper) DownloadResolvedMediaOrDuplicate(ctx context.Context, resolved
 		SourcePage:  resolved.Source.URL,
 		Title:       resolved.Title,
 		Artist:      resolved.Artist,
-		UploadDate:  resolved.PublishedAt,
+		UploadDate:  &resolved.PublishedAt,
 		FilePath:    filePath,
 		FileName:    fileName,
 		FileSize:    fileSize,

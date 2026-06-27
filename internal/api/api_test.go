@@ -77,6 +77,10 @@ func setupTestServer(t *testing.T) (*Server, *database.DB) {
 	return server, db
 }
 
+func ptrTime(t time.Time) *time.Time {
+	return &t
+}
+
 // safeShutdown shuts down server and waits for workers to stop
 func safeShutdown(server *Server) {
 	server.Shutdown()
@@ -203,7 +207,7 @@ func TestHandleGalleryCatalog(t *testing.T) {
 		Artist:       "Artist B",
 		FilePath:     filepath.Join(server.cfg.Storage.BaseDirectory, "new.jpg"),
 		FileName:     "new.jpg",
-		DownloadedAt: time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC),
+		DownloadedAt: ptrTime(time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)),
 		FileSize:     2048,
 		Status:       "downloaded",
 	}
@@ -214,7 +218,7 @@ func TestHandleGalleryCatalog(t *testing.T) {
 		Artist:       "Artist A",
 		FilePath:     filepath.Join(server.cfg.Storage.BaseDirectory, "old.jpg"),
 		FileName:     "old.jpg",
-		DownloadedAt: time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC),
+		DownloadedAt: ptrTime(time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC)),
 		FileSize:     1024,
 		Status:       "downloaded",
 	}
@@ -383,7 +387,7 @@ func TestHandleGalleryCatalogFiltersEmptyArtist(t *testing.T) {
 			Title:        "Unknown Artist",
 			FilePath:     filepath.Join(server.cfg.Storage.BaseDirectory, "unknown-artist.jpg"),
 			FileName:     "unknown-artist.jpg",
-			DownloadedAt: time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC),
+			DownloadedAt: ptrTime(time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)),
 			Status:       "downloaded",
 		},
 		{
@@ -393,7 +397,7 @@ func TestHandleGalleryCatalogFiltersEmptyArtist(t *testing.T) {
 			Artist:       "Artist A",
 			FilePath:     filepath.Join(server.cfg.Storage.BaseDirectory, "known-artist.jpg"),
 			FileName:     "known-artist.jpg",
-			DownloadedAt: time.Date(2026, 6, 25, 11, 0, 0, 0, time.UTC),
+			DownloadedAt: ptrTime(time.Date(2026, 6, 25, 11, 0, 0, 0, time.UTC)),
 			Status:       "downloaded",
 		},
 	}
@@ -441,7 +445,7 @@ func TestHandleConnectorStatus(t *testing.T) {
 			Title:        "Kept Piece",
 			FilePath:     filepath.Join(server.cfg.Storage.BaseDirectory, "kept.jpg"),
 			FileName:     "kept.jpg",
-			DownloadedAt: time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC),
+			DownloadedAt: ptrTime(time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)),
 			Status:       "downloaded",
 		},
 		{
@@ -449,7 +453,7 @@ func TestHandleConnectorStatus(t *testing.T) {
 			SourcePage:   sourcePage,
 			Title:        "Failed Piece",
 			FileName:     "failed.jpg",
-			DownloadedAt: time.Date(2026, 6, 25, 12, 5, 0, 0, time.UTC),
+			DownloadedAt: ptrTime(time.Date(2026, 6, 25, 12, 5, 0, 0, time.UTC)),
 			Status:       "failed",
 			ErrorMessage: "upstream returned 500",
 		},
@@ -458,14 +462,14 @@ func TestHandleConnectorStatus(t *testing.T) {
 			SourcePage:   "https://t.me/sourcechannel/42",
 			Title:        "Telegram Piece",
 			FileName:     "telegram.jpg",
-			DownloadedAt: time.Date(2026, 6, 25, 11, 0, 0, 0, time.UTC),
+			DownloadedAt: ptrTime(time.Date(2026, 6, 25, 11, 0, 0, 0, time.UTC)),
 			Status:       "downloaded",
 		},
 		{
 			URL:          "telegram:-1001234567890:99:photo-unique-id",
 			Title:        "Telegram Failed Piece",
 			FileName:     "telegram-failed.jpg",
-			DownloadedAt: time.Date(2026, 6, 25, 12, 7, 0, 0, time.UTC),
+			DownloadedAt: ptrTime(time.Date(2026, 6, 25, 12, 7, 0, 0, time.UTC)),
 			Status:       "failed",
 			ErrorMessage: "telegram media expired",
 		},
@@ -497,7 +501,7 @@ func TestHandleConnectorStatus(t *testing.T) {
 	}
 
 	webRun := database.ExtractionRun{
-		StartTime:        time.Date(2026, 6, 25, 12, 1, 0, 0, time.UTC),
+		StartTime:        ptrTime(time.Date(2026, 6, 25, 12, 1, 0, 0, time.UTC)),
 		EndTime:          &webLastRun,
 		Provider:         "webgallery",
 		Status:           "failed",
@@ -508,7 +512,7 @@ func TestHandleConnectorStatus(t *testing.T) {
 		ErrorMessage:     "connector failed",
 	}
 	telegramRun := database.ExtractionRun{
-		StartTime:        time.Date(2026, 6, 25, 12, 2, 0, 0, time.UTC),
+		StartTime:        ptrTime(time.Date(2026, 6, 25, 12, 2, 0, 0, time.UTC)),
 		EndTime:          &telegramLastRun,
 		Provider:         "telegram",
 		Status:           "completed",
@@ -643,7 +647,7 @@ func TestBuildConnectorStatusesUsesRunLastSyncWhenStateMissing(t *testing.T) {
 	run := database.ExtractionRun{
 		ID:        7,
 		Provider:  "telegram",
-		StartTime: time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC),
+		StartTime: ptrTime(time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)),
 		EndTime:   &runEnd,
 		Status:    "completed",
 	}
@@ -731,8 +735,8 @@ func TestHandlePhotoDetailIncludesProvenanceAndFavorite(t *testing.T) {
 		Artist:       "Detail Artist",
 		FilePath:     filepath.Join(server.cfg.Storage.BaseDirectory, "piece.jpg"),
 		FileName:     "piece.jpg",
-		UploadDate:   time.Date(2026, 6, 20, 12, 0, 0, 0, time.UTC),
-		DownloadedAt: time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC),
+		UploadDate:   ptrTime(time.Date(2026, 6, 20, 12, 0, 0, 0, time.UTC)),
+		DownloadedAt: ptrTime(time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)),
 		FileSize:     4096,
 		Favorite:     true,
 		Status:       "downloaded",
@@ -789,7 +793,7 @@ func TestImageHandlersUseImmutableETagAndConditional304(t *testing.T) {
 		FileSize:     1234,
 		ContentHash:  contentHash[:],
 		Status:       "downloaded",
-		DownloadedAt: time.Now(),
+		DownloadedAt: ptrTime(time.Now()),
 	}
 	if err := db.Create(&photo).Error; err != nil {
 		t.Fatalf("Failed to create photo: %v", err)
@@ -856,7 +860,7 @@ func TestImageHandlersUseFallbackETagWithoutContentHash(t *testing.T) {
 		FileName:     "fallback-photo.jpg",
 		FileSize:     4321,
 		Status:       "downloaded",
-		DownloadedAt: time.Now(),
+		DownloadedAt: ptrTime(time.Now()),
 	}
 	if err := db.Create(&photo).Error; err != nil {
 		t.Fatalf("Failed to create photo: %v", err)
@@ -962,7 +966,7 @@ func TestGalleryCatalogCacheUsesEpochInvalidation(t *testing.T) {
 		FilePath:     filepath.Join(server.cfg.Storage.BaseDirectory, "cached-favorite.jpg"),
 		FileName:     "cached-favorite.jpg",
 		Status:       "downloaded",
-		DownloadedAt: time.Now(),
+		DownloadedAt: ptrTime(time.Now()),
 	}
 	if err := db.Create(&photo).Error; err != nil {
 		t.Fatalf("Failed to create photo: %v", err)
@@ -1035,7 +1039,7 @@ func TestGalleryCatalogUsesPrivateETagAndConditional304(t *testing.T) {
 		FilePath:     filepath.Join(server.cfg.Storage.BaseDirectory, "catalog-etag.jpg"),
 		FileName:     "catalog-etag.jpg",
 		Status:       "downloaded",
-		DownloadedAt: time.Now(),
+		DownloadedAt: ptrTime(time.Now()),
 	}
 	if err := db.Create(&photo).Error; err != nil {
 		t.Fatalf("Failed to create photo: %v", err)
@@ -1083,7 +1087,7 @@ func TestGalleryCatalogDoesNot304WhenCachePassthrough(t *testing.T) {
 		FilePath:     filepath.Join(server.cfg.Storage.BaseDirectory, "passthrough-catalog-etag.jpg"),
 		FileName:     "passthrough-catalog-etag.jpg",
 		Status:       "downloaded",
-		DownloadedAt: time.Now(),
+		DownloadedAt: ptrTime(time.Now()),
 	}
 	if err := db.Create(&photo).Error; err != nil {
 		t.Fatalf("Failed to create photo: %v", err)

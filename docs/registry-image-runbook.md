@@ -13,6 +13,11 @@ OK Folio registry images are released manually from GitHub Actions. The registry
 
 The workflow builds the repository `Dockerfile` with Docker Buildx, loads the smoke image into the runner Docker daemon, runs the container locally, checks that `http://127.0.0.1:18080/health` reports `status: healthy` and `database: connected`, checks that `${GITHUB_SHA}` does not already exist in the registry, and only then tags and pushes the same image content as `${GITHUB_SHA}` and `dev`.
 
+The release image ships both `/app/extractor` and `/app/ok-folio-etl`. The
+workflow also runs `/app/ok-folio-etl print-legacy-checks --legacy-database
+ok_folio_smoke` from the smoke image before any push, so the documented ETL
+commands cannot regress to a source-only binary.
+
 Do not rerun the workflow for a commit after changing the Docker build context outside that commit. The workflow refuses to push when the `${GITHUB_SHA}` tag already exists because commit tags must never point at different content.
 
 ## Required Secrets

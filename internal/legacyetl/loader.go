@@ -2,9 +2,11 @@ package legacyetl
 
 import (
 	"crypto/sha256"
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"ok-folio/internal/database"
@@ -124,7 +126,7 @@ func LoadDump(db *database.DB, rows DumpRows, opts LoadOptions) (LoadResult, err
 }
 
 func upsertDownloadedPhoto(tx *gorm.DB, row LegacyDownloadedPhoto) (time.Time, error) {
-	var loadedAt time.Time
+	var loadedAt sql.NullTime
 	err := tx.Raw(downloadedPhotoUpsertSQL,
 		row.ID,
 		row.URL,
@@ -132,28 +134,28 @@ func upsertDownloadedPhoto(tx *gorm.DB, row LegacyDownloadedPhoto) (time.Time, e
 		row.SourcePage,
 		row.Title,
 		row.Artist,
-		row.UploadDate,
+		nullableDatetimePtr(row.UploadDate),
 		row.FilePath,
 		row.FileName,
-		row.DownloadedAt,
+		nullableDatetime(row.DownloadedAt),
 		row.FileSize,
 		row.Status,
 		row.ErrorMessage,
 		database.DefaultProvider,
 		database.CategoryIDFromSourcePage(row.SourcePage),
-	).Scan(&loadedAt).Error
+	).Row().Scan(&loadedAt)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("upsert downloaded_photos legacy id %d: %w", row.ID, err)
 	}
-	return loadedAt, nil
+	return loadedAt.Time, nil
 }
 
 func upsertExtractionRun(tx *gorm.DB, row LegacyExtractionRun) (time.Time, error) {
-	var startedAt time.Time
+	var startedAt sql.NullTime
 	err := tx.Raw(extractionRunUpsertSQL,
 		row.ID,
-		row.StartTime,
-		row.EndTime,
+		nullableDatetime(row.StartTime),
+		nullableDatetimePtr(row.EndTime),
 		row.Status,
 		row.PagesProcessed,
 		row.PhotosFound,
@@ -161,11 +163,29 @@ func upsertExtractionRun(tx *gorm.DB, row LegacyExtractionRun) (time.Time, error
 		row.PhotosSkipped,
 		row.PhotosFailed,
 		row.ErrorMessage,
-	).Scan(&startedAt).Error
+	).Row().Scan(&startedAt)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("upsert extraction_runs legacy id %d: %w", row.ID, err)
 	}
-	return startedAt, nil
+	return startedAt.Time, nil
+}
+
+// nullableDatetime coerces empty or MySQL zero-value datetime strings to a SQL
+// NULL so legacy rows that carry absent timestamps are not rejected by Postgres
+// timestamptz columns.
+func nullableDatetime(s string) any {
+	t := strings.TrimSpace(s)
+	if t == "" || strings.HasPrefix(t, "0000-00-00") {
+		return nil
+	}
+	return s
+}
+
+func nullableDatetimePtr(s *string) any {
+	if s == nil {
+		return nil
+	}
+	return nullableDatetime(*s)
 }
 
 func setSequences(tx *gorm.DB) error {

@@ -1,6 +1,7 @@
 package legacyetl
 
 import (
+	"database/sql"
 	"os"
 	"path/filepath"
 	"strings"
@@ -67,6 +68,86 @@ func TestLoadDumpRequiresVerifiedLegacyTimezone(t *testing.T) {
 	}
 }
 
+func TestNullableDatetimeCoercesLegacyEmptyAndZeroValues(t *testing.T) {
+	for _, input := range []string{"", "   ", "0000-00-00 00:00:00", "0000-00-00 00:00:00.000"} {
+		if got := nullableDatetime(input); got != nil {
+			t.Fatalf("nullableDatetime(%q) = %#v, want nil", input, got)
+		}
+	}
+	valid := "2026-01-02 03:04:05"
+	if got := nullableDatetime(valid); got != valid {
+		t.Fatalf("nullableDatetime(%q) = %#v, want original string", valid, got)
+	}
+	if got := nullableDatetimePtr(nil); got != nil {
+		t.Fatalf("nullableDatetimePtr(nil) = %#v, want nil", got)
+	}
+	if got := nullableDatetimePtr(&valid); got != valid {
+		t.Fatalf("nullableDatetimePtr(valid) = %#v, want original string", got)
+	}
+}
+
+func TestUpsertDownloadedPhotoCoercesLegacyEmptyDatetimesToNull(t *testing.T) {
+	db := setupSQLiteETLDB(t)
+	uploadDate := "0000-00-00 00:00:00"
+	loadedAt, err := upsertDownloadedPhoto(db.DB, LegacyDownloadedPhoto{
+		ID:           6044,
+		URL:          "https://example.test/piece-empty.jpg",
+		SourcePage:   "https://example.test/gallery",
+		Title:        "Empty datetime",
+		Artist:       "Legacy",
+		UploadDate:   &uploadDate,
+		FilePath:     "piece-empty.jpg",
+		FileName:     "piece-empty.jpg",
+		DownloadedAt: "",
+		FileSize:     42,
+		Status:       "downloaded",
+	})
+	if err != nil {
+		t.Fatalf("upsertDownloadedPhoto failed: %v", err)
+	}
+	if !loadedAt.IsZero() {
+		t.Fatalf("NULL RETURNING downloaded_at should produce zero time, got %v", loadedAt)
+	}
+	assertNullTimeColumn(t, db.DB, DownloadedPhotosTable, "upload_date", 6044)
+	assertNullTimeColumn(t, db.DB, DownloadedPhotosTable, "downloaded_at", 6044)
+	var stored database.DownloadedPhoto
+	if err := db.First(&stored, 6044).Error; err != nil {
+		t.Fatalf("load nullable downloaded_photo model: %v", err)
+	}
+	if stored.UploadDate != nil || stored.DownloadedAt != nil {
+		t.Fatalf("expected nullable model times to scan as nil, got upload_date=%v downloaded_at=%v", stored.UploadDate, stored.DownloadedAt)
+	}
+}
+
+func TestUpsertExtractionRunCoercesLegacyZeroDatetimesToNull(t *testing.T) {
+	db := setupSQLiteETLDB(t)
+	endTime := "0000-00-00 00:00:00"
+	startedAt, err := upsertExtractionRun(db.DB, LegacyExtractionRun{
+		ID:               7,
+		StartTime:        "0000-00-00 00:00:00",
+		EndTime:          &endTime,
+		Status:           "completed",
+		PagesProcessed:   1,
+		PhotosFound:      2,
+		PhotosDownloaded: 3,
+	})
+	if err != nil {
+		t.Fatalf("upsertExtractionRun failed: %v", err)
+	}
+	if !startedAt.IsZero() {
+		t.Fatalf("NULL RETURNING start_time should produce zero time, got %v", startedAt)
+	}
+	assertNullTimeColumn(t, db.DB, ExtractionRunsTable, "start_time", 7)
+	assertNullTimeColumn(t, db.DB, ExtractionRunsTable, "end_time", 7)
+	var stored database.ExtractionRun
+	if err := db.First(&stored, 7).Error; err != nil {
+		t.Fatalf("load nullable extraction_run model: %v", err)
+	}
+	if stored.StartTime != nil || stored.EndTime != nil {
+		t.Fatalf("expected nullable model times to scan as nil, got start_time=%v end_time=%v", stored.StartTime, stored.EndTime)
+	}
+}
+
 func TestFillMissingContentHashesReadsOriginalsAndIsIdempotent(t *testing.T) {
 	db := setupSQLiteETLDB(t)
 	root := t.TempDir()
@@ -114,4 +195,15 @@ func setupSQLiteETLDB(t *testing.T) *database.DB {
 
 func normalizeSQL(sql string) string {
 	return strings.Join(strings.Fields(sql), " ")
+}
+
+func assertNullTimeColumn(t *testing.T, db *gorm.DB, table, column string, id uint64) {
+	t.Helper()
+	var got sql.NullTime
+	if err := db.Raw("SELECT "+column+" FROM "+table+" WHERE id = ?", id).Row().Scan(&got); err != nil {
+		t.Fatalf("read %s.%s for id %d: %v", table, column, id, err)
+	}
+	if got.Valid {
+		t.Fatalf("expected %s.%s for id %d to be NULL, got %v", table, column, id, got.Time)
+	}
 }

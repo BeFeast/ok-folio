@@ -38,6 +38,9 @@ func (s *Server) handleStatsTimeline(w http.ResponseWriter, r *http.Request) {
 		if run.Status != "completed" {
 			continue
 		}
+		if run.StartTime == nil {
+			continue
+		}
 
 		dateKey := run.StartTime.Format("2006-01-02")
 		if timeline[dateKey] == nil {

@@ -161,7 +161,7 @@ func TestPostgresMigrateQuarantinesExistingContentHashDuplicates(t *testing.T) {
 			FileName:     "winner.jpg",
 			Status:       "downloaded",
 			ContentHash:  sharedContent,
-			DownloadedAt: time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC),
+			DownloadedAt: ptrTime(time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)),
 		},
 		{
 			URL:          "fixture:existing:loser",
@@ -171,7 +171,7 @@ func TestPostgresMigrateQuarantinesExistingContentHashDuplicates(t *testing.T) {
 			FileName:     "loser.jpg",
 			Status:       "downloaded",
 			ContentHash:  sharedContent,
-			DownloadedAt: time.Date(2026, 1, 1, 11, 0, 0, 0, time.UTC),
+			DownloadedAt: ptrTime(time.Date(2026, 1, 1, 11, 0, 0, 0, time.UTC)),
 		},
 	}
 	for idx := range photos {
@@ -224,8 +224,8 @@ func TestPostgresILIKESearchAndCompositeOrder(t *testing.T) {
 
 	base := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
 	photos := []DownloadedPhoto{
-		{URL: "https://example.com/a.jpg", Title: "Sunset Over Water", Artist: "Zoe", FileName: "a.jpg", Status: "downloaded", DownloadedAt: base.Add(-2 * time.Hour)},
-		{URL: "https://example.com/b.jpg", Title: "City Lights", Artist: "Amy", FileName: "b.jpg", Status: "downloaded", DownloadedAt: base},
+		{URL: "https://example.com/a.jpg", Title: "Sunset Over Water", Artist: "Zoe", FileName: "a.jpg", Status: "downloaded", DownloadedAt: ptrTime(base.Add(-2 * time.Hour))},
+		{URL: "https://example.com/b.jpg", Title: "City Lights", Artist: "Amy", FileName: "b.jpg", Status: "downloaded", DownloadedAt: ptrTime(base)},
 	}
 	for i := range photos {
 		if err := db.Create(&photos[i]).Error; err != nil {
