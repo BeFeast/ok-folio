@@ -24,6 +24,7 @@ const (
 
 type Config struct {
 	BaseURL          string
+	Schedule         string
 	UserAgent        string
 	RateLimitBackoff time.Duration
 	Retry            retry.Config
@@ -55,6 +56,7 @@ func (c *Connector) Provider() provider.Source {
 		DisplayName: "Web Gallery",
 		BaseURL:     c.cfg.BaseURL,
 		Scope:       "category",
+		Schedule:    c.cfg.Schedule,
 	}
 }
 

@@ -19,6 +19,7 @@ type Source struct {
 	DisplayName string
 	BaseURL     string
 	Scope       string
+	Schedule    string
 }
 
 // PageRequest describes a provider page or cursor to discover.

@@ -5,6 +5,8 @@
 source:
   base_url: "https://sight.photo/photos/category/15/"
   category_id: 15
+  # Optional connector-specific 6-field cron. Leave unset to use scheduler.schedule.
+  # schedule: "0 0 */6 * * *"
 
 storage:
   base_directory: "./data/originals"
@@ -83,6 +85,8 @@ telegram:
   chat_id: ""
   display_name: "Telegram"
   limit: 100
+  # Poll Telegram hourly without changing the web-gallery scrape cadence.
+  schedule: "0 0 * * * *"
 
 logging:
   level: "info"
