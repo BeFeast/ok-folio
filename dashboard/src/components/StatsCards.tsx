@@ -18,10 +18,10 @@ export default function StatsCards() {
         {[...Array(4)].map((_, i) => (
           <div
             key={i}
-            className="animate-pulse rounded-lg border border-gray-200 bg-white p-5 shadow-sm"
+            className="animate-pulse rounded-lg border border-gray-200 bg-white p-5 shadow-xs"
           >
-            <div className="h-4 bg-gray-200 rounded w-1/2 mb-4"></div>
-            <div className="h-8 bg-gray-200 rounded w-3/4"></div>
+            <div className="h-4 bg-gray-200 rounded-sm w-1/2 mb-4"></div>
+            <div className="h-8 bg-gray-200 rounded-sm w-3/4"></div>
           </div>
         ))}
       </div>
@@ -66,7 +66,7 @@ export default function StatsCards() {
       {cards.map((card) => (
         <div
           key={card.title}
-          className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm"
+          className="rounded-lg border border-gray-200 bg-white p-5 shadow-xs"
         >
           <h3 className="text-sm font-medium text-gray-600">{card.title}</h3>
           <p className="mt-2 text-2xl font-semibold text-gray-950">

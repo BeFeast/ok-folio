@@ -20,11 +20,11 @@ export default function RunHistory() {
 
   if (isLoading) {
     return (
-      <section className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
+      <section className="rounded-lg border border-gray-200 bg-white p-5 shadow-xs">
         <h2 className="text-xl font-semibold text-gray-950">Run history</h2>
         <div className="animate-pulse space-y-3">
           {[...Array(5)].map((_, i) => (
-            <div key={i} className="h-12 bg-gray-200 rounded"></div>
+            <div key={i} className="h-12 bg-gray-200 rounded-sm"></div>
           ))}
         </div>
       </section>
@@ -33,9 +33,9 @@ export default function RunHistory() {
 
   if (error) {
     return (
-      <section className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
+      <section className="rounded-lg border border-gray-200 bg-white p-5 shadow-xs">
         <h2 className="text-xl font-semibold text-gray-950">Run history</h2>
-        <div className="bg-red-50 border border-red-200 rounded p-4">
+        <div className="bg-red-50 border border-red-200 rounded-sm p-4">
           <p className="text-red-800">Error loading runs: {error.message}</p>
         </div>
       </section>
@@ -45,7 +45,7 @@ export default function RunHistory() {
   const runs = data?.runs || [];
 
   return (
-    <section className="rounded-lg border border-gray-200 bg-white shadow-sm">
+    <section className="rounded-lg border border-gray-200 bg-white shadow-xs">
       <div className="border-b border-gray-200 p-5">
         <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
           Verification trail

@@ -15,7 +15,7 @@ export default function TimelineChart({ days = 7 }: TimelineChartProps) {
 
   if (isLoading) {
     return (
-      <div className="bg-white rounded-lg shadow p-6">
+      <div className="bg-white rounded-lg shadow-sm p-6">
         <h2 className="text-xl font-bold mb-4">Download Activity</h2>
         <div className="h-64 flex items-center justify-center">
           <div className="animate-pulse text-gray-500">Loading chart...</div>
@@ -26,9 +26,9 @@ export default function TimelineChart({ days = 7 }: TimelineChartProps) {
 
   if (error) {
     return (
-      <div className="bg-white rounded-lg shadow p-6">
+      <div className="bg-white rounded-lg shadow-sm p-6">
         <h2 className="text-xl font-bold mb-4">Download Activity</h2>
-        <div className="bg-red-50 border border-red-200 rounded p-4">
+        <div className="bg-red-50 border border-red-200 rounded-sm p-4">
           <p className="text-red-800">Error loading timeline: {error.message}</p>
         </div>
       </div>
@@ -39,7 +39,7 @@ export default function TimelineChart({ days = 7 }: TimelineChartProps) {
 
   if (timeline.length === 0) {
     return (
-      <div className="bg-white rounded-lg shadow p-6">
+      <div className="bg-white rounded-lg shadow-sm p-6">
         <h2 className="text-xl font-bold mb-4">Download Activity</h2>
         <div className="h-64 flex items-center justify-center text-gray-500">
           No data available for the selected period
@@ -49,7 +49,7 @@ export default function TimelineChart({ days = 7 }: TimelineChartProps) {
   }
 
   return (
-    <div className="bg-white rounded-lg shadow p-6">
+    <div className="bg-white rounded-lg shadow-sm p-6">
       <h2 className="text-xl font-bold mb-4">Download Activity (Last {days} Days)</h2>
       <ResponsiveContainer width="100%" height={300}>
         <LineChart data={timeline}>

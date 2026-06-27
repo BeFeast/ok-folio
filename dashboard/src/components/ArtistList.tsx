@@ -18,7 +18,7 @@ export default function ArtistList() {
 
   if (isLoading) {
     return (
-      <div className="bg-white rounded-lg shadow p-6">
+      <div className="bg-white rounded-lg shadow-sm p-6">
         <div className="text-center py-12">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto"></div>
           <p className="mt-4 text-gray-500">Loading artists...</p>
@@ -29,8 +29,8 @@ export default function ArtistList() {
 
   if (error) {
     return (
-      <div className="bg-white rounded-lg shadow p-6">
-        <div className="bg-red-50 border border-red-200 rounded p-4">
+      <div className="bg-white rounded-lg shadow-sm p-6">
+        <div className="bg-red-50 border border-red-200 rounded-sm p-4">
           <p className="text-red-800">Error loading artists</p>
         </div>
       </div>
@@ -41,7 +41,7 @@ export default function ArtistList() {
 
   return (
     <div className="space-y-6">
-      <div className="bg-white rounded-lg shadow p-6">
+      <div className="bg-white rounded-lg shadow-sm p-6">
         <div className="flex items-center justify-between mb-6">
           <div>
             <h2 className="text-2xl font-bold">Artists</h2>

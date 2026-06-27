@@ -88,7 +88,7 @@ export default function Controls() {
   });
 
   return (
-    <section className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
+    <section className="rounded-lg border border-gray-200 bg-white p-5 shadow-xs">
       <div className="flex flex-col gap-1">
         <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
           Retry and run controls
@@ -145,7 +145,7 @@ export default function Controls() {
                 Math.min(20, Math.max(1, parseInt(e.target.value) || 1)),
               )
             }
-            className="w-20 rounded-md border border-gray-300 px-3 py-2 text-center focus:outline-none focus:ring-2 focus:ring-gray-500"
+            className="w-20 rounded-md border border-gray-300 px-3 py-2 text-center focus:outline-hidden focus:ring-2 focus:ring-gray-500"
           />
           <button
             onClick={() => pagesExtractMutation.mutate(pageCount)}
