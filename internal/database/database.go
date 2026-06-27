@@ -30,6 +30,7 @@ const EmbeddingDim = 512
 const (
 	URLHashUniqueIndex     = "idx_downloaded_photos_url_hash"
 	ContentHashUniqueIndex = "idx_downloaded_photos_content_hash_unique"
+	CatalogSortIndex       = "idx_downloaded_photos_catalog_sort"
 )
 
 // DownloadedPhoto represents a photo that has been downloaded.
@@ -391,6 +392,7 @@ func postMigratePostgres(db *gorm.DB) error {
 	indexStmts := []string{
 		`DROP INDEX IF EXISTS idx_downloaded_photos_source_page`,
 		`CREATE INDEX IF NOT EXISTS idx_downloaded_photos_source_page_hash ON downloaded_photos USING hash (source_page)`,
+		`CREATE INDEX IF NOT EXISTS idx_downloaded_photos_catalog_sort ON downloaded_photos ((COALESCE(downloaded_at, upload_date)) DESC NULLS LAST, id DESC) WHERE status = 'downloaded'`,
 	}
 	for _, stmt := range indexStmts {
 		if err := db.Exec(stmt).Error; err != nil {
@@ -982,13 +984,13 @@ func (db *DB) GetGalleryCatalog(limit int, offset int, filters GalleryCatalogFil
 		return nil, 0, err
 	}
 
-	// NULLS LAST: backfilled/seeded rows can have a NULL downloaded_at, and
-	// Postgres sorts NULLs first under DESC — which would float the entire
-	// undated backlog above genuinely-recent pieces. Keep real arrivals on top.
+	// Backfilled rows can have NULL downloaded_at but populated upload_date.
+	// Sort by the best available catalog timestamp without changing the fetch
+	// timestamp's meaning.
 	err = query.
 		Limit(limit).
 		Offset(offset).
-		Order("downloaded_at DESC NULLS LAST, id DESC").
+		Order("COALESCE(downloaded_at, upload_date) DESC NULLS LAST, id DESC").
 		Find(&photos).Error
 	if err != nil {
 		return nil, 0, err

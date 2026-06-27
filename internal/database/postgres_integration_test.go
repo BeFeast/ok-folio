@@ -91,6 +91,9 @@ func TestPostgresMigrateSchemaAndIdempotency(t *testing.T) {
 	if standaloneDownloadedAtIndexExists(db) {
 		t.Fatalf("expected the standalone downloaded_at index to be dropped")
 	}
+	if !indexExists(db, CatalogSortIndex) {
+		t.Fatalf("expected catalog sort index %s", CatalogSortIndex)
+	}
 
 	// The raw url carries no btree (uniqueness lives on url_hash).
 	if urlHasBtree(db) {
