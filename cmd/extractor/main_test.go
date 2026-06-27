@@ -1,6 +1,9 @@
 package main
 
 import (
+	"io"
+	"os"
+	"strings"
 	"testing"
 
 	"ok-folio/internal/config"
@@ -34,4 +37,47 @@ func TestBuildConnectorsAddsTelegramWithBotToken(t *testing.T) {
 		}
 	}
 	t.Fatal("expected telegram connector with configured bot token")
+}
+
+func TestSetupLoggerEmptyLevelEmitsInfo(t *testing.T) {
+	output := captureSetupLoggerInfoOutput(t, "")
+	if !strings.Contains(output, "info log should be visible") {
+		t.Fatalf("expected info log to be emitted, got %q", output)
+	}
+}
+
+func TestSetupLoggerInvalidLevelEmitsInfo(t *testing.T) {
+	output := captureSetupLoggerInfoOutput(t, "not-a-level")
+	if !strings.Contains(output, "info log should be visible") {
+		t.Fatalf("expected info log to be emitted, got %q", output)
+	}
+}
+
+func captureSetupLoggerInfoOutput(t *testing.T, level string) string {
+	t.Helper()
+
+	oldStdout := os.Stdout
+	oldLevel := zerolog.GlobalLevel()
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create stdout pipe: %v", err)
+	}
+	defer func() {
+		os.Stdout = oldStdout
+		zerolog.SetGlobalLevel(oldLevel)
+		reader.Close()
+	}()
+
+	os.Stdout = writer
+	logger := setupLogger(&config.Config{Logging: config.LoggingConfig{Level: level}})
+	logger.Info().Msg("info log should be visible")
+	if err := writer.Close(); err != nil {
+		t.Fatalf("failed to close stdout pipe writer: %v", err)
+	}
+
+	output, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("failed to read captured stdout: %v", err)
+	}
+	return string(output)
 }
