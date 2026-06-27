@@ -18,14 +18,19 @@ import (
 
 type Scheduler struct {
 	cfg        *config.Config
-	ingestor   *ingest.Ingestor
+	ingestor   connectorRunner
 	connectors []provider.Connector
 	cache      *okfcache.Client
 	indexer    interface {
 		TriggerPhotoprismIndex(context.Context) error
 	}
-	logger zerolog.Logger
-	cron   *cron.Cron
+	logger       zerolog.Logger
+	cron         *cron.Cron
+	extractionMu sync.Mutex
+}
+
+type connectorRunner interface {
+	RunConnectorWithOptions(context.Context, provider.Connector, ingest.RunOptions) (ingest.Result, error)
 }
 
 type connectorJob struct {
@@ -114,6 +119,9 @@ func (s *Scheduler) runConnectorExtraction(job *connectorJob) {
 	if providerID == webgallery.ProviderID && len(s.cfg.Scheduler.Pages) > 0 {
 		opts.AllowedPages = s.cfg.Scheduler.Pages
 	}
+	s.extractionMu.Lock()
+	defer s.extractionMu.Unlock()
+
 	result, err := s.ingestor.RunConnectorWithOptions(ctx, job.connector, opts)
 	if err != nil {
 		s.logger.Error().Err(err).Str("provider", providerID).Msg("Connector ingestion failed")

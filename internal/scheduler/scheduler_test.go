@@ -2,9 +2,12 @@ package scheduler
 
 import (
 	"context"
+	"sync"
 	"testing"
+	"time"
 
 	"ok-folio/internal/config"
+	"ok-folio/internal/ingest"
 	"ok-folio/internal/provider"
 
 	"github.com/rs/zerolog"
@@ -84,6 +87,51 @@ func TestRunConnectorExtractionSkipsOverlappingRun(t *testing.T) {
 	s.runConnectorExtraction(job)
 }
 
+func TestRunConnectorExtractionSerializesSharedIngestor(t *testing.T) {
+	runner := &recordingRunner{
+		entered: make(chan string, 2),
+		release: make(chan struct{}),
+	}
+	s := &Scheduler{
+		cfg:      &config.Config{},
+		ingestor: runner,
+		logger:   zerolog.Nop(),
+	}
+	first := &connectorJob{connector: fakeConnector{source: provider.Source{ID: "telegram"}}}
+	second := &connectorJob{connector: fakeConnector{source: provider.Source{ID: "webgallery"}}}
+	done := make(chan struct{}, 2)
+
+	go func() {
+		s.runConnectorExtraction(first)
+		done <- struct{}{}
+	}()
+	if got := waitEntered(t, runner.entered); got != "telegram" {
+		t.Fatalf("expected telegram to enter first, got %q", got)
+	}
+
+	go func() {
+		s.runConnectorExtraction(second)
+		done <- struct{}{}
+	}()
+	select {
+	case providerID := <-runner.entered:
+		t.Fatalf("expected second connector to wait for shared ingestor, but %s entered", providerID)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	runner.release <- struct{}{}
+	waitDone(t, done)
+	if got := waitEntered(t, runner.entered); got != "webgallery" {
+		t.Fatalf("expected webgallery to enter after telegram completed, got %q", got)
+	}
+	runner.release <- struct{}{}
+	waitDone(t, done)
+
+	if runner.maxActiveRuns() != 1 {
+		t.Fatalf("expected at most one active connector ingestion, got %d", runner.maxActiveRuns())
+	}
+}
+
 type fakeConnector struct {
 	source provider.Source
 }
@@ -98,4 +146,59 @@ func (c fakeConnector) DiscoverPage(context.Context, provider.PageRequest) (*pro
 
 func (c fakeConnector) ResolveMedia(context.Context, provider.DiscoveredMedia) (*provider.DiscoveredMedia, error) {
 	return nil, nil
+}
+
+type recordingRunner struct {
+	mu        sync.Mutex
+	active    int
+	maxActive int
+	entered   chan string
+	release   chan struct{}
+}
+
+func (r *recordingRunner) RunConnectorWithOptions(_ context.Context, connector provider.Connector, _ ingest.RunOptions) (ingest.Result, error) {
+	r.mu.Lock()
+	r.active++
+	if r.active > r.maxActive {
+		r.maxActive = r.active
+	}
+	r.mu.Unlock()
+
+	r.entered <- connector.Provider().ID
+	<-r.release
+
+	r.mu.Lock()
+	r.active--
+	r.mu.Unlock()
+
+	return ingest.Result{}, nil
+}
+
+func (r *recordingRunner) maxActiveRuns() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return r.maxActive
+}
+
+func waitEntered(t *testing.T, entered <-chan string) string {
+	t.Helper()
+
+	select {
+	case providerID := <-entered:
+		return providerID
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for connector ingestion to start")
+		return ""
+	}
+}
+
+func waitDone(t *testing.T, done <-chan struct{}) {
+	t.Helper()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for connector ingestion to finish")
+	}
 }
