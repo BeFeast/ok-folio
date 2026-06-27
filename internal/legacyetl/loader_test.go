@@ -106,7 +106,7 @@ func setupSQLiteETLDB(t *testing.T) *database.DB {
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
-	if err := gormDB.AutoMigrate(&database.DownloadedPhoto{}, &database.ExtractionRun{}, &database.InboxItem{}, &database.ETLWatermark{}); err != nil {
+	if err := gormDB.AutoMigrate(&database.DownloadedPhoto{}, &database.ExtractionRun{}, &database.InboxItem{}, &database.ConnectorState{}, &database.ETLWatermark{}); err != nil {
 		t.Fatalf("migrate sqlite: %v", err)
 	}
 	return &database.DB{DB: gormDB}

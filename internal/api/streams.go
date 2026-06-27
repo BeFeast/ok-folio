@@ -25,6 +25,8 @@ type connectorStatus struct {
 	Sources      []connectorSourceStatus `json:"sources"`
 	RecentRuns   []connectorRunStatus    `json:"recent_runs"`
 	RecentErrors []connectorErrorStatus  `json:"recent_errors"`
+	hasState     bool
+	lastStatus   string
 }
 
 type connectorCounts struct {
@@ -77,9 +79,16 @@ func (s *Server) handleConnectorStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	runs, err := s.db.GetRecentRuns(5)
+	runs, err := s.db.GetRecentConnectorRuns(5)
 	if err != nil {
 		s.logger.Error().Err(err).Msg("Failed to fetch connector runs")
+		s.writeError(w, http.StatusInternalServerError, "Failed to fetch connector status")
+		return
+	}
+
+	states, err := s.db.GetConnectorStates()
+	if err != nil {
+		s.logger.Error().Err(err).Msg("Failed to fetch connector state")
 		s.writeError(w, http.StatusInternalServerError, "Failed to fetch connector status")
 		return
 	}
@@ -91,17 +100,26 @@ func (s *Server) handleConnectorStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	connectors := buildConnectorStatuses(sourceStats, runs, recentErrors)
+	connectors := buildConnectorStatuses(sourceStats, runs, states, recentErrors)
 	s.writeJSON(w, http.StatusOK, connectorStatusResponse{Connectors: connectors})
 }
 
-func buildConnectorStatuses(sourceStats []database.ConnectorSourceStats, runs []database.ExtractionRun, recentErrors []database.ConnectorError) []connectorStatus {
+func buildConnectorStatuses(sourceStats []database.ConnectorSourceStats, runs []database.ExtractionRun, states []database.ConnectorState, recentErrors []database.ConnectorError) []connectorStatus {
 	byConnector := map[string]*connectorStatus{
 		"webgallery": {
 			ID:           "webgallery",
 			DisplayName:  "Web Gallery",
 			Health:       "idle",
 			State:        "Idle",
+			Sources:      []connectorSourceStatus{},
+			RecentRuns:   []connectorRunStatus{},
+			RecentErrors: []connectorErrorStatus{},
+		},
+		"telegram": {
+			ID:           "telegram",
+			DisplayName:  "Telegram",
+			Health:       "idle",
+			State:        "Not synced",
 			Sources:      []connectorSourceStatus{},
 			RecentRuns:   []connectorRunStatus{},
 			RecentErrors: []connectorErrorStatus{},
@@ -137,13 +155,16 @@ func buildConnectorStatuses(sourceStats []database.ConnectorSourceStats, runs []
 		applyConnectorCount(&connector.Counts, stat.Status, stat.Count)
 		if stat.LastActivity != nil && !stat.LastActivity.IsZero() {
 			source.LastSync = maxTime(source.LastSync, *stat.LastActivity)
-			connector.LastSync = maxTime(connector.LastSync, *stat.LastActivity)
 		}
 	}
 
-	webgallery := ensureConnectorStatus(byConnector, "webgallery")
 	for _, run := range runs {
-		webgallery.RecentRuns = append(webgallery.RecentRuns, connectorRunStatus{
+		providerID := run.Provider
+		if providerID == "" {
+			providerID = "webgallery"
+		}
+		connector := ensureConnectorStatus(byConnector, providerID)
+		connector.RecentRuns = append(connector.RecentRuns, connectorRunStatus{
 			ID:               run.ID,
 			StartTime:        run.StartTime,
 			EndTime:          run.EndTime,
@@ -155,11 +176,17 @@ func buildConnectorStatuses(sourceStats []database.ConnectorSourceStats, runs []
 			PhotosFailed:     run.PhotosFailed,
 			ErrorMessage:     run.ErrorMessage,
 		})
-		if run.EndTime != nil {
-			webgallery.LastSync = maxTime(webgallery.LastSync, *run.EndTime)
-		} else {
-			webgallery.LastSync = maxTime(webgallery.LastSync, run.StartTime)
+	}
+
+	for _, state := range states {
+		providerID := state.ProviderID
+		if providerID == "" {
+			providerID = "webgallery"
 		}
+		connector := ensureConnectorStatus(byConnector, providerID)
+		connector.hasState = true
+		connector.lastStatus = state.LastStatus
+		connector.LastSync = state.LastRunAt
 	}
 
 	for _, connectorError := range recentErrors {
@@ -181,7 +208,6 @@ func buildConnectorStatuses(sourceStats []database.ConnectorSourceStats, runs []
 			Message:    message,
 			OccurredAt: connectorError.OccurredAt,
 		})
-		connector.LastSync = maxTime(connector.LastSync, connectorError.OccurredAt)
 	}
 
 	connectors := make([]connectorStatus, 0, len(byConnector))
@@ -242,19 +268,75 @@ func applyConnectorCount(counts *connectorCounts, status string, count int64) {
 }
 
 func connectorHealth(connector connectorStatus) (string, string) {
-	if len(connector.RecentRuns) > 0 && connector.RecentRuns[0].Status == "running" {
+	runStatus := ""
+	if len(connector.RecentRuns) > 0 {
+		runStatus = connector.RecentRuns[0].Status
+	}
+	if connector.hasState {
+		return connectorHealthFromStatuses(connector.lastStatus, runStatus, connector.Counts.Failed > 0 || len(connector.RecentErrors) > 0)
+	}
+
+	switch normalizeConnectorStatus(runStatus) {
+	case "running":
 		return "syncing", "Syncing"
-	}
-	if len(connector.RecentRuns) > 0 && connector.RecentRuns[0].Status == "failed" {
+	case "failed":
 		return "error", "Needs review"
-	}
-	if connector.Counts.Failed > 0 || len(connector.RecentErrors) > 0 {
+	case "completed_with_errors":
 		return "degraded", "Degraded"
-	}
-	if connector.LastSync == nil {
+	case "completed":
+		if connector.Counts.Failed > 0 || len(connector.RecentErrors) > 0 {
+			return "degraded", "Degraded"
+		}
+		return "healthy", "Healthy"
+	default:
 		return "idle", "Not synced"
 	}
-	return "healthy", "Healthy"
+}
+
+func connectorHealthFromStatuses(lastStatus string, runStatus string, hasFailures bool) (string, string) {
+	status := normalizeConnectorStatus(lastStatus)
+	if status == "" {
+		status = normalizeConnectorStatus(runStatus)
+	}
+
+	switch status {
+	case "running":
+		return "syncing", "Syncing"
+	case "completed":
+		if hasFailures {
+			return "degraded", "Degraded"
+		}
+		return "healthy", "Healthy"
+	case "completed_with_errors":
+		return "degraded", "Degraded"
+	case "failed", "permission_halt":
+		return "error", "Needs review"
+	case "idle":
+		return "idle", "Not synced"
+	default:
+		return "degraded", "Needs review"
+	}
+}
+
+func normalizeConnectorStatus(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "":
+		return ""
+	case "not_synced", "never_synced", "idle":
+		return "idle"
+	case "running", "syncing", "in_progress", "started":
+		return "running"
+	case "completed", "complete", "success", "succeeded", "ok", "healthy":
+		return "completed"
+	case "completed_with_errors", "partial", "partial_success", "degraded":
+		return "completed_with_errors"
+	case "failed", "failure", "error", "errored":
+		return "failed"
+	case "permission_halt", "permission_halted", "permission", "halted", "needs_review":
+		return "permission_halt"
+	default:
+		return status
+	}
 }
 
 func maxTime(current *time.Time, candidate time.Time) *time.Time {
