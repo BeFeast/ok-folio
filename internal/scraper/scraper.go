@@ -369,8 +369,13 @@ func (s *Scraper) scheduleWarmThumbnailsOnIngest(photo database.DownloadedPhoto)
 		return
 	}
 	widths := append([]int(nil), s.cfg.Storage.WarmOnIngestWidths...)
+	select {
+	case s.thumbWarmSem <- struct{}{}:
+	default:
+		s.logger.Warn().Uint64("photo_id", photo.ID).Msg("Thumbnail warm-on-ingest skipped because workers are full")
+		return
+	}
 	go func() {
-		s.thumbWarmSem <- struct{}{}
 		defer func() { <-s.thumbWarmSem }()
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()

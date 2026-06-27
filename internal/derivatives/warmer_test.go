@@ -151,6 +151,22 @@ func TestNormalizeWarmConcurrencyClampsUpperBound(t *testing.T) {
 	}
 }
 
+func TestResolveOriginalPathDoesNotDoublePrefixRelativeBase(t *testing.T) {
+	storage := config.StorageConfig{BaseDirectory: filepath.Join("data", "originals")}
+
+	got := resolveOriginalPath(storage, filepath.Join("data", "originals", "artist", "piece.jpg"))
+	want := filepath.Join("data", "originals", "artist", "piece.jpg")
+	if got != want {
+		t.Fatalf("expected already-rooted relative path %q, got %q", want, got)
+	}
+
+	got = resolveOriginalPath(storage, filepath.Join("artist", "piece.jpg"))
+	want = filepath.Join("data", "originals", "artist", "piece.jpg")
+	if got != want {
+		t.Fatalf("expected base-prefixed path %q, got %q", want, got)
+	}
+}
+
 func setupWarmDB(t *testing.T) *database.DB {
 	t.Helper()
 	gormDB, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{

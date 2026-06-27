@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -349,6 +350,11 @@ func normalizeWidths(widths []int) ([]int, error) {
 func resolveOriginalPath(cfg config.StorageConfig, filePath string) string {
 	if filepath.IsAbs(filePath) {
 		return filePath
+	}
+	base := filepath.Clean(cfg.BaseDirectory)
+	cleanPath := filepath.Clean(filePath)
+	if base != "." && (cleanPath == base || strings.HasPrefix(cleanPath, base+string(filepath.Separator))) {
+		return cleanPath
 	}
 	return filepath.Join(cfg.BaseDirectory, filePath)
 }

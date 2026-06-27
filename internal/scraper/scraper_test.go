@@ -345,6 +345,30 @@ func TestDownloadResolvedMediaWarmsRecoveredFailedRowWithPersistedID(t *testing.
 	waitForFile(t, entry.Path)
 }
 
+func TestScheduleWarmThumbnailsOnIngestReturnsWhenWorkersFull(t *testing.T) {
+	cfg := setupScraperTestConfig(t)
+	cfg.Storage.WarmOnIngest = true
+	cfg.Storage.WarmOnIngestWidths = []int{400}
+	s := &Scraper{
+		cfg:          cfg,
+		logger:       zerolog.Nop(),
+		thumbWarmSem: make(chan struct{}, 1),
+	}
+	s.thumbWarmSem <- struct{}{}
+
+	done := make(chan struct{})
+	go func() {
+		s.scheduleWarmThumbnailsOnIngest(database.DownloadedPhoto{ID: 42})
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("scheduleWarmThumbnailsOnIngest blocked when workers were full")
+	}
+}
+
 func setupScraperTestDB(t *testing.T) *database.DB {
 	t.Helper()
 
