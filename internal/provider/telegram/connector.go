@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"ok-folio/internal/provider"
 	"ok-folio/pkg/retry"
@@ -28,8 +29,13 @@ const (
 )
 
 var (
-	captionArtistPattern = regexp.MustCompile(`(?i)^.+?\s*\((?:[^)]*,\s*)?\d{4}\s*[-–—]\s*\d{4}\)`)
+	// captionArtistPattern matches an artist line ending in a parenthetical with a
+	// year: a lifespan range "(США, 1928 - 2017)", a single year "(Omar Ortiz, 1977)",
+	// or a birth-only "(США, р. 1975)".
+	captionArtistPattern = regexp.MustCompile(`(?i)^.+?\s*\((?:[^)]*,\s*)?(?:р\.\s*)?\d{4}(?:\s*[-–—]\s*\d{4})?\)\s*$`)
 	captionYearPattern   = regexp.MustCompile(`\s+(\d{4})\s*г\.?\s*$`)
+	// captionTitleStrip trims surrounding quotes and dash-only placeholders.
+	captionDashOnly = regexp.MustCompile(`^[-–—\s]*$`)
 )
 
 type Config struct {
@@ -229,7 +235,13 @@ func discoveredMedia(message Message) (provider.DiscoveredMedia, bool) {
 	if title == "" {
 		title = ref.FileName
 	}
+	// Source should name the originating channel (e.g. "Нимфы и Музы"), which is
+	// the forwarded-from chat, not the operator's DM. Prefer a real forward URL,
+	// then the channel name, then the provider id as a last resort.
 	sourceURL := source.URL
+	if sourceURL == "" {
+		sourceURL = collectionName
+	}
 	if sourceURL == "" {
 		sourceURL = ProviderID
 	}
@@ -286,18 +298,55 @@ func parseArtworkCaption(caption string) parsedArtworkCaption {
 		}
 	}
 
+	// Fallback: when no "Name (… year …)" line is present, the artist may be a
+	// bare person name (e.g. "Виктор Анатольевич Долгополов"). Pick the first
+	// name-shaped line that isn't the medium line.
+	if parsed.Artist == "" {
+		for idx, line := range lines {
+			if idx == mediumIndex {
+				continue
+			}
+			if looksLikeArtistName(line) {
+				parsed.Artist = line
+				artistIndex = idx
+				break
+			}
+		}
+	}
+
 	for idx, line := range lines {
 		if idx == artistIndex || idx == mediumIndex {
 			continue
 		}
-		parsed.Title, parsed.Date = parseTitleAndDate(line)
-		if parsed.Title != "" {
+		title, date := parseTitleAndDate(line)
+		if title != "" {
+			parsed.Title = title
+			parsed.Date = date
 			return parsed
 		}
 	}
 
-	parsed.Title = lines[0]
 	return parsed
+}
+
+// looksLikeArtistName reports whether a line looks like a bare person name
+// (2-4 capitalized words, no quotes, digits, or sentence punctuation) — used
+// only when no parenthetical "Name (… year …)" artist line was found.
+func looksLikeArtistName(line string) bool {
+	if strings.ContainsAny(line, `"'“”«»!?.:0123456789()`) {
+		return false
+	}
+	fields := strings.Fields(line)
+	if len(fields) < 2 || len(fields) > 4 {
+		return false
+	}
+	for _, f := range fields {
+		r := []rune(f)
+		if len(r) == 0 || !unicode.IsUpper(r[0]) {
+			return false
+		}
+	}
+	return true
 }
 
 func captionLines(caption string) []string {
@@ -329,7 +378,9 @@ func isMediumLine(line string) bool {
 	keywords := map[string]struct{}{
 		"холст": {}, "масло": {}, "бумага": {}, "акварель": {}, "картон": {}, "темпера": {},
 		"гуашь": {}, "пастель": {}, "карандаш": {}, "тушь": {}, "уголь": {}, "сангина": {},
-		"дерево": {}, "медь": {}, "бронза": {}, "мрамор": {}, "canvas": {}, "oil": {},
+		"дерево": {}, "медь": {}, "бронза": {}, "мрамор": {}, "лён": {}, "лен": {},
+		"оргалит": {}, "фанера": {}, "акрил": {}, "акрилик": {},
+		"canvas": {}, "oil": {}, "linen": {}, "acrylic": {}, "panel": {},
 		"paper": {}, "watercolor": {}, "gouache": {}, "tempera": {}, "pastel": {},
 		"pencil": {}, "ink": {}, "charcoal": {}, "board": {},
 	}
@@ -375,6 +426,11 @@ func parseTitleAndDate(line string) (string, time.Time) {
 	}
 	title = strings.TrimSpace(title)
 	title = strings.Trim(title, `"'“”«»`)
+	title = strings.TrimSpace(title)
+	// A lone dash (and similar placeholders) means "no title".
+	if captionDashOnly.MatchString(title) {
+		return "", date
+	}
 	return title, date
 }
 
