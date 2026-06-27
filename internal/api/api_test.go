@@ -205,6 +205,20 @@ func TestHandleCreatePieceValidUpload(t *testing.T) {
 	server, db := setupTestServer(t)
 	defer safeShutdown(server)
 
+	statsReq := httptest.NewRequest(http.MethodGet, "/api/v1/stats", nil)
+	statsW := httptest.NewRecorder()
+	server.router.ServeHTTP(statsW, statsReq)
+	if statsW.Code != http.StatusOK {
+		t.Fatalf("prime stats status=%d body=%q", statsW.Code, statsW.Body.String())
+	}
+	var beforeStats map[string]interface{}
+	if err := json.NewDecoder(statsW.Body).Decode(&beforeStats); err != nil {
+		t.Fatalf("decode primed stats: %v", err)
+	}
+	if beforeStats["total_photos"].(float64) != 0 {
+		t.Fatalf("expected empty primed stats, got %#v", beforeStats)
+	}
+
 	body, contentType := createPieceMultipart(t, "piece.jpg", createTestJPEGBytes(t), map[string]string{
 		"title":  "Manual Piece",
 		"source": "https://example.com/source",
@@ -253,6 +267,20 @@ func TestHandleCreatePieceValidUpload(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("expected one uploaded row, got %d", count)
+	}
+
+	statsReq = httptest.NewRequest(http.MethodGet, "/api/v1/stats", nil)
+	statsW = httptest.NewRecorder()
+	server.router.ServeHTTP(statsW, statsReq)
+	if statsW.Code != http.StatusOK {
+		t.Fatalf("refetch stats status=%d body=%q", statsW.Code, statsW.Body.String())
+	}
+	var afterStats map[string]interface{}
+	if err := json.NewDecoder(statsW.Body).Decode(&afterStats); err != nil {
+		t.Fatalf("decode refreshed stats: %v", err)
+	}
+	if afterStats["total_photos"].(float64) != 1 {
+		t.Fatalf("expected stats cache to refresh after upload, got %#v", afterStats)
 	}
 
 	thumbReq := httptest.NewRequest(http.MethodGet, "/api/v1/photos/"+strconv.FormatUint(photo.ID, 10)+"/thumbnail?w=400", nil)

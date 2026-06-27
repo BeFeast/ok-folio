@@ -107,6 +107,7 @@ func (s *Server) handleCreatePiece(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.statsCache.Invalidate()
 	_ = s.cache.BumpEpoch(context.Background())
 	s.warmUploadedPiece(r.Context(), &photo)
 	s.writeJSON(w, http.StatusCreated, createPieceResponse{Photo: photo, Duplicate: false})
@@ -147,7 +148,7 @@ func readAndValidatePieceUpload(file multipart.File, header *multipart.FileHeade
 		return pieceUpload{}, fmt.Errorf("file must be a supported image")
 	}
 	if !acceptedPieceImageFormat(format) {
-		return pieceUpload{}, fmt.Errorf("file must be JPEG, PNG, TIFF, WebP, or HEIC")
+		return pieceUpload{}, fmt.Errorf("file must be JPEG, PNG, TIFF, or WebP")
 	}
 
 	img, _, err := image.Decode(bytes.NewReader(buf.Bytes()))
@@ -169,7 +170,7 @@ func readAndValidatePieceUpload(file multipart.File, header *multipart.FileHeade
 
 func acceptedPieceImageFormat(format string) bool {
 	switch strings.ToLower(format) {
-	case "jpeg", "png", "tiff", "webp", "heic":
+	case "jpeg", "png", "tiff", "webp":
 		return true
 	default:
 		return false

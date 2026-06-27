@@ -27,10 +27,8 @@ const ACCEPTED_IMAGE_TYPES = new Set([
   "image/png",
   "image/tiff",
   "image/webp",
-  "image/heic",
-  "image/heif",
 ]);
-const ACCEPTED_IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp", ".heic", ".heif"];
+const ACCEPTED_IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp"];
 
 function isAcceptedImage(file: File): boolean {
   if (ACCEPTED_IMAGE_TYPES.has(file.type)) return true;
@@ -102,7 +100,7 @@ export default function AddPieceModal() {
   const stageFile = (nextFile: File | undefined) => {
     if (!nextFile) return;
     if (!isAcceptedImage(nextFile)) {
-      setError("Choose a JPEG, PNG, TIFF, WebP, or HEIC image.");
+      setError("Choose a JPEG, PNG, TIFF, or WebP image.");
       setFile(null);
       return;
     }
@@ -175,7 +173,7 @@ export default function AddPieceModal() {
             <input
               ref={fileRef}
               type="file"
-              accept="image/jpeg,image/png,image/tiff,image/webp,image/heic,image/heif,.jpg,.jpeg,.png,.tif,.tiff,.webp,.heic,.heif"
+              accept="image/jpeg,image/png,image/tiff,image/webp,.jpg,.jpeg,.png,.tif,.tiff,.webp"
               style={{ display: "none" }}
               onChange={(e) => stageFile(e.target.files?.[0])}
             />
@@ -204,7 +202,7 @@ export default function AddPieceModal() {
               >
                 Choose a file
               </Hov>
-              <div style={{ fontFamily: "var(--sans)", fontSize: 11, color: "var(--faint)", letterSpacing: "0.04em" }}>JPEG · PNG · TIFF · WebP · HEIC</div>
+              <div style={{ fontFamily: "var(--sans)", fontSize: 11, color: "var(--faint)", letterSpacing: "0.04em" }}>JPEG · PNG · TIFF · WebP</div>
             </Hov>
           </div>
           <div style={{ padding: "26px 28px 26px 16px", display: "flex", flexDirection: "column", gap: 18 }}>
