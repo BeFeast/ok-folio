@@ -6,30 +6,37 @@ import (
 
 	okfcache "ok-folio/internal/cache"
 	"ok-folio/internal/config"
-	"ok-folio/internal/database"
-	"ok-folio/internal/scraper"
+	"ok-folio/internal/ingest"
+	"ok-folio/internal/provider"
+	"ok-folio/internal/provider/webgallery"
 
 	"github.com/robfig/cron/v3"
 	"github.com/rs/zerolog"
 )
 
 type Scheduler struct {
-	cfg     *config.Config
-	db      *database.DB
-	scraper *scraper.Scraper
-	cache   *okfcache.Client
-	logger  zerolog.Logger
-	cron    *cron.Cron
+	cfg        *config.Config
+	ingestor   *ingest.Ingestor
+	connectors []provider.Connector
+	cache      *okfcache.Client
+	indexer    interface {
+		TriggerPhotoprismIndex(context.Context) error
+	}
+	logger zerolog.Logger
+	cron   *cron.Cron
 }
 
-func New(cfg *config.Config, db *database.DB, scraper *scraper.Scraper, cache *okfcache.Client, logger zerolog.Logger) *Scheduler {
+func New(cfg *config.Config, ingestor *ingest.Ingestor, connectors []provider.Connector, cache *okfcache.Client, indexer interface {
+	TriggerPhotoprismIndex(context.Context) error
+}, logger zerolog.Logger) *Scheduler {
 	return &Scheduler{
-		cfg:     cfg,
-		db:      db,
-		scraper: scraper,
-		cache:   cache,
-		logger:  logger,
-		cron:    cron.New(cron.WithSeconds()),
+		cfg:        cfg,
+		ingestor:   ingestor,
+		connectors: connectors,
+		cache:      cache,
+		indexer:    indexer,
+		logger:     logger,
+		cron:       cron.New(cron.WithSeconds()),
 	}
 }
 
@@ -66,39 +73,28 @@ func (s *Scheduler) runExtraction() {
 	s.logger.Info().Msg("Starting scheduled extraction")
 
 	ctx := context.Background()
-	run, err := s.db.StartExtractionRun()
-	if err != nil {
-		s.logger.Error().Err(err).Msg("Failed to start extraction run")
-		return
-	}
-
 	var (
 		totalDownloaded int
 		totalSkipped    int
 		totalFailed     int
 	)
 
-	for _, page := range s.cfg.Scheduler.Pages {
-		s.logger.Info().Int("page", page).Msg("Scraping page")
-
-		downloaded, skipped, failed, err := s.scraper.ScrapePage(ctx, page)
+	for _, connector := range s.connectors {
+		providerID := connector.Provider().ID
+		s.logger.Info().Str("provider", providerID).Msg("Running connector ingestion")
+		opts := ingest.RunOptions{}
+		if providerID == webgallery.ProviderID && len(s.cfg.Scheduler.Pages) > 0 {
+			opts.AllowedPages = s.cfg.Scheduler.Pages
+		}
+		result, err := s.ingestor.RunConnectorWithOptions(ctx, connector, opts)
 		if err != nil {
-			s.logger.Error().Err(err).Int("page", page).Msg("Failed to scrape page")
-			// Continue with other pages even if one fails
+			s.logger.Error().Err(err).Str("provider", providerID).Msg("Connector ingestion failed")
 		}
 
-		totalDownloaded += downloaded
-		totalSkipped += skipped
-		totalFailed += failed
-
-		run.PagesProcessed++
-		run.PhotosDownloaded = totalDownloaded
-		run.PhotosSkipped = totalSkipped
-		run.PhotosFailed = totalFailed
-		s.db.UpdateExtractionRun(run)
+		totalDownloaded += result.PhotosDownloaded
+		totalSkipped += result.PhotosSkipped
+		totalFailed += result.PhotosFailed
 	}
-
-	s.db.FinishExtractionRun(run.ID, "completed", "")
 
 	s.logger.Info().
 		Int("downloaded", totalDownloaded).
@@ -108,11 +104,13 @@ func (s *Scheduler) runExtraction() {
 
 	// Trigger PhotoPrism indexing if photos were downloaded
 	if totalDownloaded > 0 {
-		_ = s.cache.BumpEpoch(ctx)
-		s.logger.Debug().Msg("Catalog cache epoch bumped after scheduled downloads")
-
-		if err := s.scraper.TriggerPhotoprismIndex(ctx); err != nil {
-			s.logger.Warn().Err(err).Msg("Failed to trigger PhotoPrism indexing")
+		if s.cache != nil {
+			s.logger.Debug().Msg("Catalog cache epoch bumped by ingestor batches")
+		}
+		if s.indexer != nil {
+			if err := s.indexer.TriggerPhotoprismIndex(ctx); err != nil {
+				s.logger.Warn().Err(err).Msg("Failed to trigger PhotoPrism indexing")
+			}
 		}
 	}
 }

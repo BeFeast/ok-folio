@@ -150,6 +150,41 @@ func (c *Client) BumpEpoch(ctx context.Context) error {
 	return nil
 }
 
+func (c *Client) Seen(ctx context.Context, providerID string, dedupeKey string) (bool, error) {
+	if c == nil || c.Passthrough() || providerID == "" || dedupeKey == "" {
+		return false, nil
+	}
+	seen, err := c.r.SIsMember(ctx, SeenKey(providerID), dedupeKey).Result()
+	if err != nil {
+		c.passthrough.Store(true)
+		c.logger.Warn().Err(err).Str("provider", providerID).Msg("Seen-set read failed; using passthrough")
+		return false, nil
+	}
+	return seen, nil
+}
+
+func (c *Client) MarkSeen(ctx context.Context, providerID string, dedupeKey string) error {
+	if c == nil || c.Passthrough() || providerID == "" || dedupeKey == "" {
+		return nil
+	}
+	if err := c.r.SAdd(ctx, SeenKey(providerID), dedupeKey).Err(); err != nil {
+		c.passthrough.Store(true)
+		c.logger.Warn().Err(err).Str("provider", providerID).Msg("Seen-set write failed; using passthrough")
+	}
+	return nil
+}
+
+func (c *Client) MarkDedupeHash(ctx context.Context, contentHash []byte, dedupeKey string) error {
+	if c == nil || c.Passthrough() || len(contentHash) == 0 {
+		return nil
+	}
+	if err := c.r.Set(ctx, DedupeHashKey(contentHash), dedupeKey, 0).Err(); err != nil {
+		c.passthrough.Store(true)
+		c.logger.Warn().Err(err).Msg("Content-hash cache write failed; using passthrough")
+	}
+	return nil
+}
+
 func (c *Client) Delete(ctx context.Context, keys ...string) error {
 	if c == nil || c.Passthrough() || len(keys) == 0 {
 		return nil

@@ -100,6 +100,7 @@ type ExtractionRun struct {
 	ID               uint64    `gorm:"primarykey"`
 	StartTime        time.Time `gorm:"autoCreateTime"`
 	EndTime          *time.Time
+	Provider         string `gorm:"type:text;index"`
 	Status           string `gorm:"type:text;index;default:'running'"` // running, completed, failed
 	PagesProcessed   int
 	PhotosFound      int
@@ -416,6 +417,8 @@ func (db *DB) RecordDownload(photo *DownloadedPhoto) error {
 			"file_path":     photo.FilePath,
 			"file_name":     photo.FileName,
 			"file_size":     photo.FileSize,
+			"provider":      photo.Provider,
+			"content_hash":  photo.ContentHash,
 			"status":        photo.Status,
 			"error_message": "",
 		}),
@@ -517,10 +520,13 @@ func (db *DB) GetInboxExceptions(limit int, offset int) ([]InboxItem, int64, err
 	return items, total, nil
 }
 
-// StartExtractionRun creates a new extraction run record
-func (db *DB) StartExtractionRun() (*ExtractionRun, error) {
+// StartExtractionRun creates a new extraction run record.
+func (db *DB) StartExtractionRun(providerID ...string) (*ExtractionRun, error) {
 	run := &ExtractionRun{
 		Status: "running",
+	}
+	if len(providerID) > 0 {
+		run.Provider = providerID[0]
 	}
 	err := db.Create(run).Error
 	return run, err

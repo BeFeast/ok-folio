@@ -2,7 +2,9 @@ package scraper
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
+	"hash"
 	"io"
 	"net/http"
 	"os"
@@ -134,7 +136,7 @@ func (s *Scraper) ScrapePage(ctx context.Context, page int) (int, int, int, erro
 			semaphore <- struct{}{}        // Acquire
 			defer func() { <-semaphore }() // Release
 
-			dedupeKey := stableDedupeKey(mediaItem)
+			dedupeKey := StableDedupeKey(mediaItem)
 			if dedupeKey == "" {
 				if err := s.recordInboxException(mediaItem, "ambiguous", "missing connector dedupe key"); err != nil {
 					s.logger.Error().Err(err).Msg("Failed to record ambiguous inbox item")
@@ -154,7 +156,7 @@ func (s *Scraper) ScrapePage(ctx context.Context, page int) (int, int, int, erro
 			defer keyLock.Unlock()
 
 			// Check if already downloaded
-			exists, err := s.isMediaAlreadyKept(mediaItem)
+			exists, err := s.IsMediaAlreadyKept(mediaItem)
 			if err != nil {
 				s.logger.Error().Err(err).Str("dedupe_key", dedupeKey).Msg("Failed to check if photo exists")
 				mu.Lock()
@@ -211,7 +213,7 @@ func (s *Scraper) ScrapePage(ctx context.Context, page int) (int, int, int, erro
 
 // downloadPhoto downloads a single photo and its metadata
 func (s *Scraper) downloadPhoto(ctx context.Context, item provider.DiscoveredMedia) error {
-	dedupeKey := stableDedupeKey(item)
+	dedupeKey := StableDedupeKey(item)
 	if dedupeKey == "" {
 		return fmt.Errorf("missing connector dedupe key")
 	}
@@ -222,18 +224,36 @@ func (s *Scraper) downloadPhoto(ctx context.Context, item provider.DiscoveredMed
 		return fmt.Errorf("failed to resolve media: %w", err)
 	}
 
+	_, err = s.DownloadResolvedMedia(ctx, *resolved, s.provider.Provider().ID)
+	return err
+}
+
+// DownloadResolvedMedia persists a provider-resolved media item while preserving
+// the legacy scraper's storage, EXIF, and daily symlink behavior.
+func (s *Scraper) DownloadResolvedMedia(ctx context.Context, resolved provider.DiscoveredMedia, providerID string) (*database.DownloadedPhoto, error) {
+	dedupeKey := StableDedupeKey(resolved)
+	if dedupeKey == "" {
+		return nil, fmt.Errorf("missing connector dedupe key")
+	}
+	if providerID == "" {
+		providerID = resolved.ProviderID
+	}
+	if providerID == "" {
+		providerID = database.DefaultProvider
+	}
+
 	// Sanitize artist name for folder
 	sanitizedArtist := sanitizeFolderName(resolved.Artist)
 	artistDir := filepath.Join(s.cfg.Storage.BaseDirectory, sanitizedArtist)
 
 	// Validate artist directory path
 	if err := validatePath(s.cfg.Storage.BaseDirectory, artistDir); err != nil {
-		return fmt.Errorf("invalid artist directory path: %w", err)
+		return nil, fmt.Errorf("invalid artist directory path: %w", err)
 	}
 
 	// Create artist directory
 	if err := os.MkdirAll(artistDir, DefaultDirPermissions); err != nil {
-		return fmt.Errorf("failed to create artist directory: %w", err)
+		return nil, fmt.Errorf("failed to create artist directory: %w", err)
 	}
 
 	// Download image
@@ -245,12 +265,12 @@ func (s *Scraper) downloadPhoto(ctx context.Context, item provider.DiscoveredMed
 
 	// Validate file path
 	if err := validatePath(s.cfg.Storage.BaseDirectory, filePath); err != nil {
-		return fmt.Errorf("invalid file path: %w", err)
+		return nil, fmt.Errorf("invalid file path: %w", err)
 	}
 
-	fileSize, err := s.downloadFile(ctx, resolved.Media.URL, filePath)
+	fileSize, contentHash, err := s.downloadFile(ctx, resolved.Media.URL, filePath)
 	if err != nil {
-		return fmt.Errorf("failed to download image file: %w", err)
+		return nil, fmt.Errorf("failed to download image file: %w", err)
 	}
 
 	// Set EXIF metadata
@@ -268,20 +288,22 @@ func (s *Scraper) downloadPhoto(ctx context.Context, item provider.DiscoveredMed
 
 	// Record in database
 	photo := &database.DownloadedPhoto{
-		URL:        dedupeKey,
-		SourcePage: resolved.Source.URL,
-		Title:      resolved.Title,
-		Artist:     resolved.Artist,
-		UploadDate: resolved.PublishedAt,
-		FilePath:   filePath,
-		FileName:   fileName,
-		FileSize:   fileSize,
-		Status:     "downloaded",
+		URL:         dedupeKey,
+		SourcePage:  resolved.Source.URL,
+		Title:       resolved.Title,
+		Artist:      resolved.Artist,
+		UploadDate:  resolved.PublishedAt,
+		FilePath:    filePath,
+		FileName:    fileName,
+		FileSize:    fileSize,
+		Status:      "downloaded",
+		Provider:    providerID,
+		ContentHash: contentHash,
 	}
 
 	if err := s.db.RecordDownload(photo); err != nil {
 		s.logger.Error().Err(err).Msg("Failed to record download in database")
-		return fmt.Errorf("failed to record download in database: %w", err)
+		return nil, fmt.Errorf("failed to record download in database: %w", err)
 	}
 
 	// Create daily symlink
@@ -299,13 +321,13 @@ func (s *Scraper) downloadPhoto(ctx context.Context, item provider.DiscoveredMed
 		Str("artist", resolved.Artist).
 		Msg("Successfully downloaded photo")
 
-	return nil
+	return photo, nil
 }
 
 func (s *Scraper) recordInboxException(item provider.DiscoveredMedia, status string, reason string) error {
 	return s.db.RecordInboxException(&database.InboxItem{
 		ProviderID: item.ProviderID,
-		DedupeKey:  stableDedupeKey(item),
+		DedupeKey:  StableDedupeKey(item),
 		SourceID:   item.Source.ExternalID,
 		MediaID:    item.Media.ExternalID,
 		SourceURL:  item.Source.URL,
@@ -316,15 +338,15 @@ func (s *Scraper) recordInboxException(item provider.DiscoveredMedia, status str
 	})
 }
 
-func stableDedupeKey(item provider.DiscoveredMedia) string {
+func StableDedupeKey(item provider.DiscoveredMedia) string {
 	if item.DedupeKey.ProviderID == "" || item.DedupeKey.Value == "" {
 		return ""
 	}
 	return item.DedupeKey.String()
 }
 
-func (s *Scraper) isMediaAlreadyKept(item provider.DiscoveredMedia) (bool, error) {
-	keys := []string{stableDedupeKey(item)}
+func (s *Scraper) IsMediaAlreadyKept(item provider.DiscoveredMedia) (bool, error) {
+	keys := []string{StableDedupeKey(item)}
 	if item.ProviderID == webgallery.ProviderID && item.Source.URL != "" {
 		keys = append(keys, item.Source.URL)
 	}
@@ -345,7 +367,7 @@ func (s *Scraper) isMediaAlreadyKept(item provider.DiscoveredMedia) (bool, error
 }
 
 // downloadFile downloads a file from a URL
-func (s *Scraper) downloadFile(ctx context.Context, fileURL, destPath string) (int64, error) {
+func (s *Scraper) downloadFile(ctx context.Context, fileURL, destPath string) (int64, []byte, error) {
 	retryConfig := retry.Config{
 		MaxAttempts:  s.cfg.Retry.MaxAttempts,
 		InitialDelay: s.cfg.Retry.InitialDelay,
@@ -353,16 +375,20 @@ func (s *Scraper) downloadFile(ctx context.Context, fileURL, destPath string) (i
 		Multiplier:   s.cfg.Retry.Multiplier,
 	}
 
-	return retry.DoWithValue(ctx, retryConfig, func() (int64, error) {
+	type downloadResult struct {
+		size int64
+		hash []byte
+	}
+	result, err := retry.DoWithValue(ctx, retryConfig, func() (downloadResult, error) {
 		req, err := http.NewRequestWithContext(ctx, "GET", fileURL, nil)
 		if err != nil {
-			return 0, err
+			return downloadResult{}, err
 		}
 		req.Header.Set("User-Agent", s.cfg.Download.UserAgent)
 
 		resp, err := s.client.Do(req)
 		if err != nil {
-			return 0, err
+			return downloadResult{}, err
 		}
 		defer resp.Body.Close()
 
@@ -374,16 +400,16 @@ func (s *Scraper) downloadFile(ctx context.Context, fileURL, destPath string) (i
 			}
 			s.logger.Warn().Dur("retry_after", retryAfter).Msg("Rate limited on file download, waiting before retry")
 			time.Sleep(retryAfter)
-			return 0, &RateLimitError{RetryAfter: retryAfter}
+			return downloadResult{}, &RateLimitError{RetryAfter: retryAfter}
 		}
 
 		if resp.StatusCode != http.StatusOK {
-			return 0, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+			return downloadResult{}, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 		}
 
 		out, err := os.Create(destPath)
 		if err != nil {
-			return 0, err
+			return downloadResult{}, err
 		}
 
 		// Track success for cleanup
@@ -396,15 +422,27 @@ func (s *Scraper) downloadFile(ctx context.Context, fileURL, destPath string) (i
 			}
 		}()
 
-		written, err := io.Copy(out, resp.Body)
+		hasher := sha256.New()
+		written, err := io.Copy(out, io.TeeReader(resp.Body, hasher))
 		if err != nil {
-			return 0, err
+			return downloadResult{}, err
 		}
 
 		// Mark as successful before returning
 		success = true
-		return written, nil
+		return downloadResult{size: written, hash: hashSum(hasher)}, nil
 	})
+	if err != nil {
+		return 0, nil, err
+	}
+	return result.size, result.hash, nil
+}
+
+func hashSum(h hash.Hash) []byte {
+	sum := h.Sum(nil)
+	out := make([]byte, len(sum))
+	copy(out, sum)
+	return out
 }
 
 // createDailySymlink creates a symlink in the daily directory

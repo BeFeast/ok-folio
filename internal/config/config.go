@@ -33,6 +33,7 @@ type Config struct {
 	Retry      RetryConfig      `yaml:"retry"`
 	EXIF       EXIFConfig       `yaml:"exif"`
 	PhotoPrism PhotoPrismConfig `yaml:"photoprism"`
+	Telegram   TelegramConfig   `yaml:"telegram"`
 	Logging    LoggingConfig    `yaml:"logging"`
 	Download   DownloadConfig   `yaml:"download"`
 }
@@ -97,6 +98,15 @@ type PhotoPrismConfig struct {
 	AutoIndex  bool   `yaml:"auto_index"`
 	Username   string `yaml:"username"`
 	Password   string `yaml:"password"`
+}
+
+type TelegramConfig struct {
+	BotToken    string `yaml:"bot_token"`
+	BaseURL     string `yaml:"base_url"`
+	FileBaseURL string `yaml:"file_base_url"`
+	ChatID      string `yaml:"chat_id"`
+	DisplayName string `yaml:"display_name"`
+	Limit       int    `yaml:"limit"`
 }
 
 type LoggingConfig struct {
@@ -173,6 +183,18 @@ func Load(path string) (*Config, error) {
 	}
 	if photoPrismPassword := os.Getenv("PHOTOPRISM_PASSWORD"); photoPrismPassword != "" {
 		cfg.PhotoPrism.Password = photoPrismPassword
+	}
+	if telegramBotToken := os.Getenv("TELEGRAM_BOT_TOKEN"); telegramBotToken != "" {
+		cfg.Telegram.BotToken = telegramBotToken
+	}
+	if telegramChatID := os.Getenv("TELEGRAM_CHAT_ID"); telegramChatID != "" {
+		cfg.Telegram.ChatID = telegramChatID
+	}
+	if telegramBaseURL := os.Getenv("TELEGRAM_BASE_URL"); telegramBaseURL != "" {
+		cfg.Telegram.BaseURL = telegramBaseURL
+	}
+	if telegramFileBaseURL := os.Getenv("TELEGRAM_FILE_BASE_URL"); telegramFileBaseURL != "" {
+		cfg.Telegram.FileBaseURL = telegramFileBaseURL
 	}
 
 	cfg.Database.applyDefaults()
