@@ -68,6 +68,29 @@ export interface ConnectorSourceStatus {
   counts: ConnectorCounts;
 }
 
+export interface ConnectorSourceSetting {
+  id: number;
+  type: string;
+  chat_id: string;
+  label: string;
+  enabled: boolean;
+  last_error?: string;
+  last_seen_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ConnectorSourcesResponse {
+  sources: ConnectorSourceSetting[];
+}
+
+export interface ConnectorSourceInput {
+  type: string;
+  chat_id: string;
+  label: string;
+  enabled?: boolean;
+}
+
 export interface ConnectorRunStatus {
   id: number;
   start_time: string;

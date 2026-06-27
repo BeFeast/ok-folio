@@ -139,6 +139,25 @@ func (ConnectorState) TableName() string {
 	return "connector_state"
 }
 
+// ConnectorSource is an operator-managed source scope for a provider connector.
+// Telegram uses ChatID as the source scope; other providers can add their own
+// scoped columns without changing connector_state.
+type ConnectorSource struct {
+	ID         uint64     `gorm:"primarykey" json:"id"`
+	Type       string     `gorm:"column:type;type:text;not null;index;uniqueIndex:idx_connector_sources_type_chat_id" json:"type"`
+	ChatID     string     `gorm:"column:chat_id;type:text;not null;uniqueIndex:idx_connector_sources_type_chat_id" json:"chat_id"`
+	Label      string     `gorm:"column:label;type:text" json:"label"`
+	Enabled    bool       `gorm:"column:enabled;not null;default:true;index" json:"enabled"`
+	LastError  string     `gorm:"column:last_error;type:text" json:"last_error,omitempty"`
+	LastSeenAt *time.Time `gorm:"column:last_seen_at" json:"last_seen_at,omitempty"`
+	CreatedAt  time.Time  `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt  time.Time  `gorm:"autoUpdateTime" json:"updated_at"`
+}
+
+func (ConnectorSource) TableName() string {
+	return "connector_sources"
+}
+
 // ETLWatermark stores legacy import progress in OK Folio Postgres. The legacy
 // source remains read-only; incremental runs advance this row only after the
 // loader transaction commits.
@@ -339,7 +358,7 @@ func New(cfg *config.DatabaseConfig) (*DB, error) {
 // non-destructive post-migrate steps (identity PK, embedding column). It is the
 // single migration entry point so tests exercise the same path as boot.
 func Migrate(db *gorm.DB) error {
-	if err := db.AutoMigrate(&DownloadedPhoto{}, &ExtractionRun{}, &InboxItem{}, &ConnectorState{}, &ETLWatermark{}); err != nil {
+	if err := db.AutoMigrate(&DownloadedPhoto{}, &ExtractionRun{}, &InboxItem{}, &ConnectorState{}, &ConnectorSource{}, &ETLWatermark{}); err != nil {
 		return fmt.Errorf("failed to migrate database: %w", err)
 	}
 	if db.Dialector.Name() == "postgres" {
@@ -833,6 +852,120 @@ func (db *DB) SaveConnectorState(state ConnectorState) error {
 			"error_message": state.ErrorMessage,
 		}),
 	}).Create(&state).Error
+}
+
+func normalizeConnectorSource(source ConnectorSource) (ConnectorSource, error) {
+	source.Type = strings.TrimSpace(source.Type)
+	source.ChatID = strings.TrimSpace(source.ChatID)
+	source.Label = strings.TrimSpace(source.Label)
+	if source.Type == "" {
+		return ConnectorSource{}, fmt.Errorf("connector source type is required")
+	}
+	if source.ChatID == "" {
+		return ConnectorSource{}, fmt.Errorf("connector source chat ID is required")
+	}
+	return source, nil
+}
+
+// ListConnectorSources returns operator-managed connector source rows.
+func (db *DB) ListConnectorSources(sourceType string) ([]ConnectorSource, error) {
+	sourceType = strings.TrimSpace(sourceType)
+	query := db.Order("type ASC, label ASC, chat_id ASC, id ASC")
+	if sourceType != "" {
+		query = query.Where("type = ?", sourceType)
+	}
+	var sources []ConnectorSource
+	if err := query.Find(&sources).Error; err != nil {
+		return nil, err
+	}
+	return sources, nil
+}
+
+// ConnectorSourceScopes returns enabled source scopes for a connector and
+// whether any managed source row exists. A managed connector with zero enabled
+// rows intentionally polls nothing instead of falling back to all chats.
+func (db *DB) ConnectorSourceScopes(sourceType string) ([]string, bool, error) {
+	sourceType = strings.TrimSpace(sourceType)
+	if sourceType == "" {
+		return nil, false, fmt.Errorf("connector source type is required")
+	}
+
+	var total int64
+	if err := db.Model(&ConnectorSource{}).Where("type = ?", sourceType).Count(&total).Error; err != nil {
+		return nil, false, err
+	}
+	if total == 0 {
+		return nil, false, nil
+	}
+
+	var sources []ConnectorSource
+	if err := db.Where("type = ? AND enabled = ?", sourceType, true).Order("id ASC").Find(&sources).Error; err != nil {
+		return nil, true, err
+	}
+	scopes := make([]string, 0, len(sources))
+	for _, source := range sources {
+		scopes = append(scopes, source.ChatID)
+	}
+	return scopes, true, nil
+}
+
+func (db *DB) CreateConnectorSource(source ConnectorSource) (*ConnectorSource, error) {
+	normalized, err := normalizeConnectorSource(source)
+	if err != nil {
+		return nil, err
+	}
+	if !source.Enabled {
+		normalized.Enabled = false
+	} else {
+		normalized.Enabled = true
+	}
+	if err := db.Create(&normalized).Error; err != nil {
+		return nil, err
+	}
+	return &normalized, nil
+}
+
+func (db *DB) UpdateConnectorSource(id uint64, updates ConnectorSource) (*ConnectorSource, error) {
+	if id == 0 {
+		return nil, fmt.Errorf("connector source ID is required")
+	}
+	attrs := map[string]interface{}{
+		"enabled": updates.Enabled,
+	}
+	if strings.TrimSpace(updates.Label) != "" {
+		attrs["label"] = strings.TrimSpace(updates.Label)
+	}
+	if strings.TrimSpace(updates.ChatID) != "" {
+		attrs["chat_id"] = strings.TrimSpace(updates.ChatID)
+	}
+
+	result := db.Model(&ConnectorSource{}).Where("id = ?", id).Updates(attrs)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	var source ConnectorSource
+	if err := db.Where("id = ?", id).First(&source).Error; err != nil {
+		return nil, err
+	}
+	return &source, nil
+}
+
+func (db *DB) DeleteConnectorSource(id uint64) error {
+	if id == 0 {
+		return fmt.Errorf("connector source ID is required")
+	}
+	result := db.Delete(&ConnectorSource{}, id)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
 }
 
 // GetDownloadStats returns download statistics using a single optimized query

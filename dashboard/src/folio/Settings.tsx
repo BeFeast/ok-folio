@@ -1,4 +1,6 @@
 import { useEffect, useState, type CSSProperties } from "react";
+import { createConnectorSource, deleteConnectorSource, fetchConnectorSources, updateConnectorSource } from "../api";
+import type { ConnectorSourceSetting } from "../types";
 import { useFolio, formatBytes } from "./context";
 import { BrandMark, Hov, PageHeader } from "./ui";
 
@@ -96,10 +98,75 @@ export default function Settings() {
   const [autoCovers, setAutoCovers] = useLocalPref<boolean>("okfolio-auto-covers", true);
   const [suggestFolios, setSuggestFolios] = useLocalPref<boolean>("okfolio-suggest-folios", true);
   const [folioName, setFolioName] = useLocalPref<string>("okfolio-name", "OK Folio");
+  const [sources, setSources] = useState<ConnectorSourceSetting[]>([]);
+  const [sourceLabel, setSourceLabel] = useState("");
+  const [sourceChatID, setSourceChatID] = useState("");
+  const [sourceBusy, setSourceBusy] = useState(false);
+  const [sourceError, setSourceError] = useState("");
 
   useEffect(() => {
     document.documentElement.dataset.reduceMotion = reduceMotion ? "1" : "0";
   }, [reduceMotion]);
+
+  const reloadSources = async () => {
+    const response = await fetchConnectorSources("telegram");
+    setSources(response.sources);
+  };
+
+  useEffect(() => {
+    reloadSources().catch((err: Error) => setSourceError(err.message));
+  }, []);
+
+  const saveSource = async () => {
+    setSourceError("");
+    setSourceBusy(true);
+    try {
+      await createConnectorSource({
+        type: "telegram",
+        chat_id: sourceChatID,
+        label: sourceLabel,
+        enabled: true,
+      });
+      setSourceLabel("");
+      setSourceChatID("");
+      await reloadSources();
+    } catch (err) {
+      setSourceError(err instanceof Error ? err.message : "Failed to save connector source");
+    } finally {
+      setSourceBusy(false);
+    }
+  };
+
+  const toggleSource = async (source: ConnectorSourceSetting) => {
+    setSourceError("");
+    setSourceBusy(true);
+    try {
+      await updateConnectorSource(source.id, {
+        type: source.type,
+        chat_id: source.chat_id,
+        label: source.label,
+        enabled: !source.enabled,
+      });
+      await reloadSources();
+    } catch (err) {
+      setSourceError(err instanceof Error ? err.message : "Failed to update connector source");
+    } finally {
+      setSourceBusy(false);
+    }
+  };
+
+  const removeSource = async (source: ConnectorSourceSetting) => {
+    setSourceError("");
+    setSourceBusy(true);
+    try {
+      await deleteConnectorSource(source.id);
+      await reloadSources();
+    } catch (err) {
+      setSourceError(err instanceof Error ? err.message : "Failed to remove connector source");
+    } finally {
+      setSourceBusy(false);
+    }
+  };
 
   const seg = (active: boolean): CSSProperties => ({
     appearance: "none",
@@ -150,6 +217,58 @@ export default function Settings() {
             {totalPhotos.toLocaleString()} pieces · {formatBytes(totalSizeBytes)}
           </div>
         </Row>
+
+        <h2 style={SECTION}>Connectors</h2>
+        <div style={{ padding: "18px 0", borderBottom: "1px solid var(--line)" }}>
+          <div style={{ ...ROW_TITLE, marginBottom: 5 }}>Telegram sources</div>
+          <div style={{ ...ROW_DESC, marginBottom: 16 }}>Enabled chat IDs are polled by the connector without redeploying.</div>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(150px, 1fr) minmax(180px, 1.2fr) auto", gap: 10, alignItems: "end" }}>
+            <Hov
+              as="input"
+              value={sourceLabel}
+              placeholder="Label"
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSourceLabel(e.target.value)}
+              style={{ appearance: "none", fontFamily: "var(--sans)", fontSize: 13.5, color: "var(--ink)", border: "1px solid var(--line)", borderRadius: 6, background: "var(--surface)", outline: "none", padding: "9px 10px", minWidth: 0 }}
+              focus={{ borderColor: "var(--accent)" }}
+            />
+            <Hov
+              as="input"
+              value={sourceChatID}
+              placeholder="Chat ID"
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSourceChatID(e.target.value)}
+              style={{ appearance: "none", fontFamily: "var(--sans)", fontSize: 13.5, color: "var(--ink)", border: "1px solid var(--line)", borderRadius: 6, background: "var(--surface)", outline: "none", padding: "9px 10px", minWidth: 0 }}
+              focus={{ borderColor: "var(--accent)" }}
+            />
+            <button
+              onClick={saveSource}
+              disabled={sourceBusy || sourceChatID.trim() === ""}
+              style={{ appearance: "none", cursor: sourceBusy || sourceChatID.trim() === "" ? "not-allowed" : "pointer", fontFamily: "var(--sans)", fontSize: 13, border: 0, borderRadius: 6, color: "var(--on-accent)", background: "var(--accent)", padding: "10px 14px", opacity: sourceBusy || sourceChatID.trim() === "" ? 0.55 : 1 }}
+            >
+              Add
+            </button>
+          </div>
+          {sourceError && <div style={{ ...ROW_DESC, color: "var(--danger, #b42318)", marginTop: 10 }}>{sourceError}</div>}
+          <div style={{ marginTop: 12 }}>
+            {sources.length === 0 ? (
+              <div style={{ ...ROW_DESC, padding: "10px 0" }}>No managed Telegram sources.</div>
+            ) : sources.map((source) => (
+              <div key={source.id} style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: 12, alignItems: "center", padding: "11px 0", borderTop: "1px solid var(--line)" }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontFamily: "var(--sans)", fontSize: 13.5, color: "var(--ink)", overflowWrap: "anywhere" }}>{source.label || "Telegram source"}</div>
+                  <div style={{ ...ROW_DESC, overflowWrap: "anywhere" }}>{source.chat_id}</div>
+                </div>
+                <Switch on={source.enabled} onClick={() => toggleSource(source)} />
+                <button
+                  onClick={() => removeSource(source)}
+                  disabled={sourceBusy}
+                  style={{ appearance: "none", cursor: sourceBusy ? "not-allowed" : "pointer", fontFamily: "var(--sans)", fontSize: 12.5, border: "1px solid var(--line)", borderRadius: 6, color: "var(--graphite)", background: "var(--surface)", padding: "7px 10px", opacity: sourceBusy ? 0.55 : 1 }}
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
 
         <h2 style={SECTION}>Folios</h2>
         <Row title="Auto-select covers" desc="Choose a fitting cover until you set one yourself.">

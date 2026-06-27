@@ -16,6 +16,9 @@ import type {
   PhotoDetailResponse,
   RunPhotosResponse,
   Photo,
+  ConnectorSourceInput,
+  ConnectorSourceSetting,
+  ConnectorSourcesResponse,
 } from "./types";
 
 const API_BASE = "/api/v1";
@@ -85,6 +88,54 @@ export async function fetchConnectorStatus(): Promise<ConnectorStatusResponse> {
     throw new Error("Failed to fetch connector status");
   }
   return response.json();
+}
+
+export async function fetchConnectorSources(type: string = "telegram"): Promise<ConnectorSourcesResponse> {
+  const params = new URLSearchParams();
+  if (type) {
+    params.set("type", type);
+  }
+  const response = await fetch(`${API_BASE}/settings/connector-sources?${params}`);
+  if (!response.ok) {
+    throw new Error("Failed to fetch connector sources");
+  }
+  return response.json();
+}
+
+export async function createConnectorSource(input: ConnectorSourceInput): Promise<ConnectorSourceSetting> {
+  const response = await fetch(`${API_BASE}/settings/connector-sources`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || "Failed to create connector source");
+  }
+  return response.json();
+}
+
+export async function updateConnectorSource(id: number, input: ConnectorSourceInput): Promise<ConnectorSourceSetting> {
+  const response = await fetch(`${API_BASE}/settings/connector-sources/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || "Failed to update connector source");
+  }
+  return response.json();
+}
+
+export async function deleteConnectorSource(id: number): Promise<void> {
+  const response = await fetch(`${API_BASE}/settings/connector-sources/${id}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || "Failed to delete connector source");
+  }
 }
 
 export async function fetchTimeline(

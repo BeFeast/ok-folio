@@ -43,11 +43,22 @@ type Config struct {
 	BaseURL          string
 	FileBaseURL      string
 	ChatID           string
+	Sources          []SourceConfig
 	DisplayName      string
 	Limit            int
 	Schedule         string
 	RateLimitBackoff time.Duration
 	Retry            retry.Config
+	SourceStore      SourceStore
+}
+
+type SourceConfig struct {
+	ChatID string
+	Label  string
+}
+
+type SourceStore interface {
+	ConnectorSourceScopes(providerID string) (scopes []string, managed bool, err error)
 }
 
 type Connector struct {
@@ -90,7 +101,7 @@ func (c *Connector) Provider() provider.Source {
 		ID:          ProviderID,
 		DisplayName: displayName,
 		BaseURL:     strings.TrimRight(c.cfg.BaseURL, "/"),
-		Scope:       c.cfg.ChatID,
+		Scope:       strings.Join(c.configuredChatIDs(), ","),
 		Schedule:    c.cfg.Schedule,
 	}
 }
@@ -112,6 +123,10 @@ func (c *Connector) DiscoverPage(ctx context.Context, req provider.PageRequest) 
 	if err != nil {
 		return nil, err
 	}
+	allowedChatIDs, err := c.allowedChatIDs()
+	if err != nil {
+		return nil, err
+	}
 
 	var (
 		items       []provider.DiscoveredMedia
@@ -126,7 +141,10 @@ func (c *Connector) DiscoverPage(ctx context.Context, req provider.PageRequest) 
 		if message == nil {
 			continue
 		}
-		if c.cfg.ChatID != "" && message.Chat.IDString() != c.cfg.ChatID {
+		if len(allowedChatIDs) > 0 && !messageMatchesAnyChatID(*message, allowedChatIDs) {
+			continue
+		}
+		if allowedChatIDs != nil && len(allowedChatIDs) == 0 {
 			continue
 		}
 
@@ -149,6 +167,66 @@ func (c *Connector) DiscoverPage(ctx context.Context, req provider.PageRequest) 
 			HasNext:    nextCursor != "",
 		},
 	}, nil
+}
+
+func (c *Connector) allowedChatIDs() (map[string]struct{}, error) {
+	if c.cfg.SourceStore != nil {
+		scopes, managed, err := c.cfg.SourceStore.ConnectorSourceScopes(ProviderID)
+		if err != nil {
+			return nil, err
+		}
+		if managed {
+			return chatIDSet(scopes), nil
+		}
+	}
+	ids := c.configuredChatIDs()
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	return chatIDSet(ids), nil
+}
+
+func (c *Connector) configuredChatIDs() []string {
+	var ids []string
+	seen := make(map[string]struct{})
+	add := func(chatID string) {
+		chatID = strings.TrimSpace(chatID)
+		if chatID == "" {
+			return
+		}
+		if _, ok := seen[chatID]; ok {
+			return
+		}
+		seen[chatID] = struct{}{}
+		ids = append(ids, chatID)
+	}
+	add(c.cfg.ChatID)
+	for _, source := range c.cfg.Sources {
+		add(source.ChatID)
+	}
+	return ids
+}
+
+func chatIDSet(ids []string) map[string]struct{} {
+	out := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id != "" {
+			out[id] = struct{}{}
+		}
+	}
+	return out
+}
+
+func messageMatchesAnyChatID(message Message, ids map[string]struct{}) bool {
+	if _, ok := ids[message.Chat.IDString()]; ok {
+		return true
+	}
+	source := message.SourceRef()
+	if _, ok := ids[source.ChatID]; ok {
+		return true
+	}
+	return false
 }
 
 func (c *Connector) ResolveMedia(ctx context.Context, item provider.DiscoveredMedia) (*provider.DiscoveredMedia, error) {

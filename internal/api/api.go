@@ -189,6 +189,10 @@ func (s *Server) setupRoutes() {
 		r.Get("/gallery/decision", s.handleGalleryDecision)
 		r.Get("/inbox", s.handleInbox)
 		r.Get("/streams/connectors/status", s.handleConnectorStatus)
+		r.Get("/settings/connector-sources", s.handleListConnectorSources)
+		r.Post("/settings/connector-sources", s.handleCreateConnectorSource)
+		r.Patch("/settings/connector-sources/{id}", s.handleUpdateConnectorSource)
+		r.Delete("/settings/connector-sources/{id}", s.handleDeleteConnectorSource)
 
 		// PhotoPrism integration
 		r.Post("/photoprism/index", s.handleTriggerIndex)

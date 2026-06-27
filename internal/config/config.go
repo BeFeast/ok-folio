@@ -133,13 +133,19 @@ type PhotoPrismConfig struct {
 }
 
 type TelegramConfig struct {
-	BotToken    string `yaml:"bot_token"`
-	BaseURL     string `yaml:"base_url"`
-	FileBaseURL string `yaml:"file_base_url"`
-	ChatID      string `yaml:"chat_id"`
-	DisplayName string `yaml:"display_name"`
-	Limit       int    `yaml:"limit"`
-	Schedule    string `yaml:"schedule"`
+	BotToken    string                 `yaml:"bot_token"`
+	BaseURL     string                 `yaml:"base_url"`
+	FileBaseURL string                 `yaml:"file_base_url"`
+	ChatID      string                 `yaml:"chat_id"`
+	Sources     []TelegramSourceConfig `yaml:"sources"`
+	DisplayName string                 `yaml:"display_name"`
+	Limit       int                    `yaml:"limit"`
+	Schedule    string                 `yaml:"schedule"`
+}
+
+type TelegramSourceConfig struct {
+	ChatID string `yaml:"chat_id"`
+	Label  string `yaml:"label"`
 }
 
 type LoggingConfig struct {

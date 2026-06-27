@@ -82,7 +82,14 @@ telegram:
   bot_token: ""
   base_url: "https://api.telegram.org"
   file_base_url: "https://api.telegram.org/file"
+  # Back-compat scalar. Empty means ingest from every chat unless sources below
+  # or managed connector sources are configured.
   chat_id: ""
+  # Optional static sources. Runtime-managed sources in Settings override this
+  # list when any managed Telegram source rows exist.
+  sources:
+    # - chat_id: "-1001234567890"
+    #   label: "Example channel"
   display_name: "Telegram"
   limit: 100
   # Poll Telegram hourly without changing the web-gallery scrape cadence.

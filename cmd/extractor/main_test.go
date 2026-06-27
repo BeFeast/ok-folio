@@ -16,7 +16,7 @@ import (
 func TestBuildConnectorsSkipsTelegramWithoutBotToken(t *testing.T) {
 	cfg := &config.Config{}
 
-	connectors := buildConnectors(cfg, zerolog.Nop())
+	connectors := buildConnectors(cfg, nil, zerolog.Nop())
 
 	if len(connectors) != 1 {
 		t.Fatalf("expected only webgallery connector, got %d", len(connectors))
@@ -31,7 +31,7 @@ func TestBuildConnectorsAddsTelegramWithBotToken(t *testing.T) {
 	cfg.Telegram.BotToken = "test-token"
 	cfg.Telegram.Schedule = "0 0 * * * *"
 
-	connectors := buildConnectors(cfg, zerolog.Nop())
+	connectors := buildConnectors(cfg, nil, zerolog.Nop())
 
 	for _, connector := range connectors {
 		if connector.Provider().ID == telegram.ProviderID {
@@ -48,7 +48,7 @@ func TestBuildConnectorsAddsWebGallerySchedule(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Source.Schedule = "0 0 */6 * * *"
 
-	connectors := buildConnectors(cfg, zerolog.Nop())
+	connectors := buildConnectors(cfg, nil, zerolog.Nop())
 
 	if connectors[0].Provider().ID != webgallery.ProviderID {
 		t.Fatalf("expected first connector to be webgallery, got %q", connectors[0].Provider().ID)
