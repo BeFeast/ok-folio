@@ -591,6 +591,58 @@ func TestGetConnectorStates(t *testing.T) {
 	}
 }
 
+func TestLoadAndSaveConnectorState(t *testing.T) {
+	db := setupTestDB(t)
+
+	missing, err := db.LoadConnectorState("telegram")
+	if err != nil {
+		t.Fatalf("LoadConnectorState missing row failed: %v", err)
+	}
+	if missing != nil {
+		t.Fatalf("Expected missing connector state to return nil, got %#v", missing)
+	}
+
+	firstRun := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+	if err := db.SaveConnectorState(ConnectorState{
+		ProviderID: "telegram",
+		Cursor:     "42",
+		LastRunAt:  &firstRun,
+		LastStatus: "running",
+	}); err != nil {
+		t.Fatalf("SaveConnectorState insert failed: %v", err)
+	}
+
+	secondRun := firstRun.Add(time.Hour)
+	if err := db.SaveConnectorState(ConnectorState{
+		ProviderID:   "telegram",
+		Cursor:       "84",
+		LastRunAt:    &secondRun,
+		LastStatus:   "completed",
+		ErrorMessage: "",
+	}); err != nil {
+		t.Fatalf("SaveConnectorState upsert failed: %v", err)
+	}
+
+	state, err := db.LoadConnectorState("telegram")
+	if err != nil {
+		t.Fatalf("LoadConnectorState failed: %v", err)
+	}
+	if state == nil {
+		t.Fatal("Expected connector state row")
+	}
+	if state.ProviderID != "telegram" || state.Cursor != "84" || state.LastStatus != "completed" || !state.LastRunAt.Equal(secondRun) {
+		t.Fatalf("Unexpected connector state: %#v", state)
+	}
+
+	var count int64
+	if err := db.Model(&ConnectorState{}).Where("provider_id = ?", "telegram").Count(&count).Error; err != nil {
+		t.Fatalf("Count connector state failed: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("Expected upsert to keep one row, got %d", count)
+	}
+}
+
 func TestGetDownloadStats_Empty(t *testing.T) {
 	db := setupTestDB(t)
 

@@ -98,6 +98,85 @@ func TestRunConnectorCursorProvenanceHashAndEpochBatches(t *testing.T) {
 	if run.Provider != "fixture" || run.Status != "completed" || run.PhotosDownloaded != 2 {
 		t.Fatalf("unexpected run record: %#v", run)
 	}
+
+	state, err := db.LoadConnectorState("fixture")
+	if err != nil {
+		t.Fatalf("load connector state: %v", err)
+	}
+	if state == nil || state.Cursor != "cursor-2" || state.LastStatus != "completed" || state.LastRunAt == nil {
+		t.Fatalf("unexpected connector state: %#v", state)
+	}
+}
+
+func TestRunConnectorResumesFromPersistedCursorAfterRestart(t *testing.T) {
+	ctx := context.Background()
+	body := []byte("fixture image bytes")
+	imageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(body)
+	}))
+	defer imageServer.Close()
+
+	firstConnector := &fakeConnector{
+		pages: map[string]*provider.PageResult{
+			"": {
+				Items: []provider.DiscoveredMedia{fakeItem("one", imageServer.URL+"/one.jpg")},
+				Pagination: provider.Pagination{
+					NextCursor: "2",
+					HasNext:    true,
+				},
+			},
+			"2": {
+				Items: []provider.DiscoveredMedia{fakeItem("two", imageServer.URL+"/two.jpg")},
+				Pagination: provider.Pagination{
+					NextCursor: "3",
+					HasNext:    true,
+				},
+			},
+			"3": {},
+		},
+	}
+	db, c, ing := setupIngestorTest(t, firstConnector)
+
+	firstResult, err := ing.RunConnector(ctx, firstConnector)
+	if err != nil {
+		t.Fatalf("first RunConnector failed: %v", err)
+	}
+	if firstResult.PhotosDownloaded != 2 || firstResult.Cursor != "3" {
+		t.Fatalf("unexpected first result: %#v", firstResult)
+	}
+
+	state, err := db.LoadConnectorState("fixture")
+	if err != nil {
+		t.Fatalf("load connector state: %v", err)
+	}
+	if state == nil || state.Cursor != "3" || state.LastStatus != "completed" {
+		t.Fatalf("expected first run to persist cursor 3, got %#v", state)
+	}
+
+	secondConnector := &fakeConnector{
+		pages: map[string]*provider.PageResult{
+			"": {
+				Items: []provider.DiscoveredMedia{fakeItem("one", imageServer.URL+"/one-duplicate.jpg")},
+			},
+			"3": {},
+		},
+	}
+	secondScraper := scraper.NewWithProvider(ingestorTestConfig(t), db, zerolog.New(os.Stderr).Level(zerolog.Disabled), secondConnector)
+	secondIngestor := New(db, c.Client, secondScraper, zerolog.Nop())
+
+	secondResult, err := secondIngestor.RunConnector(ctx, secondConnector)
+	if err != nil {
+		t.Fatalf("second RunConnector failed: %v", err)
+	}
+	if secondResult.PhotosFound != 0 || secondResult.PhotosDownloaded != 0 {
+		t.Fatalf("expected resumed run to skip already-consumed updates, got %#v", secondResult)
+	}
+	if !reflect.DeepEqual(secondConnector.requests, []provider.PageRequest{{Page: 1, Cursor: "3"}}) {
+		t.Fatalf("expected restart to resume at cursor 3, got %#v", secondConnector.requests)
+	}
+	if len(secondConnector.resolved) != 0 {
+		t.Fatalf("resumed run re-emitted already processed media: %#v", secondConnector.resolved)
+	}
 }
 
 func TestRunConnectorWithOptionsHonorsAllowedPages(t *testing.T) {
@@ -177,10 +256,11 @@ func TestRunConnectorProviderErrorRouting(t *testing.T) {
 		kind        provider.ErrorKind
 		wantFailed  int
 		wantHalted  bool
+		wantErr     bool
 		wantBackoff time.Duration
 	}{
-		{name: "temporary", kind: provider.ErrorKindTemporary, wantBackoff: 25 * time.Millisecond},
-		{name: "rate_limit", kind: provider.ErrorKindRateLimit, wantBackoff: 25 * time.Millisecond},
+		{name: "temporary", kind: provider.ErrorKindTemporary, wantErr: true, wantBackoff: 25 * time.Millisecond},
+		{name: "rate_limit", kind: provider.ErrorKindRateLimit, wantErr: true, wantBackoff: 25 * time.Millisecond},
 		{name: "not_found", kind: provider.ErrorKindNotFound, wantFailed: 1},
 		{name: "parse", kind: provider.ErrorKindParse, wantFailed: 1},
 		{name: "missing_media", kind: provider.ErrorKindMissingMedia, wantFailed: 1},
@@ -207,8 +287,11 @@ func TestRunConnectorProviderErrorRouting(t *testing.T) {
 			}
 
 			result, err := ing.RunConnector(context.Background(), connector)
-			if err != nil {
+			if err != nil && !tt.wantErr {
 				t.Fatalf("RunConnector failed: %v", err)
+			}
+			if err == nil && tt.wantErr {
+				t.Fatal("expected RunConnector to fail after bounded item retry")
 			}
 			if result.PhotosFailed != tt.wantFailed || result.Halted != tt.wantHalted {
 				t.Fatalf("unexpected result: %#v", result)
@@ -222,6 +305,15 @@ func TestRunConnectorProviderErrorRouting(t *testing.T) {
 					t.Fatalf("expected failed download record: %v", err)
 				}
 			}
+			if tt.wantErr {
+				state, err := db.LoadConnectorState("fixture")
+				if err != nil {
+					t.Fatalf("load connector state: %v", err)
+				}
+				if state == nil || state.Cursor != "" || state.LastStatus != "failed" {
+					t.Fatalf("expected failed connector state without cursor advance, got %#v", state)
+				}
+			}
 			if tt.wantHalted {
 				var run database.ExtractionRun
 				if err := db.First(&run).Error; err != nil {
@@ -229,6 +321,13 @@ func TestRunConnectorProviderErrorRouting(t *testing.T) {
 				}
 				if run.Status != "failed" || run.ErrorMessage == "" {
 					t.Fatalf("expected halted connector surfaced in run record, got %#v", run)
+				}
+				state, err := db.LoadConnectorState("fixture")
+				if err != nil {
+					t.Fatalf("load connector state: %v", err)
+				}
+				if state == nil || state.LastStatus != "permission_halt" || state.LastRunAt == nil {
+					t.Fatalf("expected permission halt connector state, got %#v", state)
 				}
 			}
 		})
@@ -246,7 +345,7 @@ func TestRunConnectorDiscoveryProviderErrorRouting(t *testing.T) {
 	}{
 		{name: "temporary", kind: provider.ErrorKindTemporary, wantErr: true, wantBackoff: 25 * time.Millisecond},
 		{name: "rate_limit", kind: provider.ErrorKindRateLimit, wantErr: true, wantBackoff: 25 * time.Millisecond},
-		{name: "parse", kind: provider.ErrorKindParse, wantFailed: 1},
+		{name: "parse", kind: provider.ErrorKindParse, wantErr: true, wantFailed: 1},
 		{name: "permission", kind: provider.ErrorKindPermission, wantHalted: true},
 	}
 
@@ -294,8 +393,105 @@ func TestRunConnectorDiscoveryProviderErrorRouting(t *testing.T) {
 				if run.Status != "failed" || run.ErrorMessage == "" {
 					t.Fatalf("expected halted discovery surfaced in run record, got %#v", run)
 				}
+				state, err := db.LoadConnectorState("fixture")
+				if err != nil {
+					t.Fatalf("load connector state: %v", err)
+				}
+				if state == nil || state.LastStatus != "permission_halt" || state.LastRunAt == nil {
+					t.Fatalf("expected permission halt connector state, got %#v", state)
+				}
 			}
 		})
+	}
+}
+
+func TestRunConnectorDoesNotAdvanceCursorPastRetryableItemFailure(t *testing.T) {
+	ctx := context.Background()
+	connector := &fakeConnector{
+		pages: map[string]*provider.PageResult{
+			"100": {
+				Items: []provider.DiscoveredMedia{fakeItem("retry", "https://fixture.test/retry.jpg")},
+				Pagination: provider.Pagination{
+					NextCursor: "101",
+					HasNext:    true,
+				},
+			},
+		},
+		resolveErr: &provider.ProviderError{
+			ProviderID: "fixture",
+			Kind:       provider.ErrorKindTemporary,
+			RetryAfter: time.Millisecond,
+			Err:        errors.New("temporary media failure"),
+		},
+	}
+	db, _, ing := setupIngestorTest(t, connector)
+	if err := db.SaveConnectorState(database.ConnectorState{ProviderID: "fixture", Cursor: "100", LastStatus: "completed"}); err != nil {
+		t.Fatalf("seed connector state: %v", err)
+	}
+	ing.backoff = func(_ context.Context, _ time.Duration) error { return nil }
+
+	result, err := ing.RunConnector(ctx, connector)
+	if err == nil {
+		t.Fatal("expected retryable item failure to fail the run")
+	}
+	if result.Cursor != "100" {
+		t.Fatalf("expected result cursor to remain at retry point 100, got %#v", result)
+	}
+
+	state, err := db.LoadConnectorState("fixture")
+	if err != nil {
+		t.Fatalf("load connector state: %v", err)
+	}
+	if state == nil || state.Cursor != "100" || state.LastStatus != "failed" {
+		t.Fatalf("expected failed state without advancing to 101, got %#v", state)
+	}
+}
+
+func TestRunConnectorDiscoveryErrorAfterPageKeepsRetryCursorFailed(t *testing.T) {
+	ctx := context.Background()
+	body := []byte("fixture image bytes")
+	imageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(body)
+	}))
+	defer imageServer.Close()
+
+	connector := &fakeConnector{
+		pages: map[string]*provider.PageResult{
+			"": {
+				Items: []provider.DiscoveredMedia{fakeItem("one", imageServer.URL+"/one.jpg")},
+				Pagination: provider.Pagination{
+					NextCursor: "2",
+					HasNext:    true,
+				},
+			},
+		},
+		discoverErrByCursor: map[string]error{
+			"2": &provider.ProviderError{
+				ProviderID: "fixture",
+				Kind:       provider.ErrorKindParse,
+				Err:        errors.New("parse next page"),
+			},
+		},
+	}
+	db, _, ing := setupIngestorTest(t, connector)
+
+	result, err := ing.RunConnector(ctx, connector)
+	if err == nil {
+		t.Fatal("expected discovery parse error to fail the run")
+	}
+	if result.Cursor != "2" {
+		t.Fatalf("expected retry cursor 2, got %#v", result)
+	}
+
+	state, err := db.LoadConnectorState("fixture")
+	if err != nil {
+		t.Fatalf("load connector state: %v", err)
+	}
+	if state == nil || state.Cursor != "2" || state.LastStatus != "failed" {
+		t.Fatalf("expected failed state at retry cursor 2, got %#v", state)
+	}
+	if !reflect.DeepEqual(connector.requests, []provider.PageRequest{{Page: 1}, {Page: 2, Cursor: "2"}}) {
+		t.Fatalf("unexpected page requests: %#v", connector.requests)
 	}
 }
 
@@ -354,8 +550,16 @@ func setupIngestorTest(t *testing.T, connector provider.Connector) (*database.DB
 	t.Cleanup(func() { _ = rdb.Close() })
 	c := &testCache{Client: cache.NewForRedis(rdb, zerolog.Nop()), rdb: rdb}
 
+	s := scraper.NewWithProvider(ingestorTestConfig(t), db, zerolog.New(os.Stderr).Level(zerolog.Disabled), connector)
+	ing := New(db, c.Client, s, zerolog.Nop())
+	return db, c, ing
+}
+
+func ingestorTestConfig(t *testing.T) *config.Config {
+	t.Helper()
+
 	root := t.TempDir()
-	cfg := &config.Config{
+	return &config.Config{
 		Source:  config.SourceConfig{BaseURL: "https://fixture.test/gallery"},
 		Storage: config.StorageConfig{BaseDirectory: filepath.Join(root, "originals"), DailyDirectory: filepath.Join(root, "daily")},
 		Download: config.DownloadConfig{
@@ -364,9 +568,6 @@ func setupIngestorTest(t *testing.T, connector provider.Connector) (*database.DB
 		},
 		Retry: config.RetryConfig{MaxAttempts: 1},
 	}
-	s := scraper.NewWithProvider(cfg, db, zerolog.New(os.Stderr).Level(zerolog.Disabled), connector)
-	ing := New(db, c.Client, s, zerolog.Nop())
-	return db, c, ing
 }
 
 type testCache struct {
@@ -398,13 +599,14 @@ func fakeItem(id string, mediaURL string) provider.DiscoveredMedia {
 }
 
 type fakeConnector struct {
-	providerID  string
-	pages       map[string]*provider.PageResult
-	pagesByPage map[int]*provider.PageResult
-	discoverErr error
-	resolveErr  error
-	requests    []provider.PageRequest
-	resolved    []string
+	providerID          string
+	pages               map[string]*provider.PageResult
+	pagesByPage         map[int]*provider.PageResult
+	discoverErrByCursor map[string]error
+	discoverErr         error
+	resolveErr          error
+	requests            []provider.PageRequest
+	resolved            []string
 }
 
 func (c *fakeConnector) Provider() provider.Source {
@@ -419,6 +621,9 @@ func (c *fakeConnector) DiscoverPage(_ context.Context, req provider.PageRequest
 	c.requests = append(c.requests, req)
 	if c.discoverErr != nil {
 		return nil, c.discoverErr
+	}
+	if c.discoverErrByCursor != nil && c.discoverErrByCursor[req.Cursor] != nil {
+		return nil, c.discoverErrByCursor[req.Cursor]
 	}
 	if c.pagesByPage != nil {
 		page := c.pagesByPage[req.Page]
