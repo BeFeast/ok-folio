@@ -181,6 +181,97 @@ func TestFillMissingContentHashesReadsOriginalsAndIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestFillMissingContentHashesSkipsDuplicateOriginal(t *testing.T) {
+	db := setupSQLiteETLDB(t)
+	if err := db.Exec("CREATE UNIQUE INDEX idx_downloaded_photos_content_hash_unique ON downloaded_photos (content_hash) WHERE content_hash IS NOT NULL").Error; err != nil {
+		t.Fatalf("create content hash unique index: %v", err)
+	}
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "winner.jpg"), []byte("same-original-bytes"), 0o600); err != nil {
+		t.Fatalf("write winner original: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "loser.jpg"), []byte("same-original-bytes"), 0o600); err != nil {
+		t.Fatalf("write loser original: %v", err)
+	}
+	photos := []*database.DownloadedPhoto{
+		{URL: "https://example.test/winner.jpg", FilePath: "winner.jpg", Status: "downloaded"},
+		{URL: "https://example.test/loser.jpg", FilePath: "loser.jpg", Status: "downloaded"},
+	}
+	if err := db.Create(&photos).Error; err != nil {
+		t.Fatalf("insert photos: %v", err)
+	}
+
+	result, err := FillMissingContentHashes(db, root, 10)
+	if err != nil {
+		t.Fatalf("FillMissingContentHashes should skip duplicate content hash, got error: %v", err)
+	}
+	if result.Scanned != 2 || result.Updated != 1 || result.Skipped != 1 {
+		t.Fatalf("unexpected hash result: %#v", result)
+	}
+	var hashedRows int64
+	if err := db.Model(&database.DownloadedPhoto{}).Where("content_hash IS NOT NULL").Count(&hashedRows).Error; err != nil {
+		t.Fatalf("count hashed rows: %v", err)
+	}
+	if hashedRows != 1 {
+		t.Fatalf("expected one winning row to keep the duplicate content hash, got %d", hashedRows)
+	}
+	var loser database.DownloadedPhoto
+	if err := db.First(&loser, photos[1].ID).Error; err != nil {
+		t.Fatalf("load duplicate loser: %v", err)
+	}
+	if loser.Status != "deleted" {
+		t.Fatalf("expected duplicate loser to be quarantined as deleted, got %q", loser.Status)
+	}
+}
+
+func TestFillMissingContentHashesDuplicateLoserDoesNotBlockLaterRows(t *testing.T) {
+	db := setupSQLiteETLDB(t)
+	if err := db.Exec("CREATE UNIQUE INDEX idx_downloaded_photos_content_hash_unique ON downloaded_photos (content_hash) WHERE content_hash IS NOT NULL").Error; err != nil {
+		t.Fatalf("create content hash unique index: %v", err)
+	}
+	root := t.TempDir()
+	fixtures := map[string]string{
+		"winner.jpg": "same-original-bytes",
+		"loser.jpg":  "same-original-bytes",
+		"later.jpg":  "later-original-bytes",
+	}
+	for name, contents := range fixtures {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(contents), 0o600); err != nil {
+			t.Fatalf("write %s original: %v", name, err)
+		}
+	}
+	photos := []*database.DownloadedPhoto{
+		{URL: "https://example.test/winner.jpg", FilePath: "winner.jpg", Status: "downloaded"},
+		{URL: "https://example.test/loser.jpg", FilePath: "loser.jpg", Status: "downloaded"},
+		{URL: "https://example.test/later.jpg", FilePath: "later.jpg", Status: "downloaded"},
+	}
+	if err := db.Create(&photos).Error; err != nil {
+		t.Fatalf("insert photos: %v", err)
+	}
+
+	first, err := FillMissingContentHashes(db, root, 2)
+	if err != nil {
+		t.Fatalf("first FillMissingContentHashes failed: %v", err)
+	}
+	if first.Scanned != 2 || first.Updated != 1 || first.Skipped != 1 {
+		t.Fatalf("unexpected first hash result: %#v", first)
+	}
+	second, err := FillMissingContentHashes(db, root, 2)
+	if err != nil {
+		t.Fatalf("second FillMissingContentHashes failed: %v", err)
+	}
+	if second.Scanned != 1 || second.Updated != 1 || second.Skipped != 0 {
+		t.Fatalf("expected second pass to reach the later row, got %#v", second)
+	}
+	var later database.DownloadedPhoto
+	if err := db.First(&later, photos[2].ID).Error; err != nil {
+		t.Fatalf("load later photo: %v", err)
+	}
+	if len(later.ContentHash) != 32 {
+		t.Fatalf("expected later row to be hashed after duplicate loser was quarantined, got %d bytes", len(later.ContentHash))
+	}
+}
+
 func setupSQLiteETLDB(t *testing.T) *database.DB {
 	t.Helper()
 	gormDB, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
