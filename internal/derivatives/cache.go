@@ -118,6 +118,13 @@ func (c *Cache) Read(entry Entry) ([]byte, bool) {
 }
 
 func (c *Cache) Write(entry Entry, data []byte) error {
+	if err := c.write(entry, data); err != nil {
+		return err
+	}
+	return c.Prune()
+}
+
+func (c *Cache) write(entry Entry, data []byte) error {
 	if c == nil || len(data) == 0 {
 		return nil
 	}
@@ -143,7 +150,7 @@ func (c *Cache) Write(entry Entry, data []byte) error {
 	if err := os.Rename(tmpPath, entry.Path); err != nil {
 		return err
 	}
-	return c.Prune()
+	return nil
 }
 
 func (c *Cache) Prune() error {

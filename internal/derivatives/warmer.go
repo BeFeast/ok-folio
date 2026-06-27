@@ -18,6 +18,8 @@ import (
 
 var ErrNoWidths = errors.New("at least one thumbnail width is required")
 
+const warmPruneEveryWrites = 1000
+
 type WarmOptions struct {
 	Widths      []int
 	Concurrency int
@@ -41,6 +43,35 @@ type warmJob struct {
 	entry    Entry
 }
 
+type warmCacheWriter struct {
+	cache      *Cache
+	pruneEvery int
+	mu         sync.Mutex
+	writes     int
+}
+
+func (w *warmCacheWriter) Write(entry Entry, data []byte) error {
+	if err := w.cache.write(entry, data); err != nil {
+		return err
+	}
+	if w.pruneEvery <= 0 {
+		return nil
+	}
+
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.writes++
+	if w.writes < w.pruneEvery {
+		return nil
+	}
+	w.writes = 0
+	return w.cache.Prune()
+}
+
+func (w *warmCacheWriter) Prune() error {
+	return w.cache.Prune()
+}
+
 func WarmThumbnails(ctx context.Context, db *database.DB, cfg config.StorageConfig, opts WarmOptions, logger zerolog.Logger) (WarmResult, error) {
 	widths, err := normalizeWidths(opts.Widths)
 	if err != nil {
@@ -60,6 +91,7 @@ func WarmThumbnails(ctx context.Context, db *database.DB, cfg config.StorageConf
 	}
 
 	cache := NewCache(cfg)
+	cacheWriter := &warmCacheWriter{cache: cache, pruneEvery: warmPruneEveryWrites}
 	jobs := make(chan warmJob)
 	results := make(chan WarmResult, concurrency)
 
@@ -76,7 +108,7 @@ func WarmThumbnails(ctx context.Context, db *database.DB, cfg config.StorageConf
 					logger.Warn().Err(err).Uint64("photo_id", job.photo.ID).Int("width", job.width).Str("file_path", job.photo.FilePath).Msg("Thumbnail warm failed")
 					continue
 				}
-				if err := cache.Write(job.entry, data); err != nil {
+				if err := cacheWriter.Write(job.entry, data); err != nil {
 					result.Failed++
 					logger.Warn().Err(err).Uint64("photo_id", job.photo.ID).Int("width", job.width).Str("path", job.entry.Path).Msg("Thumbnail cache write failed")
 					continue
@@ -95,8 +127,12 @@ func WarmThumbnails(ctx context.Context, db *database.DB, cfg config.StorageConf
 		result.Generated += workerResult.Generated
 		result.Failed += workerResult.Failed
 	}
+	pruneErr := cacheWriter.Prune()
 	if err != nil {
 		return result, err
+	}
+	if pruneErr != nil {
+		return result, pruneErr
 	}
 
 	logger.Info().
