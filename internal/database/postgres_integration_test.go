@@ -115,6 +115,9 @@ func TestPostgresMigrateSchemaAndIdempotency(t *testing.T) {
 	if !hasHash {
 		t.Fatalf("expected a bounded hash index on source_page, got access methods %v", sourcePageAMs)
 	}
+	if !partialUniqueIndexExists(db, ContentHashUniqueIndex, "content_hash IS NOT NULL") {
+		t.Fatalf("expected partial unique content_hash index %s", ContentHashUniqueIndex)
+	}
 
 	// A source page URL past the ~2704-byte btree tuple limit must insert cleanly
 	// now that source_page carries no plain btree.
@@ -140,6 +143,77 @@ func TestPostgresMigrateSchemaAndIdempotency(t *testing.T) {
 	}
 	assertIdentityByDefault(t, db, "downloaded_photos")
 	assertIdentityByDefault(t, db, "extraction_runs")
+}
+
+func TestPostgresMigrateQuarantinesExistingContentHashDuplicates(t *testing.T) {
+	db := openPostgresTestDB(t)
+	if err := db.DB.AutoMigrate(&DownloadedPhoto{}, &ExtractionRun{}, &InboxItem{}, &ConnectorState{}, &ETLWatermark{}); err != nil {
+		t.Fatalf("AutoMigrate seed schema failed: %v", err)
+	}
+
+	sharedContent := []byte("duplicate-content-hash-fixture-123")
+	photos := []DownloadedPhoto{
+		{
+			URL:          "fixture:existing:winner",
+			SourcePage:   "https://fixture.test/source/winner",
+			Title:        "Winner",
+			Artist:       "Hash Artist",
+			FileName:     "winner.jpg",
+			Status:       "downloaded",
+			ContentHash:  sharedContent,
+			DownloadedAt: time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC),
+		},
+		{
+			URL:          "fixture:existing:loser",
+			SourcePage:   "https://fixture.test/source/loser",
+			Title:        "Loser",
+			Artist:       "Hash Artist",
+			FileName:     "loser.jpg",
+			Status:       "downloaded",
+			ContentHash:  sharedContent,
+			DownloadedAt: time.Date(2026, 1, 1, 11, 0, 0, 0, time.UTC),
+		},
+	}
+	for idx := range photos {
+		if err := db.Create(&photos[idx]).Error; err != nil {
+			t.Fatalf("seed duplicate photo %d failed: %v", idx, err)
+		}
+	}
+
+	if err := Migrate(db.DB); err != nil {
+		t.Fatalf("Migrate with pre-existing duplicate content_hash failed: %v", err)
+	}
+	if !partialUniqueIndexExists(db, ContentHashUniqueIndex, "content_hash IS NOT NULL") {
+		t.Fatalf("expected partial unique content_hash index %s", ContentHashUniqueIndex)
+	}
+
+	var hashedRows int64
+	if err := db.Model(&DownloadedPhoto{}).Where("content_hash = ?", sharedContent).Count(&hashedRows).Error; err != nil {
+		t.Fatalf("count hashed rows failed: %v", err)
+	}
+	if hashedRows != 1 {
+		t.Fatalf("expected one remaining catalog row with the duplicate content_hash, got %d", hashedRows)
+	}
+
+	var quarantined DownloadedPhoto
+	if err := db.Where("url = ?", "fixture:existing:loser").First(&quarantined).Error; err != nil {
+		t.Fatalf("load quarantined row failed: %v", err)
+	}
+	if quarantined.Status != "deleted" || len(quarantined.ContentHash) != 0 {
+		t.Fatalf("expected loser row quarantined out of catalog unique guard, got %#v", quarantined)
+	}
+
+	exceptions, total, err := db.GetInboxExceptions(10, 0)
+	if err != nil {
+		t.Fatalf("GetInboxExceptions failed: %v", err)
+	}
+	if total != 1 || len(exceptions) != 1 {
+		t.Fatalf("expected one inbox quarantine duplicate, got total=%d items=%#v", total, exceptions)
+	}
+	got := exceptions[0]
+	if got.Status != "duplicate" || got.DedupeKey != "fixture:existing:loser" || got.SourceURL != "https://fixture.test/source/loser" || got.Title != "Loser" || got.Artist != "Hash Artist" {
+		t.Fatalf("expected loser provenance in inbox duplicate, got %#v", got)
+	}
 }
 
 func TestPostgresILIKESearchAndCompositeOrder(t *testing.T) {
@@ -244,31 +318,43 @@ func TestPostgresConcurrentSameURLHashRoutesLoserToInbox(t *testing.T) {
 	}
 }
 
-func TestPostgresConcurrentSameContentHashBothInsert(t *testing.T) {
+func TestPostgresConcurrentSameContentHashRoutesLoserToInbox(t *testing.T) {
 	db := openPostgresTestDB(t)
 	if err := Migrate(db.DB); err != nil {
 		t.Fatalf("Migrate failed: %v", err)
 	}
 
-	// content_hash is an indexed (non-unique) column for cross-source dedupe, so
-	// two distinct urls that share a content hash both insert; exact dedupe is a
-	// higher-layer decision, not a DB unique violation.
 	sharedContent := []byte("0123456789abcdef0123456789abcdef")
 	var wg sync.WaitGroup
+	results := make([]bool, 2)
 	errs := make([]error, 2)
 	start := make(chan struct{})
+	dedupeKeys := []string{"fixture:content-a", "fixture:content-b"}
 	for i, u := range []string{"https://example.com/c1.jpg", "https://example.com/c2.jpg"} {
 		wg.Add(1)
 		go func(idx int, url string) {
 			defer wg.Done()
 			<-start
-			errs[idx] = db.Create(&DownloadedPhoto{
+			photo := &DownloadedPhoto{
 				URL:         url,
 				Title:       "Same Content",
+				Artist:      "Hash Artist",
 				FileName:    "c.jpg",
 				Status:      "downloaded",
 				ContentHash: sharedContent,
-			}).Error
+			}
+			duplicate := &InboxItem{
+				ProviderID: "fixture",
+				DedupeKey:  dedupeKeys[idx],
+				SourceID:   "source-content",
+				MediaID:    "media-content",
+				SourceURL:  url,
+				Title:      photo.Title,
+				Artist:     photo.Artist,
+				Status:     "duplicate",
+				Reason:     "exact content hash already kept",
+			}
+			results[idx], errs[idx] = db.RecordDownloadOrDuplicate(photo, duplicate)
 		}(i, u)
 	}
 	close(start)
@@ -279,11 +365,31 @@ func TestPostgresConcurrentSameContentHashBothInsert(t *testing.T) {
 			t.Fatalf("content-hash insert %d errored: %v", i, err)
 		}
 	}
+	wins := 0
+	for _, kept := range results {
+		if kept {
+			wins++
+		}
+	}
+	if wins != 1 {
+		t.Fatalf("expected exactly one winner on the content_hash unique guard, got %d", wins)
+	}
 
 	var count int64
 	db.Model(&DownloadedPhoto{}).Where("content_hash = ?", sharedContent).Count(&count)
-	if count != 2 {
-		t.Fatalf("expected both same-content rows to insert, got %d", count)
+	if count != 1 {
+		t.Fatalf("expected exactly one same-content catalog row, got %d", count)
+	}
+
+	exceptions, total, err := db.GetInboxExceptions(10, 0)
+	if err != nil {
+		t.Fatalf("GetInboxExceptions failed: %v", err)
+	}
+	if total != 1 || len(exceptions) != 1 || exceptions[0].Status != "duplicate" {
+		t.Fatalf("expected the content-hash loser converted to one inbox duplicate, got total=%d items=%#v", total, exceptions)
+	}
+	if exceptions[0].ProviderID != "fixture" || exceptions[0].DedupeKey == "" || exceptions[0].SourceID == "" || exceptions[0].MediaID == "" || exceptions[0].SourceURL == "" || exceptions[0].Title == "" || exceptions[0].Artist == "" {
+		t.Fatalf("expected full duplicate provenance, got %#v", exceptions[0])
 	}
 }
 
@@ -371,6 +477,22 @@ func urlHasBtree(db *DB) bool {
 		  AND i.indnatts = 1
 		  AND (SELECT attname FROM pg_attribute WHERE attrelid = tbl.oid AND attnum = i.indkey[0]) = 'url'`).Scan(&count)
 	return count > 0
+}
+
+func partialUniqueIndexExists(db *DB, name string, predicate string) bool {
+	var exists bool
+	db.DB.Raw(`
+		SELECT EXISTS (
+			SELECT 1
+			FROM pg_index i
+			JOIN pg_class idx ON idx.oid = i.indexrelid
+			JOIN pg_class tbl ON tbl.oid = i.indrelid
+			WHERE tbl.relname = 'downloaded_photos'
+			  AND idx.relname = ?
+			  AND i.indisunique
+			  AND pg_get_expr(i.indpred, i.indrelid) = ?
+		)`, name, "("+predicate+")").Scan(&exists)
+	return exists
 }
 
 func names2HasEmbedding(t *testing.T, db *DB) bool {

@@ -182,7 +182,22 @@ func (i *Ingestor) ingestPages(ctx context.Context, connector provider.Connector
 				continue
 			}
 
-			photo, err := i.scraper.DownloadResolvedMedia(ctx, *resolved, providerID)
+			if len(resolved.Media.ContentHash) > 0 {
+				if _, hit, err := i.cache.DedupeHashOwner(ctx, resolved.Media.ContentHash); err != nil {
+					return result, err
+				} else if hit {
+					if err := i.recordInboxDuplicate(providerID, dedupeKey, *resolved, "exact content hash already kept"); err != nil {
+						return result, err
+					}
+					if err := i.cache.MarkSeen(ctx, providerID, dedupeKey); err != nil {
+						return result, err
+					}
+					result.PhotosSkipped++
+					continue
+				}
+			}
+
+			photo, kept, err := i.scraper.DownloadResolvedMediaOrDuplicate(ctx, *resolved, providerID)
 			if err != nil {
 				if dbErr := i.db.RecordFailedDownload(dedupeKey, safeErrorMessage(err)); dbErr != nil {
 					i.logger.Warn().Err(dbErr).Str("dedupe_key", dedupeKey).Msg("Failed to record failed download")
@@ -193,6 +208,10 @@ func (i *Ingestor) ingestPages(ctx context.Context, connector provider.Connector
 
 			if err := i.cache.MarkSeen(ctx, providerID, dedupeKey); err != nil {
 				return result, err
+			}
+			if !kept {
+				result.PhotosSkipped++
+				continue
 			}
 			if err := i.cache.MarkDedupeHash(ctx, photo.ContentHash, dedupeKey); err != nil {
 				return result, err
@@ -240,6 +259,20 @@ func (i *Ingestor) ingestPages(ctx context.Context, connector provider.Connector
 			req.Cursor = ""
 		}
 	}
+}
+
+func (i *Ingestor) recordInboxDuplicate(providerID string, dedupeKey string, item provider.DiscoveredMedia, reason string) error {
+	return i.db.RecordInboxException(&database.InboxItem{
+		ProviderID: providerID,
+		DedupeKey:  dedupeKey,
+		SourceID:   item.Source.ExternalID,
+		MediaID:    item.Media.ExternalID,
+		SourceURL:  item.Source.URL,
+		Title:      item.Title,
+		Artist:     item.Artist,
+		Status:     "duplicate",
+		Reason:     reason,
+	})
 }
 
 func (i *Ingestor) saveConnectorState(providerID string, cursor string, status string, message string) error {

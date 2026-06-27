@@ -108,6 +108,61 @@ func TestRunConnectorCursorProvenanceHashAndEpochBatches(t *testing.T) {
 	}
 }
 
+func TestRunConnectorContentHashCacheHitRoutesDuplicateToInbox(t *testing.T) {
+	ctx := context.Background()
+	body := []byte("fixture image bytes")
+	sum := sha256.Sum256(body)
+	imageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(body)
+	}))
+	defer imageServer.Close()
+
+	second := fakeItem("two", imageServer.URL+"/two.jpg")
+	second.Media.ContentHash = sum[:]
+	connector := &fakeConnector{
+		pages: map[string]*provider.PageResult{
+			"": {
+				Items: []provider.DiscoveredMedia{
+					fakeItem("one", imageServer.URL+"/one.jpg"),
+					second,
+				},
+			},
+		},
+	}
+	db, _, ing := setupIngestorTest(t, connector)
+
+	result, err := ing.RunConnector(ctx, connector)
+	if err != nil {
+		t.Fatalf("RunConnector failed: %v", err)
+	}
+	if result.PhotosDownloaded != 1 || result.PhotosSkipped != 1 || result.PhotosFailed != 0 {
+		t.Fatalf("expected one catalog winner and one duplicate skip, got %#v", result)
+	}
+
+	var photoCount int64
+	if err := db.Model(&database.DownloadedPhoto{}).Count(&photoCount).Error; err != nil {
+		t.Fatalf("count photos: %v", err)
+	}
+	if photoCount != 1 {
+		t.Fatalf("expected exactly one catalog row, got %d", photoCount)
+	}
+
+	exceptions, total, err := db.GetInboxExceptions(10, 0)
+	if err != nil {
+		t.Fatalf("GetInboxExceptions failed: %v", err)
+	}
+	if total != 1 || len(exceptions) != 1 {
+		t.Fatalf("expected exactly one inbox duplicate, got total=%d items=%#v", total, exceptions)
+	}
+	got := exceptions[0]
+	if got.Status != "duplicate" || got.ProviderID != "fixture" || got.DedupeKey != "fixture:two" || got.SourceID != "source-two" || got.MediaID != "media-two" || got.SourceURL != "https://fixture.test/source/two" || got.Title != "Fixture two" || got.Artist != "Fixture Artist" {
+		t.Fatalf("expected full duplicate provenance, got %#v", got)
+	}
+	if !reflect.DeepEqual(connector.resolved, []string{"fixture:one", "fixture:two"}) {
+		t.Fatalf("expected duplicate to skip download after resolve, got resolved=%#v", connector.resolved)
+	}
+}
+
 func TestRunConnectorResumesFromPersistedCursorAfterRestart(t *testing.T) {
 	ctx := context.Background()
 	body := []byte("fixture image bytes")
