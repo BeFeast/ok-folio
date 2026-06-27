@@ -39,6 +39,66 @@ func TestCacheWriteSchedulesPruneOffRequestPath(t *testing.T) {
 	}
 }
 
+func TestCacheScheduledPruneIsNotPostponedByRepeatedWrites(t *testing.T) {
+	dir := t.TempDir()
+	cache := NewCacheForDir(dir, 50)
+	oldDebounce := pruneDebounce
+	pruneDebounce = 20 * time.Millisecond
+	t.Cleanup(func() {
+		pruneDebounce = oldDebounce
+	})
+
+	oldEntry := cache.Entry(&database.DownloadedPhoto{ID: 1, ContentHash: bytes.Repeat([]byte{0x11}, 32)}, 320, "")
+	if err := os.MkdirAll(filepath.Dir(oldEntry.Path), 0o755); err != nil {
+		t.Fatalf("mkdir old shard: %v", err)
+	}
+	if err := os.WriteFile(oldEntry.Path, bytes.Repeat([]byte("a"), 40), 0o644); err != nil {
+		t.Fatalf("write old cache file: %v", err)
+	}
+	oldTime := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(oldEntry.Path, oldTime, oldTime); err != nil {
+		t.Fatalf("set old cache time: %v", err)
+	}
+
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(5 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				cache.SchedulePrune()
+			}
+		}
+	}()
+	defer func() {
+		close(stop)
+		<-done
+	}()
+
+	newEntry := cache.Entry(&database.DownloadedPhoto{ID: 2, ContentHash: bytes.Repeat([]byte{0x22}, 32)}, 320, "")
+	if err := cache.Write(newEntry, bytes.Repeat([]byte("b"), 40)); err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+
+	deadline := time.Now().Add(200 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(oldEntry.Path); os.IsNotExist(err) {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if _, err := os.Stat(oldEntry.Path); err == nil {
+		t.Fatal("expected scheduled prune to run while writes continue")
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("stat old cache file: %v", err)
+	}
+}
+
 func TestCacheTouchUpdatesDiskMTime(t *testing.T) {
 	dir := t.TempDir()
 	cache := NewCacheForDir(dir, 1024)

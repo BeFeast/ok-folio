@@ -29,8 +29,10 @@ const (
 	MaxThumbnailSize     = 1024
 	ThumbnailQuality     = 82
 
-	pruneDebounce = 5 * time.Second
+	defaultPruneDebounce = 5 * time.Second
 )
+
+var pruneDebounce = defaultPruneDebounce
 
 type Cache struct {
 	dir            string
@@ -182,9 +184,7 @@ func (c *Cache) SchedulePrune() {
 	}
 	if c.pruneTimer == nil {
 		c.pruneTimer = time.AfterFunc(pruneDebounce, c.runScheduledPrune)
-		return
 	}
-	c.pruneTimer.Reset(pruneDebounce)
 }
 
 func (c *Cache) runScheduledPrune() {
