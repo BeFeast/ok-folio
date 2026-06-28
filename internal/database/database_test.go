@@ -1,6 +1,7 @@
 package database
 
 import (
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -394,6 +395,129 @@ func TestInboxExceptionsOnlyDuplicateAndAmbiguous(t *testing.T) {
 		if item.Status != "duplicate" && item.Status != "ambiguous" {
 			t.Fatalf("Expected exception-only inbox result, got %#v", item)
 		}
+	}
+}
+
+func TestGetInboxItemReturnsExceptionByID(t *testing.T) {
+	db := setupTestDB(t)
+
+	item := InboxItem{
+		ProviderID: "telegram",
+		DedupeKey:  "telegram:source-1:media-1",
+		SourceID:   "source-1",
+		MediaID:    "media-1",
+		SourceURL:  "https://example.test/source/1",
+		Title:      "Parked title",
+		Artist:     "Parked artist",
+		Status:     "duplicate",
+		Reason:     "dedupe key already kept",
+	}
+	if err := db.Create(&item).Error; err != nil {
+		t.Fatalf("Failed to create inbox item: %v", err)
+	}
+
+	got, err := db.GetInboxItem(item.ID)
+	if err != nil {
+		t.Fatalf("Failed to get inbox item: %v", err)
+	}
+	if got.ProviderID != item.ProviderID || got.DedupeKey != item.DedupeKey || got.SourceURL != item.SourceURL || got.Title != item.Title || got.Artist != item.Artist || got.Reason != item.Reason {
+		t.Fatalf("Inbox item fields were not preserved: got %#v want %#v", got, item)
+	}
+}
+
+func TestGetInboxItemMissingReturnsNotFound(t *testing.T) {
+	db := setupTestDB(t)
+
+	_, err := db.GetInboxItem(999)
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("Expected gorm.ErrRecordNotFound, got %v", err)
+	}
+}
+
+func TestDeleteInboxItemHardDeletes(t *testing.T) {
+	db := setupTestDB(t)
+
+	item := InboxItem{
+		ProviderID: "telegram",
+		DedupeKey:  "telegram:source-1:media-1",
+		Status:     "duplicate",
+	}
+	if err := db.Create(&item).Error; err != nil {
+		t.Fatalf("Failed to create inbox item: %v", err)
+	}
+
+	if err := db.DeleteInboxItem(item.ID); err != nil {
+		t.Fatalf("Failed to delete inbox item: %v", err)
+	}
+	var count int64
+	if err := db.Model(&InboxItem{}).Where("id = ?", item.ID).Count(&count).Error; err != nil {
+		t.Fatalf("Failed to count inbox items: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("Expected inbox item to be hard-deleted, found %d rows", count)
+	}
+	if err := db.DeleteInboxItem(item.ID); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("Expected second delete to return gorm.ErrRecordNotFound, got %v", err)
+	}
+}
+
+func TestCountInboxByStatus(t *testing.T) {
+	db := setupTestDB(t)
+
+	items := []InboxItem{
+		{ProviderID: "telegram", DedupeKey: "telegram:source-1:media-1", Status: "duplicate"},
+		{ProviderID: "telegram", DedupeKey: "telegram:source-2:media-2", Status: "duplicate"},
+		{ProviderID: "webgallery", SourceID: "source-3", SourceURL: "https://example.test/3", Status: "ambiguous"},
+		{ProviderID: "webgallery", DedupeKey: "webgallery:source-4:media-4", Status: "dismissed"},
+	}
+	for _, item := range items {
+		if err := db.Create(&item).Error; err != nil {
+			t.Fatalf("Failed to create inbox item: %v", err)
+		}
+	}
+
+	counts, err := db.CountInboxByStatus()
+	if err != nil {
+		t.Fatalf("Failed to count inbox by status: %v", err)
+	}
+	if counts["duplicate"] != 2 || counts["ambiguous"] != 1 {
+		t.Fatalf("Unexpected inbox counts: %#v", counts)
+	}
+}
+
+func TestGetInboxExceptionsFiltered(t *testing.T) {
+	db := setupTestDB(t)
+
+	items := []InboxItem{
+		{ProviderID: "telegram", DedupeKey: "telegram:source-1:media-1", Status: "duplicate"},
+		{ProviderID: "telegram", DedupeKey: "telegram:source-2:media-2", Status: "duplicate"},
+		{ProviderID: "webgallery", SourceID: "source-3", SourceURL: "https://example.test/3", Status: "ambiguous"},
+	}
+	for _, item := range items {
+		if err := db.Create(&item).Error; err != nil {
+			t.Fatalf("Failed to create inbox item: %v", err)
+		}
+	}
+
+	duplicates, total, err := db.GetInboxExceptionsFiltered("duplicate", 10, 0)
+	if err != nil {
+		t.Fatalf("Failed to get filtered inbox exceptions: %v", err)
+	}
+	if total != 2 || len(duplicates) != 2 {
+		t.Fatalf("Expected 2 duplicate exceptions, got total=%d items=%#v", total, duplicates)
+	}
+	for _, item := range duplicates {
+		if item.Status != "duplicate" {
+			t.Fatalf("Expected duplicate-only result, got %#v", item)
+		}
+	}
+
+	all, total, err := db.GetInboxExceptions(10, 0)
+	if err != nil {
+		t.Fatalf("Failed to get inbox exceptions: %v", err)
+	}
+	if total != 3 || len(all) != 3 {
+		t.Fatalf("Expected all exceptions via delegated method, got total=%d items=%#v", total, all)
 	}
 }
 
