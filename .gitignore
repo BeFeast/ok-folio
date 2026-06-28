@@ -28,6 +28,9 @@ config.*.yaml
 *.mov
 *.heic
 *.sql
+
+# Frontend app icons are real source assets (not photos/thumbnails) — keep them tracked.
+!dashboard/public/*.png
 *.sql.zst
 *.db
 *.sqlite
