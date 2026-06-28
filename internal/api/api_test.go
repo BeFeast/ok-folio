@@ -725,6 +725,9 @@ func TestHandleCreatePieceValidUpload(t *testing.T) {
 	if photo.ImageWidth != 12 || photo.ImageHeight != 8 {
 		t.Fatalf("expected dimensions 12x8, got %dx%d", photo.ImageWidth, photo.ImageHeight)
 	}
+	if photo.CapturedAt != nil || photo.CameraMake != "" || photo.CameraModel != "" || photo.LensModel != "" {
+		t.Fatalf("expected JPEG without EXIF to leave EXIF fields empty, got captured=%v make=%q model=%q lens=%q", photo.CapturedAt, photo.CameraMake, photo.CameraModel, photo.LensModel)
+	}
 	if len(photo.ContentHash) != sha256.Size || photo.PerceptualHash == 0 {
 		t.Fatalf("expected content and perceptual hashes, got content=%d phash=%d", len(photo.ContentHash), photo.PerceptualHash)
 	}

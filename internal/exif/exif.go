@@ -3,18 +3,92 @@ package exif
 import (
 	"bytes"
 	"fmt"
+	"image"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
 	"time"
 
 	"ok-folio/internal/config"
+
+	goexif "github.com/rwcarlsen/goexif/exif"
+
+	_ "golang.org/x/image/tiff"
+	_ "golang.org/x/image/webp"
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
 )
 
 type Metadata struct {
 	Title      string
 	Artist     string
 	UploadDate time.Time
+}
+
+type EmbeddedMetadata struct {
+	Width        int
+	Height       int
+	CapturedAt   *time.Time
+	CameraMake   string
+	CameraModel  string
+	LensModel    string
+	Orientation  string
+	GPSLatitude  *float64
+	GPSLongitude *float64
+}
+
+func ReadEmbeddedMetadata(filePath string) (EmbeddedMetadata, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return EmbeddedMetadata{}, err
+	}
+	defer file.Close()
+	return DecodeEmbeddedMetadata(file)
+}
+
+func DecodeEmbeddedMetadata(r io.ReadSeeker) (EmbeddedMetadata, error) {
+	var metadata EmbeddedMetadata
+	cfg, _, err := image.DecodeConfig(r)
+	if err != nil {
+		return EmbeddedMetadata{}, err
+	}
+	metadata.Width = cfg.Width
+	metadata.Height = cfg.Height
+
+	if _, err := r.Seek(0, io.SeekStart); err != nil {
+		return metadata, nil
+	}
+	exifData, err := goexif.Decode(r)
+	if err != nil {
+		return metadata, nil
+	}
+	if capturedAt, err := exifData.DateTime(); err == nil && !capturedAt.IsZero() {
+		capturedUTC := capturedAt.UTC()
+		metadata.CapturedAt = &capturedUTC
+	}
+	metadata.CameraMake = exifString(exifData, goexif.Make)
+	metadata.CameraModel = exifString(exifData, goexif.Model)
+	metadata.LensModel = exifString(exifData, goexif.LensModel)
+	metadata.Orientation = exifString(exifData, goexif.Orientation)
+	if lat, lon, err := exifData.LatLong(); err == nil {
+		metadata.GPSLatitude = &lat
+		metadata.GPSLongitude = &lon
+	}
+	return metadata, nil
+}
+
+func exifString(exifData *goexif.Exif, field goexif.FieldName) string {
+	tag, err := exifData.Get(field)
+	if err != nil {
+		return ""
+	}
+	value, err := tag.StringVal()
+	if err == nil {
+		return strings.TrimSpace(value)
+	}
+	return strings.Trim(strings.TrimSpace(tag.String()), `"`)
 }
 
 // SetMetadata sets EXIF metadata on an image file using exiftool

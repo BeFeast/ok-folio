@@ -292,6 +292,10 @@ func (s *Scraper) DownloadResolvedMediaOrDuplicate(ctx context.Context, resolved
 	if err != nil {
 		return nil, false, fmt.Errorf("failed to download image file: %w", err)
 	}
+	embedded, err := exif.ReadEmbeddedMetadata(filePath)
+	if err != nil {
+		s.logger.Warn().Err(err).Str("file", filePath).Msg("Failed to read embedded image metadata")
+	}
 
 	// Set EXIF metadata
 	if s.cfg.EXIF.SetArtist || s.cfg.EXIF.SetDate || s.cfg.EXIF.SetTitle {
@@ -309,17 +313,26 @@ func (s *Scraper) DownloadResolvedMediaOrDuplicate(ctx context.Context, resolved
 	// Record in database
 	uploadDate := publishedAtPtr(resolved.PublishedAt)
 	photo := &database.DownloadedPhoto{
-		URL:         dedupeKey,
-		SourcePage:  resolved.Source.URL,
-		Title:       resolved.Title,
-		Artist:      resolved.Artist,
-		UploadDate:  uploadDate,
-		FilePath:    filePath,
-		FileName:    fileName,
-		FileSize:    fileSize,
-		Status:      "downloaded",
-		Provider:    providerID,
-		ContentHash: contentHash,
+		URL:          dedupeKey,
+		SourcePage:   resolved.Source.URL,
+		Title:        resolved.Title,
+		Artist:       resolved.Artist,
+		UploadDate:   uploadDate,
+		FilePath:     filePath,
+		FileName:     fileName,
+		ImageWidth:   embedded.Width,
+		ImageHeight:  embedded.Height,
+		CapturedAt:   embedded.CapturedAt,
+		CameraMake:   embedded.CameraMake,
+		CameraModel:  embedded.CameraModel,
+		LensModel:    embedded.LensModel,
+		Orientation:  embedded.Orientation,
+		GPSLatitude:  embedded.GPSLatitude,
+		GPSLongitude: embedded.GPSLongitude,
+		FileSize:     fileSize,
+		Status:       "downloaded",
+		Provider:     providerID,
+		ContentHash:  contentHash,
 	}
 
 	duplicate := &database.InboxItem{

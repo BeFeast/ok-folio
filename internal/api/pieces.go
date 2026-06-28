@@ -20,6 +20,7 @@ import (
 	"ok-folio/internal/config"
 	"ok-folio/internal/database"
 	"ok-folio/internal/derivatives"
+	"ok-folio/internal/exif"
 
 	"github.com/disintegration/imaging"
 	"gorm.io/gorm"
@@ -85,6 +86,13 @@ func (s *Server) handleCreatePiece(w http.ResponseWriter, r *http.Request) {
 		FileName:       filepath.Base(relPath),
 		ImageWidth:     upload.width,
 		ImageHeight:    upload.height,
+		CapturedAt:     upload.capturedAt,
+		CameraMake:     upload.cameraMake,
+		CameraModel:    upload.cameraModel,
+		LensModel:      upload.lensModel,
+		Orientation:    upload.orientation,
+		GPSLatitude:    upload.gpsLatitude,
+		GPSLongitude:   upload.gpsLongitude,
 		DownloadedAt:   &now,
 		FileSize:       int64(len(upload.data)),
 		Notes:          strings.TrimSpace(r.FormValue("notes")),
@@ -120,6 +128,13 @@ type pieceUpload struct {
 	format         string
 	width          int
 	height         int
+	capturedAt     *time.Time
+	cameraMake     string
+	cameraModel    string
+	lensModel      string
+	orientation    string
+	gpsLatitude    *float64
+	gpsLongitude   *float64
 	perceptualHash int64
 }
 
@@ -150,6 +165,7 @@ func readAndValidatePieceUpload(file multipart.File, header *multipart.FileHeade
 	if !acceptedPieceImageFormat(format) {
 		return pieceUpload{}, fmt.Errorf("file must be JPEG, PNG, TIFF, or WebP")
 	}
+	embedded, _ := exif.DecodeEmbeddedMetadata(bytes.NewReader(buf.Bytes()))
 
 	img, _, err := image.Decode(bytes.NewReader(buf.Bytes()))
 	if err != nil {
@@ -164,6 +180,13 @@ func readAndValidatePieceUpload(file multipart.File, header *multipart.FileHeade
 		format:         format,
 		width:          cfg.Width,
 		height:         cfg.Height,
+		capturedAt:     embedded.CapturedAt,
+		cameraMake:     embedded.CameraMake,
+		cameraModel:    embedded.CameraModel,
+		lensModel:      embedded.LensModel,
+		orientation:    embedded.Orientation,
+		gpsLatitude:    embedded.GPSLatitude,
+		gpsLongitude:   embedded.GPSLongitude,
 		perceptualHash: averageImageHash(img),
 	}, nil
 }
