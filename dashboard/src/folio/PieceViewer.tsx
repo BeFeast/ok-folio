@@ -1,4 +1,4 @@
-import { useEffect, type CSSProperties } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { useFolio } from "./context";
 import { ChevronIcon, CloseIcon, HeartIcon, OkfImage } from "./ui";
 
@@ -50,6 +50,29 @@ export default function PieceViewer() {
     return () => window.removeEventListener("keydown", onKey);
   }, [selected, closePiece, stepPiece]);
 
+  // The info panel auto-hides a moment after opening / last interaction so the
+  // artwork can be viewed unobstructed; it reappears on mouse movement and stays
+  // while the cursor is over the panel.
+  const [chromeShown, setChromeShown] = useState(true);
+  const hideTimer = useRef<number | null>(null);
+  const overPanel = useRef(false);
+
+  const revealChrome = useCallback(() => {
+    setChromeShown(true);
+    if (hideTimer.current) window.clearTimeout(hideTimer.current);
+    hideTimer.current = window.setTimeout(() => {
+      if (!overPanel.current) setChromeShown(false);
+    }, 2600);
+  }, []);
+
+  useEffect(() => {
+    if (!selected) return;
+    revealChrome();
+    return () => {
+      if (hideTimer.current) window.clearTimeout(hideTimer.current);
+    };
+  }, [selected, revealChrome]);
+
   if (!selected) return null;
   const p = selected;
   const fav = isFav(p.id);
@@ -59,6 +82,7 @@ export default function PieceViewer() {
   return (
     <div
       onClick={closePiece}
+      onMouseMove={revealChrome}
       style={{
         position: "fixed",
         inset: 0,
@@ -159,9 +183,10 @@ export default function PieceViewer() {
         aria-label="Next"
         style={{
           position: "absolute",
-          right: "calc(min(416px, 92vw) + 18px)",
+          right: chromeShown ? "calc(min(416px, 92vw) + 18px)" : 24,
           top: "50%",
           transform: "translateY(-50%)",
+          transition: "right .35s ease",
           zIndex: 6,
           appearance: "none",
           cursor: "pointer",
@@ -199,6 +224,15 @@ export default function PieceViewer() {
 
       <div
         onClick={stop}
+        onMouseEnter={() => {
+          overPanel.current = true;
+          if (hideTimer.current) window.clearTimeout(hideTimer.current);
+          setChromeShown(true);
+        }}
+        onMouseLeave={() => {
+          overPanel.current = false;
+          revealChrome();
+        }}
         style={{
           position: "absolute",
           top: 0,
@@ -213,6 +247,10 @@ export default function PieceViewer() {
           WebkitBackdropFilter: "blur(24px)",
           borderLeft: "1px solid rgba(251,246,238,0.12)",
           boxShadow: "-30px 0 80px rgba(0,0,0,0.4)",
+          opacity: chromeShown ? 1 : 0,
+          transform: chromeShown ? "translateX(0)" : "translateX(100%)",
+          transition: "opacity .35s ease, transform .35s ease",
+          pointerEvents: chromeShown ? "auto" : "none",
         }}
       >
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, paddingRight: 44 }}>
