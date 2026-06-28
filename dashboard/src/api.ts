@@ -426,6 +426,42 @@ export async function dismissInboxItem(id: number): Promise<void> {
   }
 }
 
+export async function keepInboxItem(id: number): Promise<void> {
+  const response = await fetch(`${API_BASE}/inbox/${id}/keep`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || "Failed to keep inbox item");
+  }
+}
+
+export async function skipInboxItem(id: number): Promise<void> {
+  const response = await fetch(`${API_BASE}/inbox/${id}/skip`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || "Failed to skip inbox item");
+  }
+}
+
+export async function moveInboxItemToFolio(id: number, folioId: number, photoId?: number): Promise<void> {
+  const body: { folio_id: number; photo_id?: number } = { folio_id: folioId };
+  if (photoId !== undefined) {
+    body.photo_id = photoId;
+  }
+  const response = await fetch(`${API_BASE}/inbox/${id}/move`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || "Failed to move inbox item");
+  }
+}
+
 export async function fetchPhotoDetail(
   id: number,
 ): Promise<PhotoDetailResponse> {

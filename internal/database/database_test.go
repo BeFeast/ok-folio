@@ -607,6 +607,44 @@ func TestDeleteInboxItemIgnoresNonExceptionStatus(t *testing.T) {
 	}
 }
 
+func TestResolveInboxItemMarksExceptionHandled(t *testing.T) {
+	db := setupTestDB(t)
+
+	item := InboxItem{
+		ProviderID: "telegram",
+		DedupeKey:  "telegram:source-1:media-1",
+		Status:     "duplicate",
+	}
+	if err := db.Create(&item).Error; err != nil {
+		t.Fatalf("Failed to create inbox item: %v", err)
+	}
+
+	if err := db.ResolveInboxItem(item.ID, "kept"); err != nil {
+		t.Fatalf("ResolveInboxItem failed: %v", err)
+	}
+	if _, err := db.GetInboxItem(item.ID); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("expected resolved inbox item to leave active inbox, got %v", err)
+	}
+
+	var stored InboxItem
+	if err := db.DB.Where("id = ?", item.ID).First(&stored).Error; err != nil {
+		t.Fatalf("Failed to fetch resolved inbox item: %v", err)
+	}
+	if stored.Status != "kept" {
+		t.Fatalf("expected kept status, got %#v", stored)
+	}
+
+	if err := db.ResolveInboxItem(item.ID, "skipped"); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("expected resolved item to be immutable through active resolver, got %v", err)
+	}
+	if err := db.ResolveInboxItem(0, "kept"); err == nil {
+		t.Fatalf("expected zero ID validation error")
+	}
+	if err := db.ResolveInboxItem(item.ID, "bogus"); err == nil {
+		t.Fatalf("expected invalid status validation error")
+	}
+}
+
 func TestCountInboxByStatus(t *testing.T) {
 	db := setupTestDB(t)
 

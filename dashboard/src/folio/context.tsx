@@ -27,8 +27,11 @@ import {
   fetchStats,
   getPhotoImageUrl,
   getPhotoThumbnailUrl,
+  keepInboxItem,
+  moveInboxItemToFolio,
   removeFromFavorites,
   removePieceFromFolio,
+  skipInboxItem,
   updateFolio,
   type CreatePieceInput,
 } from "../api";
@@ -240,6 +243,9 @@ interface FolioContextValue {
 
   importPiece: (input: CreatePieceInput) => void;
   dismissInboxAction: (id: number) => void;
+  keepInboxAction: (id: number) => void;
+  skipInboxAction: (id: number) => void;
+  moveInboxToFolioAction: (id: number, folioId: number, photoId?: number) => void;
   createFolioAction: (name: string) => void;
   renameFolioAction: (id: number, name: string) => void;
   deleteFolioAction: (id: number) => void;
@@ -421,6 +427,71 @@ export function FolioProvider({ children }: { children: ReactNode }) {
             prev.map((t) =>
               t.id === id
                 ? { ...t, status: "error", title: "Couldn’t dismiss inbox item", detail: err instanceof Error ? err.message : undefined }
+                : t,
+            ),
+          );
+        });
+    },
+    [queryClient],
+  );
+
+  const resolveInboxAction = useCallback(
+    (inboxItemId: number, action: "keep" | "skip", request: (id: number) => Promise<void>) => {
+      const id = ++toastSeq;
+      const verb = action === "keep" ? "Keeping" : "Skipping";
+      const done = action === "keep" ? "Inbox item kept" : "Inbox item skipped";
+      const failed = action === "keep" ? "Couldn’t keep inbox item" : "Couldn’t skip inbox item";
+      setToasts((prev) => [...prev, { id, status: "loading", title: `${verb} inbox item` }]);
+      request(inboxItemId)
+        .then(() => {
+          setToasts((prev) => prev.map((t) => (t.id === id ? { ...t, status: "success", title: done } : t)));
+          window.setTimeout(() => {
+            setToasts((prev) => prev.filter((t) => t.id !== id));
+          }, 2800);
+          void queryClient.invalidateQueries({ queryKey: ["inbox"] });
+          void queryClient.invalidateQueries({ queryKey: ["inbox-counts"] });
+        })
+        .catch((err: unknown) => {
+          setToasts((prev) =>
+            prev.map((t) =>
+              t.id === id ? { ...t, status: "error", title: failed, detail: err instanceof Error ? err.message : undefined } : t,
+            ),
+          );
+        });
+    },
+    [queryClient],
+  );
+
+  const keepInboxAction = useCallback(
+    (inboxItemId: number) => resolveInboxAction(inboxItemId, "keep", keepInboxItem),
+    [resolveInboxAction],
+  );
+
+  const skipInboxAction = useCallback(
+    (inboxItemId: number) => resolveInboxAction(inboxItemId, "skip", skipInboxItem),
+    [resolveInboxAction],
+  );
+
+  const moveInboxToFolioAction = useCallback(
+    (inboxItemId: number, folioId: number, photoId?: number) => {
+      const id = ++toastSeq;
+      setToasts((prev) => [...prev, { id, status: "loading", title: "Adding inbox item to folio" }]);
+      moveInboxItemToFolio(inboxItemId, folioId, photoId)
+        .then(() => {
+          setToasts((prev) => prev.map((t) => (t.id === id ? { ...t, status: "success", title: "Inbox item added to folio" } : t)));
+          window.setTimeout(() => {
+            setToasts((prev) => prev.filter((t) => t.id !== id));
+          }, 2800);
+          void queryClient.invalidateQueries({ queryKey: ["inbox"] });
+          void queryClient.invalidateQueries({ queryKey: ["inbox-counts"] });
+          void queryClient.invalidateQueries({ queryKey: ["folios"] });
+          void queryClient.invalidateQueries({ queryKey: ["folio-pieces", folioId] });
+        })
+        .catch((err: unknown) => {
+          setToasts((prev) =>
+            prev.map((t) =>
+              t.id === id
+                ? { ...t, status: "error", title: "Couldn’t add inbox item to folio", detail: err instanceof Error ? err.message : undefined }
                 : t,
             ),
           );
@@ -649,6 +720,9 @@ export function FolioProvider({ children }: { children: ReactNode }) {
     toggleFav,
     importPiece,
     dismissInboxAction,
+    keepInboxAction,
+    skipInboxAction,
+    moveInboxToFolioAction,
     createFolioAction,
     renameFolioAction,
     deleteFolioAction,

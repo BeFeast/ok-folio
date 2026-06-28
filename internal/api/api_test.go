@@ -2336,6 +2336,242 @@ func TestHandleDismissInboxItemDoesNotDeleteNonException(t *testing.T) {
 	}
 }
 
+func TestHandleKeepAndSkipInboxItemResolveRows(t *testing.T) {
+	server, db := setupTestServer(t)
+	defer safeShutdown(server)
+
+	items := []database.InboxItem{
+		{ProviderID: "telegram", DedupeKey: "telegram:source-1:media-1", Status: "duplicate"},
+		{ProviderID: "webgallery", SourceID: "source-2", SourceURL: "https://example.test/2", Status: "ambiguous"},
+	}
+	for idx := range items {
+		if err := db.Create(&items[idx]).Error; err != nil {
+			t.Fatalf("Failed to create inbox item: %v", err)
+		}
+	}
+
+	cases := []struct {
+		path string
+		key  string
+		id   uint64
+	}{
+		{path: "/keep", key: "kept", id: items[0].ID},
+		{path: "/skip", key: "skipped", id: items[1].ID},
+	}
+	for _, tc := range cases {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/inbox/"+strconv.FormatUint(tc.id, 10)+tc.path, nil)
+		w := httptest.NewRecorder()
+		server.router.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s status=%d body=%q", tc.path, w.Code, w.Body.String())
+		}
+		var response map[string]bool
+		if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		if !response[tc.key] {
+			t.Fatalf("expected %s response, got %#v", tc.key, response)
+		}
+	}
+
+	_, total, err := db.GetInboxExceptions(10, 0)
+	if err != nil {
+		t.Fatalf("Failed to fetch active inbox items: %v", err)
+	}
+	if total != 0 {
+		t.Fatalf("expected resolved rows to leave active inbox, got total=%d", total)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/inbox/"+strconv.FormatUint(items[0].ID, 10)+"/keep", nil)
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected second keep to return 404, got %d body=%q", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleMoveInboxItemAddsMatchedPieceToFolio(t *testing.T) {
+	server, db := setupTestServer(t)
+	defer safeShutdown(server)
+
+	contentHash := []byte("move-inbox-content-hash")
+	photo := createAPITestDownloadedPhoto(t, db, "https://example.com/inbox-match.jpg", "Matched")
+	if err := db.Model(&database.DownloadedPhoto{}).Where("id = ?", photo.ID).Update("content_hash", contentHash).Error; err != nil {
+		t.Fatalf("Failed to set content hash: %v", err)
+	}
+	folio, err := db.CreateFolio(database.Folio{Name: "Review"})
+	if err != nil {
+		t.Fatalf("CreateFolio failed: %v", err)
+	}
+	item := database.InboxItem{
+		ProviderID:  "telegram",
+		DedupeKey:   "telegram:source-1:media-1",
+		Status:      "duplicate",
+		ContentHash: contentHash,
+	}
+	if err := db.Create(&item).Error; err != nil {
+		t.Fatalf("Failed to create inbox item: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/inbox/"+strconv.FormatUint(item.ID, 10)+"/move", bytes.NewBufferString(`{"folio_id":`+strconv.FormatUint(folio.ID, 10)+`}`))
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("move status=%d body=%q", w.Code, w.Body.String())
+	}
+	var response struct {
+		Moved   bool   `json:"moved"`
+		FolioID uint64 `json:"folio_id"`
+		PhotoID uint64 `json:"photo_id"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("decode move response: %v", err)
+	}
+	if !response.Moved || response.FolioID != folio.ID || response.PhotoID != photo.ID {
+		t.Fatalf("unexpected move response: %#v", response)
+	}
+
+	pieces, total, err := db.ListFolioPieces(folio.ID, 10, 0)
+	if err != nil {
+		t.Fatalf("ListFolioPieces failed: %v", err)
+	}
+	if total != 1 || len(pieces) != 1 || pieces[0].ID != photo.ID {
+		t.Fatalf("expected matched piece in folio, total=%d pieces=%#v", total, pieces)
+	}
+
+	_, total, err = db.GetInboxExceptions(10, 0)
+	if err != nil {
+		t.Fatalf("Failed to fetch active inbox items: %v", err)
+	}
+	if total != 0 {
+		t.Fatalf("expected moved row to leave active inbox, got total=%d", total)
+	}
+}
+
+func TestHandleMoveInboxItemValidatesTarget(t *testing.T) {
+	server, db := setupTestServer(t)
+	defer safeShutdown(server)
+
+	folio, err := db.CreateFolio(database.Folio{Name: "Needs target"})
+	if err != nil {
+		t.Fatalf("CreateFolio failed: %v", err)
+	}
+	item := database.InboxItem{
+		ProviderID: "webgallery",
+		SourceID:   "source-1",
+		SourceURL:  "https://example.test/1",
+		Status:     "ambiguous",
+	}
+	if err := db.Create(&item).Error; err != nil {
+		t.Fatalf("Failed to create inbox item: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/inbox/"+strconv.FormatUint(item.ID, 10)+"/move", bytes.NewBufferString(`{"folio_id":`+strconv.FormatUint(folio.ID, 10)+`}`))
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected missing target status 400, got %d body=%q", w.Code, w.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/inbox/999999/move", bytes.NewBufferString(`{"folio_id":`+strconv.FormatUint(folio.ID, 10)+`,"photo_id":1}`))
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected missing inbox status 404, got %d body=%q", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleMoveInboxItemRejectsMismatchedPhotoID(t *testing.T) {
+	server, db := setupTestServer(t)
+	defer safeShutdown(server)
+
+	contentHash := []byte("move-inbox-right-hash")
+	photo := createAPITestDownloadedPhoto(t, db, "https://example.com/inbox-right.jpg", "Right")
+	if err := db.Model(&database.DownloadedPhoto{}).Where("id = ?", photo.ID).Update("content_hash", contentHash).Error; err != nil {
+		t.Fatalf("Failed to set content hash: %v", err)
+	}
+	other := createAPITestDownloadedPhoto(t, db, "https://example.com/inbox-wrong.jpg", "Wrong")
+	if err := db.Model(&database.DownloadedPhoto{}).Where("id = ?", other.ID).Update("content_hash", []byte("move-inbox-wrong-hash")).Error; err != nil {
+		t.Fatalf("Failed to set other content hash: %v", err)
+	}
+	folio, err := db.CreateFolio(database.Folio{Name: "Mismatch"})
+	if err != nil {
+		t.Fatalf("CreateFolio failed: %v", err)
+	}
+	item := database.InboxItem{
+		ProviderID:  "telegram",
+		DedupeKey:   "telegram:source-1:media-2",
+		Status:      "duplicate",
+		ContentHash: contentHash,
+	}
+	if err := db.Create(&item).Error; err != nil {
+		t.Fatalf("Failed to create inbox item: %v", err)
+	}
+
+	body := `{"folio_id":` + strconv.FormatUint(folio.ID, 10) + `,"photo_id":` + strconv.FormatUint(other.ID, 10) + `}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/inbox/"+strconv.FormatUint(item.ID, 10)+"/move", bytes.NewBufferString(body))
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected mismatched photo status 400, got %d body=%q", w.Code, w.Body.String())
+	}
+
+	pieces, total, err := db.ListFolioPieces(folio.ID, 10, 0)
+	if err != nil {
+		t.Fatalf("ListFolioPieces failed: %v", err)
+	}
+	if total != 0 || len(pieces) != 0 {
+		t.Fatalf("expected no folio pieces after rejected move, total=%d pieces=%#v", total, pieces)
+	}
+	_, total, err = db.GetInboxExceptions(10, 0)
+	if err != nil {
+		t.Fatalf("GetInboxExceptions failed: %v", err)
+	}
+	if total != 1 {
+		t.Fatalf("expected inbox item to remain active, got total=%d", total)
+	}
+}
+
+func TestHandleMoveInboxItemDoesNotAddPieceForResolvedItem(t *testing.T) {
+	server, db := setupTestServer(t)
+	defer safeShutdown(server)
+
+	contentHash := []byte("move-inbox-resolved-hash")
+	photo := createAPITestDownloadedPhoto(t, db, "https://example.com/inbox-resolved.jpg", "Resolved")
+	if err := db.Model(&database.DownloadedPhoto{}).Where("id = ?", photo.ID).Update("content_hash", contentHash).Error; err != nil {
+		t.Fatalf("Failed to set content hash: %v", err)
+	}
+	folio, err := db.CreateFolio(database.Folio{Name: "Resolved"})
+	if err != nil {
+		t.Fatalf("CreateFolio failed: %v", err)
+	}
+	item := database.InboxItem{
+		ProviderID:  "telegram",
+		DedupeKey:   "telegram:source-1:media-3",
+		Status:      "kept",
+		ContentHash: contentHash,
+	}
+	if err := db.Create(&item).Error; err != nil {
+		t.Fatalf("Failed to create inbox item: %v", err)
+	}
+
+	body := `{"folio_id":` + strconv.FormatUint(folio.ID, 10) + `,"photo_id":` + strconv.FormatUint(photo.ID, 10) + `}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/inbox/"+strconv.FormatUint(item.ID, 10)+"/move", bytes.NewBufferString(body))
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected resolved inbox item status 404, got %d body=%q", w.Code, w.Body.String())
+	}
+
+	pieces, total, err := db.ListFolioPieces(folio.ID, 10, 0)
+	if err != nil {
+		t.Fatalf("ListFolioPieces failed: %v", err)
+	}
+	if total != 0 || len(pieces) != 0 {
+		t.Fatalf("expected no folio pieces for resolved inbox item, total=%d pieces=%#v", total, pieces)
+	}
+}
+
 func TestHandleInboxStatusFilter(t *testing.T) {
 	server, db := setupTestServer(t)
 	defer safeShutdown(server)

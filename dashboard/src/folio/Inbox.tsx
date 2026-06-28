@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { fetchInbox, fetchInboxCounts, getPhotoThumbnailUrl } from "../api";
+import { fetchFolios, fetchInbox, fetchInboxCounts, getPhotoThumbnailUrl } from "../api";
 import type { InboxItem } from "../types";
 import { useFolio } from "./context";
 import { Hov, OkfImage, PageHeader } from "./ui";
@@ -93,13 +93,17 @@ function sourceURL(value: string): URL | null {
 
 function InboxRow({ item }: { item: InboxItem }) {
   const navigate = useNavigate();
-  const { dismissInboxAction } = useFolio();
+  const { keepInboxAction, skipInboxAction, moveInboxToFolioAction } = useFolio();
+  const folios = useQuery({ queryKey: ["folios"], queryFn: fetchFolios });
+  const [selectedFolio, setSelectedFolio] = useState("");
   const title = item.title.trim() || "Untitled piece";
   const artist = item.artist.trim() || "Unknown artist";
   const source = item.source_url.trim();
   const sourceLink = sourceURL(source);
   const sourceLabel = sourceLink ? sourceLink.hostname.replace(/^www\./, "") : source;
   const coverPhotoId = item.cover_photo_id;
+  const folioId = Number(selectedFolio);
+  const canMove = coverPhotoId != null && Number.isFinite(folioId) && folioId > 0;
 
   return (
     <div
@@ -221,27 +225,90 @@ function InboxRow({ item }: { item: InboxItem }) {
           <div style={{ marginTop: 10, fontFamily: "var(--sans)", fontSize: 12.5, color: "var(--muted)" }}>{sourceLabel}</div>
         ) : null}
       </div>
-      <Hov
-        as="button"
-        onClick={() => dismissInboxAction(item.id)}
-        style={{
-          flex: "none",
-          appearance: "none",
-          cursor: "pointer",
-          fontFamily: "var(--sans)",
-          fontSize: 13,
-          fontWeight: 500,
-          padding: "10px 14px",
-          borderRadius: 99,
-          border: "1px solid var(--line)",
-          background: "transparent",
-          color: "var(--graphite)",
-        }}
-        hover={{ color: "var(--ink)", borderColor: "var(--accent)" }}
-      >
-        Dismiss
-      </Hov>
+      <div style={{ flex: "0 0 220px", display: "flex", flexDirection: "column", alignItems: "stretch", gap: 8 }}>
+        {coverPhotoId != null ? (
+          <div style={{ display: "flex", gap: 7 }}>
+            <select
+              value={selectedFolio}
+              onChange={(event) => setSelectedFolio(event.target.value)}
+              aria-label={`Choose folio for ${title}`}
+              style={{
+                minWidth: 0,
+                flex: 1,
+                border: "1px solid var(--line)",
+                borderRadius: 99,
+                background: "var(--surface)",
+                color: "var(--graphite)",
+                fontFamily: "var(--sans)",
+                fontSize: 12.5,
+                padding: "9px 10px",
+              }}
+            >
+              <option value="">Folio</option>
+              {(folios.data?.folios ?? []).map((folio) => (
+                <option key={folio.id} value={folio.id}>
+                  {folio.name}
+                </option>
+              ))}
+            </select>
+            <Hov
+              as="button"
+              disabled={!canMove}
+              onClick={() => {
+                if (canMove) {
+                  moveInboxToFolioAction(item.id, folioId, coverPhotoId);
+                }
+              }}
+              style={{
+                flex: "none",
+                appearance: "none",
+                cursor: canMove ? "pointer" : "not-allowed",
+                opacity: canMove ? 1 : 0.55,
+                fontFamily: "var(--sans)",
+                fontSize: 12.5,
+                fontWeight: 500,
+                padding: "9px 11px",
+                borderRadius: 99,
+                border: 0,
+                background: "var(--accent)",
+                color: "var(--on-accent)",
+              }}
+              hover={canMove ? { filter: "brightness(1.06)" } : undefined}
+            >
+              Add
+            </Hov>
+          </div>
+        ) : null}
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          <ActionButton onClick={() => keepInboxAction(item.id)}>Keep</ActionButton>
+          <ActionButton onClick={() => skipInboxAction(item.id)}>Skip</ActionButton>
+        </div>
+      </div>
     </div>
+  );
+}
+
+function ActionButton({ children, onClick }: { children: string; onClick: () => void }) {
+  return (
+    <Hov
+      as="button"
+      onClick={onClick}
+      style={{
+        appearance: "none",
+        cursor: "pointer",
+        fontFamily: "var(--sans)",
+        fontSize: 13,
+        fontWeight: 500,
+        padding: "10px 14px",
+        borderRadius: 99,
+        border: "1px solid var(--line)",
+        background: "transparent",
+        color: "var(--graphite)",
+      }}
+      hover={{ color: "var(--ink)", borderColor: "var(--accent)" }}
+    >
+      {children}
+    </Hov>
   );
 }
 

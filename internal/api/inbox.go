@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -14,6 +15,11 @@ const (
 	DefaultInboxLimit = 50
 	MaxInboxLimit     = 200
 )
+
+type inboxMoveRequest struct {
+	FolioID uint64 `json:"folio_id"`
+	PhotoID uint64 `json:"photo_id"`
+}
 
 func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 	status := r.URL.Query().Get("status")
@@ -136,6 +142,93 @@ func (s *Server) handleDismissInboxItem(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	s.writeJSON(w, http.StatusOK, map[string]bool{"dismissed": true})
+}
+
+func (s *Server) handleKeepInboxItem(w http.ResponseWriter, r *http.Request) {
+	s.resolveInboxItem(w, r, "kept", "kept")
+}
+
+func (s *Server) handleSkipInboxItem(w http.ResponseWriter, r *http.Request) {
+	s.resolveInboxItem(w, r, "skipped", "skipped")
+}
+
+func (s *Server) resolveInboxItem(w http.ResponseWriter, r *http.Request, status string, responseKey string) {
+	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 64)
+	if err != nil || id == 0 {
+		s.writeError(w, http.StatusBadRequest, "Invalid inbox item ID")
+		return
+	}
+	err = s.db.ResolveInboxItem(id, status)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		s.writeError(w, http.StatusNotFound, "Inbox item not found")
+		return
+	}
+	if err != nil {
+		s.logger.Error().Err(err).Str("status", status).Msg("Failed to resolve inbox item")
+		s.writeError(w, http.StatusInternalServerError, "Failed to resolve inbox item")
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]bool{responseKey: true})
+}
+
+func (s *Server) handleMoveInboxItem(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 64)
+	if err != nil || id == 0 {
+		s.writeError(w, http.StatusBadRequest, "Invalid inbox item ID")
+		return
+	}
+
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxFolioRequestBytes))
+	dec.DisallowUnknownFields()
+	var input inboxMoveRequest
+	if err := dec.Decode(&input); err != nil {
+		s.writeError(w, http.StatusBadRequest, "Invalid move request")
+		return
+	}
+	if input.FolioID == 0 {
+		s.writeError(w, http.StatusBadRequest, "folio_id must be greater than zero")
+		return
+	}
+
+	if _, err := s.db.GetFolio(input.FolioID); errors.Is(err, gorm.ErrRecordNotFound) {
+		s.writeError(w, http.StatusNotFound, "Folio not found")
+		return
+	} else if err != nil {
+		s.writeError(w, http.StatusInternalServerError, "Failed to fetch folio")
+		return
+	}
+
+	photoID, err := s.db.MoveInboxItemToFolio(id, input.FolioID, input.PhotoID)
+	if errors.Is(err, database.ErrFolioNotFound) {
+		s.writeError(w, http.StatusNotFound, "Folio not found")
+		return
+	}
+	if errors.Is(err, database.ErrInboxItemNotFound) {
+		s.writeError(w, http.StatusNotFound, "Inbox item not found")
+		return
+	}
+	if errors.Is(err, database.ErrPhotoNotFound) {
+		s.writeError(w, http.StatusNotFound, "Photo not found")
+		return
+	}
+	if errors.Is(err, database.ErrInboxItemNoMatchedPhoto) {
+		s.writeError(w, http.StatusBadRequest, "Inbox item has no matched piece")
+		return
+	}
+	if errors.Is(err, database.ErrInboxItemPhotoMismatch) {
+		s.writeError(w, http.StatusBadRequest, "photo_id does not match the inbox item")
+		return
+	}
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, "Failed to resolve inbox item")
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, map[string]interface{}{
+		"moved":    true,
+		"folio_id": input.FolioID,
+		"photo_id": photoID,
+	})
 }
 
 func (s *Server) handleInboxCounts(w http.ResponseWriter, r *http.Request) {
