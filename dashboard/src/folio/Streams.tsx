@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { fetchConnectorStatus } from "../api";
-import type { ConnectorStatus } from "../types";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { fetchConnectorSources, fetchConnectorStatus, updateConnectorSource } from "../api";
+import type { ConnectorSourcesResponse, ConnectorSourceSetting, ConnectorStatus } from "../types";
 import { DotsIcon, OutlineButton, PageHeader } from "./ui";
 import { useViewport } from "./useViewport";
 
@@ -53,13 +53,14 @@ function sourceType(s: ConnectorStatus): string {
   return "API";
 }
 
-function Toggle({ on, onClick, label }: { on: boolean; onClick: () => void; label: string }) {
+function Toggle({ on, onClick, label, disabled = false }: { on: boolean; onClick: () => void; label: string; disabled?: boolean }) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={on}
       aria-label={label}
+      disabled={disabled}
       onClick={onClick}
       style={{
         flex: "none",
@@ -71,6 +72,8 @@ function Toggle({ on, onClick, label }: { on: boolean; onClick: () => void; labe
         background: on ? "var(--accent)" : "var(--line-2)",
         display: "flex",
         justifyContent: on ? "flex-end" : "flex-start",
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.55 : 1,
       }}
     >
       <span
@@ -86,9 +89,21 @@ function Toggle({ on, onClick, label }: { on: boolean; onClick: () => void; labe
   );
 }
 
-function MobileStreamCard({ s }: { s: ConnectorStatus }) {
+function MobileStreamCard({
+  s,
+  settings,
+  busy,
+  onToggle,
+}: {
+  s: ConnectorStatus;
+  settings: ConnectorSourceSetting[];
+  busy: boolean;
+  onToggle: (connector: ConnectorStatus, sources: ConnectorSourceSetting[]) => void;
+}) {
   const initial = (s.display_name || "?").trim().charAt(0).toUpperCase() || "?";
-  const [enabled, setEnabled] = useState(() => s.health !== "idle" && s.health !== "error");
+  const managedSources = settings.filter((source) => source.type === s.id);
+  const enabled = managedSources.length > 0 ? managedSources.some((source) => source.enabled) : s.health !== "idle" && s.health !== "error";
+  const canToggle = managedSources.length > 0 && !busy;
   const pieces = s.counts?.total ?? s.counts?.downloaded ?? 0;
   return (
     <article
@@ -127,7 +142,12 @@ function MobileStreamCard({ s }: { s: ConnectorStatus }) {
           {sourceType(s)} · synced {formatAgo(s.last_sync)} · {pieces.toLocaleString()} pieces
         </div>
       </div>
-      <Toggle on={enabled} onClick={() => setEnabled((current) => !current)} label={`Toggle ${s.display_name}`} />
+      <Toggle
+        on={enabled}
+        onClick={() => onToggle(s, managedSources)}
+        label={`Toggle ${s.display_name}`}
+        disabled={!canToggle}
+      />
     </article>
   );
 }
@@ -206,11 +226,59 @@ function StreamRow({ s }: { s: ConnectorStatus }) {
 
 export default function Streams() {
   const { isMobile } = useViewport();
+  const queryClient = useQueryClient();
+  const [busyConnectors, setBusyConnectors] = useState<Record<string, boolean>>({});
   const { data, isLoading, isError } = useQuery({
     queryKey: ["folio-connectors"],
     queryFn: fetchConnectorStatus,
   });
+  const sourceSettings = useQuery({
+    queryKey: ["connector-sources"],
+    queryFn: () => fetchConnectorSources(""),
+    enabled: isMobile,
+  });
   const connectors = data?.connectors ?? [];
+  const settings = sourceSettings.data?.sources ?? [];
+
+  const toggleConnector = (connector: ConnectorStatus, sources: ConnectorSourceSetting[]) => {
+    if (sources.length === 0 || busyConnectors[connector.id]) return;
+    const enabled = sources.some((source) => source.enabled);
+    const nextEnabled = !enabled;
+    const previous = queryClient.getQueryData<ConnectorSourcesResponse>(["connector-sources"]);
+    queryClient.setQueryData<ConnectorSourcesResponse>(["connector-sources"], (current) => {
+      if (!current) return current;
+      return {
+        sources: current.sources.map((source) => (source.type === connector.id ? { ...source, enabled: nextEnabled } : source)),
+      };
+    });
+    setBusyConnectors((current) => ({ ...current, [connector.id]: true }));
+    Promise.all(
+      sources.map((source) =>
+        updateConnectorSource(source.id, {
+          type: source.type,
+          chat_id: source.chat_id,
+          label: source.label,
+          enabled: nextEnabled,
+        }),
+      ),
+    )
+      .then(() => {
+        void queryClient.invalidateQueries({ queryKey: ["connector-sources"] });
+        void queryClient.invalidateQueries({ queryKey: ["folio-connectors"] });
+      })
+      .catch(() => {
+        if (previous) {
+          queryClient.setQueryData(["connector-sources"], previous);
+        }
+      })
+      .finally(() => {
+        setBusyConnectors((current) => {
+          const next = { ...current };
+          delete next[connector.id];
+          return next;
+        });
+      });
+  };
 
   if (isMobile) {
     return (
@@ -247,7 +315,15 @@ export default function Streams() {
               No streams yet.
             </div>
           ) : (
-            connectors.map((s) => <MobileStreamCard key={s.id} s={s} />)
+            connectors.map((s) => (
+              <MobileStreamCard
+                key={s.id}
+                s={s}
+                settings={settings}
+                busy={!!busyConnectors[s.id] || sourceSettings.isLoading}
+                onToggle={toggleConnector}
+              />
+            ))
           )}
         </section>
       </div>

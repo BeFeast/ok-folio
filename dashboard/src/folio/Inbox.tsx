@@ -592,6 +592,8 @@ export default function Inbox() {
   const { isMobile } = useViewport();
   const queryClient = useQueryClient();
   const dismissTimers = useRef<Record<number, number>>({});
+  const pendingDismisses = useRef<Record<number, InboxItem>>({});
+  const mounted = useRef(true);
   const [dismissed, setDismissed] = useState<Record<number, InboxItem>>({});
   const [undoItem, setUndoItem] = useState<InboxItem | null>(null);
   const counts = useQuery({ queryKey: ["inbox-counts"], queryFn: fetchInboxCounts });
@@ -608,25 +610,40 @@ export default function Inbox() {
   const visibleItems = useMemo(() => items.filter((item) => !dismissed[item.id]), [dismissed, items]);
   const total = inbox.data?.pages[0]?.total ?? counts.data?.total ?? 0;
 
-  const dismissWithUndo = (item: InboxItem) => {
-    if (dismissTimers.current[item.id]) window.clearTimeout(dismissTimers.current[item.id]);
-    setDismissed((prev) => ({ ...prev, [item.id]: item }));
-    setUndoItem(item);
-    dismissTimers.current[item.id] = window.setTimeout(() => {
-      dismissInboxItem(item.id)
-        .then(() => {
-          void queryClient.invalidateQueries({ queryKey: ["inbox"] });
-          void queryClient.invalidateQueries({ queryKey: ["inbox-counts"] });
-        })
-        .catch(() => {
+  const commitDismiss = (item: InboxItem, restoreOnError: boolean) => {
+    delete pendingDismisses.current[item.id];
+    if (dismissTimers.current[item.id]) {
+      window.clearTimeout(dismissTimers.current[item.id]);
+      delete dismissTimers.current[item.id];
+    }
+    dismissInboxItem(item.id)
+      .then(() => {
+        void queryClient.invalidateQueries({ queryKey: ["inbox"] });
+        void queryClient.invalidateQueries({ queryKey: ["inbox-counts"] });
+      })
+      .catch(() => {
+        if (restoreOnError && mounted.current) {
           setDismissed((prev) => {
             const next = { ...prev };
             delete next[item.id];
             return next;
           });
-        });
-      delete dismissTimers.current[item.id];
-      setUndoItem((current) => (current?.id === item.id ? null : current));
+        }
+      })
+      .finally(() => {
+        if (mounted.current) {
+          setUndoItem((current) => (current?.id === item.id ? null : current));
+        }
+      });
+  };
+
+  const dismissWithUndo = (item: InboxItem) => {
+    if (dismissTimers.current[item.id]) window.clearTimeout(dismissTimers.current[item.id]);
+    pendingDismisses.current[item.id] = item;
+    setDismissed((prev) => ({ ...prev, [item.id]: item }));
+    setUndoItem(item);
+    dismissTimers.current[item.id] = window.setTimeout(() => {
+      commitDismiss(item, true);
     }, 3400);
   };
 
@@ -637,6 +654,7 @@ export default function Inbox() {
       window.clearTimeout(dismissTimers.current[item.id]);
       delete dismissTimers.current[item.id];
     }
+    delete pendingDismisses.current[item.id];
     setDismissed((prev) => {
       const next = { ...prev };
       delete next[item.id];
@@ -647,7 +665,9 @@ export default function Inbox() {
 
   useEffect(() => {
     return () => {
+      mounted.current = false;
       Object.values(dismissTimers.current).forEach((timer) => window.clearTimeout(timer));
+      Object.values(pendingDismisses.current).forEach((item) => commitDismiss(item, false));
     };
   }, []);
 
