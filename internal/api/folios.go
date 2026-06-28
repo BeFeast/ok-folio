@@ -3,7 +3,6 @@ package api
 import (
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"strconv"
 
@@ -22,6 +21,8 @@ type folioRequest struct {
 	CoverPhotoID *uint64 `json:"cover_photo_id"`
 }
 
+const maxFolioRequestBytes = 1 << 20
+
 func (s *Server) handleListFolios(w http.ResponseWriter, r *http.Request) {
 	folios, err := s.db.ListFolios()
 	if err != nil {
@@ -34,6 +35,10 @@ func (s *Server) handleListFolios(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleCreateFolio(w http.ResponseWriter, r *http.Request) {
 	input, ok := s.readFolioRequest(w, r)
 	if !ok {
+		return
+	}
+	if err := validateFolioCoverPhotoID(input.CoverPhotoID); err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	folio := database.Folio{
@@ -86,6 +91,14 @@ func (s *Server) handleUpdateFolio(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if input.Name == nil && !coverProvided {
+		s.writeError(w, http.StatusBadRequest, "No folio update fields provided")
+		return
+	}
+	if err := validateFolioCoverPhotoID(input.CoverPhotoID); err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	updated, err := s.db.UpdateFolio(id, database.FolioUpdates{
 		Name:          input.Name,
 		CoverProvided: coverProvided,
@@ -130,7 +143,9 @@ func (s *Server) handleDeleteFolio(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) readFolioRequest(w http.ResponseWriter, r *http.Request) (folioRequest, bool) {
 	var input folioRequest
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxFolioRequestBytes))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil {
 		s.writeError(w, http.StatusBadRequest, "Invalid folio JSON")
 		return folioRequest{}, false
 	}
@@ -138,22 +153,33 @@ func (s *Server) readFolioRequest(w http.ResponseWriter, r *http.Request) (folio
 }
 
 func (s *Server) readFolioPatchRequest(w http.ResponseWriter, r *http.Request) (folioRequest, bool, bool) {
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		s.writeError(w, http.StatusBadRequest, "Invalid folio JSON")
-		return folioRequest{}, false, false
-	}
 	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(body, &raw); err != nil {
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxFolioRequestBytes))
+	if err := decoder.Decode(&raw); err != nil {
 		s.writeError(w, http.StatusBadRequest, "Invalid folio JSON")
 		return folioRequest{}, false, false
 	}
-	_, coverProvided := raw["cover_photo_id"]
+
 	var input folioRequest
-	if err := json.Unmarshal(body, &input); err != nil {
-		s.writeError(w, http.StatusBadRequest, "Invalid folio JSON")
-		return folioRequest{}, false, false
+	for field, value := range raw {
+		switch field {
+		case "name":
+			if err := json.Unmarshal(value, &input.Name); err != nil {
+				s.writeError(w, http.StatusBadRequest, "Invalid folio JSON")
+				return folioRequest{}, false, false
+			}
+		case "cover_photo_id":
+			if err := json.Unmarshal(value, &input.CoverPhotoID); err != nil {
+				s.writeError(w, http.StatusBadRequest, "Invalid folio JSON")
+				return folioRequest{}, false, false
+			}
+		default:
+			s.writeError(w, http.StatusBadRequest, "Invalid folio JSON")
+			return folioRequest{}, false, false
+		}
 	}
+
+	_, coverProvided := raw["cover_photo_id"]
 	return input, coverProvided, true
 }
 
@@ -167,4 +193,11 @@ func parseFolioID(r *http.Request) (uint64, error) {
 
 func isFolioNameRequired(err error) bool {
 	return err != nil && err.Error() == "folio name is required"
+}
+
+func validateFolioCoverPhotoID(id *uint64) error {
+	if id != nil && *id == 0 {
+		return errors.New("Folio cover_photo_id must be greater than zero")
+	}
+	return nil
 }

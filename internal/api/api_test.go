@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -275,8 +276,15 @@ func TestFolioAPICRUD(t *testing.T) {
 	server, _ := setupTestServer(t)
 	defer safeShutdown(server)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/folios", bytes.NewBufferString(`{"name":"Sunsets"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/folios", bytes.NewBufferString(`{"name":"Invalid cover","cover_photo_id":0}`))
 	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("create zero cover status=%d body=%q", w.Code, w.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/folios", bytes.NewBufferString(`{"name":"Sunsets"}`))
+	w = httptest.NewRecorder()
 	server.router.ServeHTTP(w, req)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("create status=%d body=%q", w.Code, w.Body.String())
@@ -343,6 +351,28 @@ func TestFolioAPICRUD(t *testing.T) {
 	}
 	if updated.CoverPhotoID != nil {
 		t.Fatalf("expected cleared cover override: %#v", updated)
+	}
+
+	req = httptest.NewRequest(http.MethodPatch, "/api/v1/folios/"+idPath, bytes.NewBufferString(`{"nam":"Golden hour"}`))
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("unknown patch field status=%d body=%q", w.Code, w.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodPatch, "/api/v1/folios/"+idPath, bytes.NewBufferString(`{"cover_photo_id":0}`))
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("patch zero cover status=%d body=%q", w.Code, w.Body.String())
+	}
+
+	oversizedPatch := `{"name":"` + strings.Repeat("x", maxFolioRequestBytes) + `"}`
+	req = httptest.NewRequest(http.MethodPatch, "/api/v1/folios/"+idPath, bytes.NewBufferString(oversizedPatch))
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("oversized patch status=%d body=%q", w.Code, w.Body.String())
 	}
 
 	req = httptest.NewRequest(http.MethodDelete, "/api/v1/folios/"+idPath, nil)
