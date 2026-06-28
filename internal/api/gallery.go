@@ -84,7 +84,20 @@ type cacheGalleryCatalogETagShape struct {
 }
 
 const catalogCacheControl = "private, no-cache, stale-while-revalidate=120"
-const catalogCacheVersion = 4
+const catalogCacheVersion = 5
+
+var galleryMediumCategories = galleryMediumCategoryFacets()
+
+func galleryMediumCategoryFacets() []galleryFacet {
+	facets := make([]galleryFacet, 0, len(gallery.MediumCategories))
+	for _, medium := range gallery.MediumCategories {
+		facets = append(facets, galleryFacet{
+			ID:          medium.ID,
+			DisplayName: medium.DisplayName,
+		})
+	}
+	return facets
+}
 
 func (s *Server) handleGalleryCatalog(w http.ResponseWriter, r *http.Request) {
 	limit, offset := s.parsePagination(r)
@@ -283,13 +296,24 @@ func flattenGallerySourceFacets(providers []galleryProviderFacet) []gallerySourc
 }
 
 func galleryCategoryFacets(stats []database.GalleryFacetStats) []galleryFacet {
-	facets := make([]galleryFacet, 0, len(stats))
+	byID := make(map[string]galleryFacet, len(stats)+len(galleryMediumCategories))
 	for _, stat := range stats {
-		facets = append(facets, galleryFacet{
-			ID:          stat.ID,
-			DisplayName: categoryDisplayName(stat.ID),
-			Count:       stat.Count,
-		})
+		id, displayName := normalizedCategoryFacet(stat.ID)
+		facet := byID[id]
+		facet.ID = id
+		facet.DisplayName = displayName
+		facet.Count += stat.Count
+		byID[id] = facet
+	}
+	for _, medium := range galleryMediumCategories {
+		if _, ok := byID[medium.ID]; !ok {
+			byID[medium.ID] = medium
+		}
+	}
+
+	facets := make([]galleryFacet, 0, len(byID))
+	for _, facet := range byID {
+		facets = append(facets, facet)
 	}
 	sortGalleryFacets(facets)
 	return facets
@@ -377,10 +401,24 @@ func sourceDisplayName(sourcePage string) string {
 }
 
 func categoryDisplayName(category string) string {
+	if _, displayName, ok := normalizedMediumCategory(category); ok {
+		return displayName
+	}
 	if category == "" || category == "unknown" {
 		return "Unknown category"
 	}
 	return "Category " + category
+}
+
+func normalizedCategoryFacet(category string) (string, string) {
+	if id, displayName, ok := normalizedMediumCategory(category); ok {
+		return id, displayName
+	}
+	return category, categoryDisplayName(category)
+}
+
+func normalizedMediumCategory(category string) (string, string, bool) {
+	return gallery.NormalizeMediumCategory(category)
 }
 
 func galleryCategoryIDFromSourcePage(sourcePage string) string {

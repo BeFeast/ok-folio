@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"ok-folio/internal/config"
+	"ok-folio/internal/gallery"
 	"ok-folio/internal/testguard"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -1936,8 +1937,15 @@ func (db *DB) applyGalleryCatalogFilters(query *gorm.DB, filters GalleryCatalogF
 	}
 	if filters.Category != "" {
 		// Match on the indexed category column (NULL/empty maps to "unknown"),
-		// replacing the previous N+1 derive-from-URL scan.
-		query = query.Where(galleryCategoryExpr+" = ?", filters.Category)
+		// replacing the previous N+1 derive-from-URL scan. Medium aliases are
+		// matched case-insensitively, while generic category IDs stay exact so
+		// facets like "ABC" and "abc" remain independently selectable.
+		category := strings.TrimSpace(filters.Category)
+		if id, displayName, ok := gallery.NormalizeMediumCategory(category); ok {
+			query = query.Where("LOWER("+galleryCategoryExpr+") IN ?", []string{id, strings.ToLower(displayName)})
+		} else {
+			query = query.Where(galleryCategoryExpr+" = ?", category)
+		}
 	}
 	if filters.ArtistSet || filters.Artist != "" {
 		query = query.Where("artist = ?", filters.Artist)
