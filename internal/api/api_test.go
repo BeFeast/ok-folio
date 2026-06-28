@@ -404,6 +404,16 @@ func TestFolioPiecesAPI(t *testing.T) {
 	}
 	first := createAPITestDownloadedPhoto(t, db, "https://example.com/folio-first.jpg", "First")
 	second := createAPITestDownloadedPhoto(t, db, "https://example.com/folio-second.jpg", "Second")
+	hiddenPhotos := []database.DownloadedPhoto{
+		{URL: "https://example.com/folio-failed.jpg", Title: "Failed", FileName: "failed.jpg", Status: "failed", ErrorMessage: "download failed"},
+		{URL: "https://example.com/folio-pending.jpg", Title: "Pending", FileName: "pending.jpg", Status: "pending"},
+		{URL: "https://example.com/folio-deleted.jpg", Title: "Deleted", FileName: "deleted.jpg", Status: "deleted"},
+	}
+	for i := range hiddenPhotos {
+		if err := db.Create(&hiddenPhotos[i]).Error; err != nil {
+			t.Fatalf("create hidden test photo %q: %v", hiddenPhotos[i].Status, err)
+		}
+	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/folios/"+strconv.FormatUint(empty.ID, 10), nil)
 	w := httptest.NewRecorder()
@@ -542,6 +552,14 @@ func TestFolioPiecesAPI(t *testing.T) {
 	server.router.ServeHTTP(w, req)
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("add missing photo status=%d body=%q", w.Code, w.Body.String())
+	}
+	for _, photo := range hiddenPhotos {
+		req = httptest.NewRequest(http.MethodPost, folioPath+"/pieces", bytes.NewBufferString(`{"photo_id":`+strconv.FormatUint(photo.ID, 10)+`}`))
+		w = httptest.NewRecorder()
+		server.router.ServeHTTP(w, req)
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("add %s photo status=%d body=%q", photo.Status, w.Code, w.Body.String())
+		}
 	}
 	req = httptest.NewRequest(http.MethodGet, "/api/v1/folios/not-a-number/pieces", nil)
 	w = httptest.NewRecorder()

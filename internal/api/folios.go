@@ -171,11 +171,16 @@ func (s *Server) handleAddFolioPiece(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusInternalServerError, "Failed to fetch folio")
 		return
 	}
-	if _, err := s.db.GetPhotoByID(input.PhotoID); errors.Is(err, gorm.ErrRecordNotFound) {
+	photo, err := s.db.GetPhotoByID(input.PhotoID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		s.writeError(w, http.StatusNotFound, "Photo not found")
 		return
 	} else if err != nil {
 		s.writeError(w, http.StatusInternalServerError, "Failed to fetch photo")
+		return
+	}
+	if photo.Status != "downloaded" {
+		s.writeError(w, http.StatusNotFound, "Photo not found")
 		return
 	}
 	if err := s.db.AddPieceToFolio(folioID, input.PhotoID); err != nil {
