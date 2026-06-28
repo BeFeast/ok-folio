@@ -254,7 +254,8 @@ interface FolioContextValue {
   moveInboxToFolioAction: (id: number, folioId: number, photoId?: number) => void;
   createFolioAction: (name: string) => void;
   renameFolioAction: (id: number, name: string) => void;
-  deleteFolioAction: (id: number) => void;
+  changeFolioCoverAction: (id: number, photoId: number | null) => void;
+  deleteFolioAction: (id: number) => Promise<boolean>;
   addPieceToFolioAction: (folioId: number, photoId: number) => void;
   removePieceFromFolioAction: (folioId: number, photoId: number) => void;
   setViewerPieces: (pieces: PieceVM[]) => void;
@@ -565,14 +566,14 @@ export function FolioProvider({ children }: { children: ReactNode }) {
     [queryClient],
   );
 
-  const deleteFolioAction = useCallback(
-    (folioId: number) => {
+  const changeFolioCoverAction = useCallback(
+    (folioId: number, photoId: number | null) => {
       const id = ++toastSeq;
-      setToasts((prev) => [...prev, { id, status: "loading", title: "Deleting folio" }]);
-      deleteFolio(folioId)
+      setToasts((prev) => [...prev, { id, status: "loading", title: "Changing folio cover" }]);
+      updateFolio(folioId, { cover_photo_id: photoId })
         .then(() => {
           setToasts((prev) =>
-            prev.map((t) => (t.id === id ? { ...t, status: "success", title: "Folio deleted" } : t)),
+            prev.map((t) => (t.id === id ? { ...t, status: "success", title: "Folio cover changed" } : t)),
           );
           window.setTimeout(() => {
             setToasts((prev) => prev.filter((t) => t.id !== id));
@@ -583,10 +584,40 @@ export function FolioProvider({ children }: { children: ReactNode }) {
           setToasts((prev) =>
             prev.map((t) =>
               t.id === id
+                ? { ...t, status: "error", title: "Couldn’t change folio cover", detail: err instanceof Error ? err.message : undefined }
+                : t,
+            ),
+          );
+        });
+    },
+    [queryClient],
+  );
+
+  const deleteFolioAction = useCallback(
+    (folioId: number) => {
+      const id = ++toastSeq;
+      setToasts((prev) => [...prev, { id, status: "loading", title: "Deleting folio" }]);
+      return deleteFolio(folioId)
+        .then(() => {
+          setToasts((prev) =>
+            prev.map((t) => (t.id === id ? { ...t, status: "success", title: "Folio deleted" } : t)),
+          );
+          window.setTimeout(() => {
+            setToasts((prev) => prev.filter((t) => t.id !== id));
+          }, 2800);
+          void queryClient.invalidateQueries({ queryKey: ["folios"] });
+          void queryClient.invalidateQueries({ queryKey: ["folio-pieces", folioId] });
+          return true;
+        })
+        .catch((err: unknown) => {
+          setToasts((prev) =>
+            prev.map((t) =>
+              t.id === id
                 ? { ...t, status: "error", title: "Couldn’t delete folio", detail: err instanceof Error ? err.message : undefined }
                 : t,
             ),
           );
+          return false;
         });
     },
     [queryClient],
@@ -739,6 +770,7 @@ export function FolioProvider({ children }: { children: ReactNode }) {
     moveInboxToFolioAction,
     createFolioAction,
     renameFolioAction,
+    changeFolioCoverAction,
     deleteFolioAction,
     addPieceToFolioAction,
     removePieceFromFolioAction,
