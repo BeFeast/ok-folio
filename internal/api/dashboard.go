@@ -69,6 +69,10 @@ func isDashboardRoute(path string) bool {
 		return true
 	case strings.HasPrefix(path, "/artists/"):
 		return true
+	case path == "/folios":
+		return true
+	case strings.HasPrefix(path, "/folios/"):
+		return true
 	case strings.HasPrefix(path, "/pieces/"):
 		return true
 	case strings.HasPrefix(path, "/runs/"):

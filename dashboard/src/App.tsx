@@ -5,6 +5,7 @@ import { FolioProvider } from "./folio/context";
 import Nav from "./folio/Nav";
 import Gallery from "./folio/Gallery";
 import Folios from "./folio/Folios";
+import FolioDetail from "./folio/FolioDetail";
 import Inbox from "./folio/Inbox";
 import Streams from "./folio/Streams";
 import Settings from "./folio/Settings";
@@ -52,6 +53,7 @@ function FolioShell() {
         <Routes>
           <Route path="/" element={<Gallery />} />
           <Route path="/folios" element={<Folios />} />
+          <Route path="/folios/:id" element={<FolioDetail />} />
           <Route path="/inbox" element={<Inbox />} />
           <Route path="/streams" element={<Streams />} />
           <Route path="/settings" element={<Settings />} />

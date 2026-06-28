@@ -289,6 +289,26 @@ export interface RunPhotosResponse {
   run_id: number;
 }
 
+export interface Folio {
+  id: number;
+  name: string;
+  cover_photo_id: number | null;
+  piece_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FoliosResponse {
+  folios: Folio[];
+}
+
+export interface FolioPiecesResponse {
+  photos: Photo[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 export interface InboxItem {
   id: number;
   provider_id: string;

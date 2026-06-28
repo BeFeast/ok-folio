@@ -16,8 +16,11 @@ import {
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import {
+  addPieceToFolio,
   addToFavorites,
+  createFolio,
   createPiece,
+  deleteFolio,
   dismissInboxItem,
   fetchGalleryCatalog,
   fetchInboxCounts,
@@ -25,6 +28,8 @@ import {
   getPhotoImageUrl,
   getPhotoThumbnailUrl,
   removeFromFavorites,
+  removePieceFromFolio,
+  updateFolio,
   type CreatePieceInput,
 } from "../api";
 import type { Photo } from "../types";
@@ -117,7 +122,7 @@ function relativeAdded(value: string): string {
   return d.toLocaleDateString(undefined, { month: "short", year: "numeric" });
 }
 
-function mapPhoto(p: Photo): PieceVM {
+export function mapPhoto(p: Photo): PieceVM {
   const title = (p.Title || "").trim() || prettifyFileName(p.FileName);
   const artist = (p.Artist || "").trim();
   return {
@@ -197,6 +202,12 @@ interface FolioContextValue {
 
   importPiece: (input: CreatePieceInput) => void;
   dismissInboxAction: (id: number) => void;
+  createFolioAction: (name: string) => void;
+  renameFolioAction: (id: number, name: string) => void;
+  deleteFolioAction: (id: number) => void;
+  addPieceToFolioAction: (folioId: number, photoId: number) => void;
+  removePieceFromFolioAction: (folioId: number, photoId: number) => void;
+  setViewerPieces: (pieces: PieceVM[]) => void;
   toasts: Toast[];
   dismissToast: (id: number) => void;
 }
@@ -222,6 +233,7 @@ export function FolioProvider({ children }: { children: ReactNode }) {
   const [addOpen, setAddOpen] = useState(false);
   const [favOverride, setFavOverride] = useState<Record<number, boolean>>({});
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [viewerPieces, setViewerPiecesState] = useState<PieceVM[]>([]);
 
   // Theme: keep the document tokens in sync with state.
   useEffect(() => {
@@ -379,6 +391,145 @@ export function FolioProvider({ children }: { children: ReactNode }) {
     [queryClient],
   );
 
+  const createFolioAction = useCallback(
+    (name: string) => {
+      const id = ++toastSeq;
+      const label = name.trim();
+      setToasts((prev) => [...prev, { id, status: "loading", title: "Creating folio", detail: label }]);
+      createFolio({ name: label })
+        .then(() => {
+          setToasts((prev) =>
+            prev.map((t) => (t.id === id ? { ...t, status: "success", title: "Folio created", detail: label } : t)),
+          );
+          window.setTimeout(() => {
+            setToasts((prev) => prev.filter((t) => t.id !== id));
+          }, 2800);
+          void queryClient.invalidateQueries({ queryKey: ["folios"] });
+        })
+        .catch((err: unknown) => {
+          setToasts((prev) =>
+            prev.map((t) =>
+              t.id === id
+                ? { ...t, status: "error", title: "Couldn’t create folio", detail: err instanceof Error ? err.message : label }
+                : t,
+            ),
+          );
+        });
+    },
+    [queryClient],
+  );
+
+  const renameFolioAction = useCallback(
+    (folioId: number, name: string) => {
+      const id = ++toastSeq;
+      const label = name.trim();
+      setToasts((prev) => [...prev, { id, status: "loading", title: "Renaming folio", detail: label }]);
+      updateFolio(folioId, { name: label })
+        .then(() => {
+          setToasts((prev) =>
+            prev.map((t) => (t.id === id ? { ...t, status: "success", title: "Folio renamed", detail: label } : t)),
+          );
+          window.setTimeout(() => {
+            setToasts((prev) => prev.filter((t) => t.id !== id));
+          }, 2800);
+          void queryClient.invalidateQueries({ queryKey: ["folios"] });
+        })
+        .catch((err: unknown) => {
+          setToasts((prev) =>
+            prev.map((t) =>
+              t.id === id
+                ? { ...t, status: "error", title: "Couldn’t rename folio", detail: err instanceof Error ? err.message : label }
+                : t,
+            ),
+          );
+        });
+    },
+    [queryClient],
+  );
+
+  const deleteFolioAction = useCallback(
+    (folioId: number) => {
+      const id = ++toastSeq;
+      setToasts((prev) => [...prev, { id, status: "loading", title: "Deleting folio" }]);
+      deleteFolio(folioId)
+        .then(() => {
+          setToasts((prev) =>
+            prev.map((t) => (t.id === id ? { ...t, status: "success", title: "Folio deleted" } : t)),
+          );
+          window.setTimeout(() => {
+            setToasts((prev) => prev.filter((t) => t.id !== id));
+          }, 2800);
+          void queryClient.invalidateQueries({ queryKey: ["folios"] });
+        })
+        .catch((err: unknown) => {
+          setToasts((prev) =>
+            prev.map((t) =>
+              t.id === id
+                ? { ...t, status: "error", title: "Couldn’t delete folio", detail: err instanceof Error ? err.message : undefined }
+                : t,
+            ),
+          );
+        });
+    },
+    [queryClient],
+  );
+
+  const addPieceToFolioAction = useCallback(
+    (folioId: number, photoId: number) => {
+      const id = ++toastSeq;
+      setToasts((prev) => [...prev, { id, status: "loading", title: "Adding piece to folio" }]);
+      addPieceToFolio(folioId, photoId)
+        .then(() => {
+          setToasts((prev) =>
+            prev.map((t) => (t.id === id ? { ...t, status: "success", title: "Piece added to folio" } : t)),
+          );
+          window.setTimeout(() => {
+            setToasts((prev) => prev.filter((t) => t.id !== id));
+          }, 2800);
+          void queryClient.invalidateQueries({ queryKey: ["folio-pieces", folioId] });
+          void queryClient.invalidateQueries({ queryKey: ["folios"] });
+        })
+        .catch((err: unknown) => {
+          setToasts((prev) =>
+            prev.map((t) =>
+              t.id === id
+                ? { ...t, status: "error", title: "Couldn’t add piece to folio", detail: err instanceof Error ? err.message : undefined }
+                : t,
+            ),
+          );
+        });
+    },
+    [queryClient],
+  );
+
+  const removePieceFromFolioAction = useCallback(
+    (folioId: number, photoId: number) => {
+      const id = ++toastSeq;
+      setToasts((prev) => [...prev, { id, status: "loading", title: "Removing piece from folio" }]);
+      removePieceFromFolio(folioId, photoId)
+        .then(() => {
+          setToasts((prev) =>
+            prev.map((t) => (t.id === id ? { ...t, status: "success", title: "Piece removed from folio" } : t)),
+          );
+          window.setTimeout(() => {
+            setToasts((prev) => prev.filter((t) => t.id !== id));
+          }, 2800);
+          void queryClient.invalidateQueries({ queryKey: ["folio-pieces", folioId] });
+          void queryClient.invalidateQueries({ queryKey: ["folios"] });
+        })
+        .catch((err: unknown) => {
+          setToasts((prev) =>
+            prev.map((t) =>
+              t.id === id
+                ? { ...t, status: "error", title: "Couldn’t remove piece from folio", detail: err instanceof Error ? err.message : undefined }
+                : t,
+            ),
+          );
+        });
+    },
+    [queryClient],
+  );
+
   const openPiece = useCallback((id: number) => setSelectedId(id), []);
   const closePiece = useCallback(() => setSelectedId(null), []);
   const filterByArtist = useCallback(
@@ -394,23 +545,30 @@ export function FolioProvider({ children }: { children: ReactNode }) {
   const stepPiece = useCallback(
     (dir: number) => {
       setSelectedId((cur) => {
-        if (cur == null || pieces.length === 0) return cur;
-        const i = pieces.findIndex((p) => p.id === cur);
+        const activePieces = viewerPieces.length > 0 ? viewerPieces : pieces;
+        if (cur == null || activePieces.length === 0) return cur;
+        const i = activePieces.findIndex((p) => p.id === cur);
         if (i < 0) return cur;
-        const n = (i + dir + pieces.length) % pieces.length;
-        return pieces[n].id;
+        const n = (i + dir + activePieces.length) % activePieces.length;
+        return activePieces[n].id;
       });
     },
-    [pieces],
+    [pieces, viewerPieces],
   );
 
+  const setViewerPieces = useCallback((nextPieces: PieceVM[]) => {
+    setViewerPiecesState(nextPieces);
+  }, []);
+
+  const activeViewerPieces = viewerPieces.length > 0 ? viewerPieces : pieces;
+
   const selected = useMemo(
-    () => (selectedId == null ? null : pieces.find((p) => p.id === selectedId) ?? null),
-    [selectedId, pieces],
+    () => (selectedId == null ? null : activeViewerPieces.find((p) => p.id === selectedId) ?? null),
+    [selectedId, activeViewerPieces],
   );
   const selIndex = useMemo(
-    () => (selectedId == null ? -1 : pieces.findIndex((p) => p.id === selectedId)),
-    [selectedId, pieces],
+    () => (selectedId == null ? -1 : activeViewerPieces.findIndex((p) => p.id === selectedId)),
+    [selectedId, activeViewerPieces],
   );
 
   const value: FolioContextValue = {
@@ -453,6 +611,12 @@ export function FolioProvider({ children }: { children: ReactNode }) {
     toggleFav,
     importPiece,
     dismissInboxAction,
+    createFolioAction,
+    renameFolioAction,
+    deleteFolioAction,
+    addPieceToFolioAction,
+    removePieceFromFolioAction,
+    setViewerPieces,
     toasts,
     dismissToast,
   };

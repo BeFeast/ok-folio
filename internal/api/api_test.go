@@ -99,6 +99,15 @@ func TestIsDashboardRouteIncludesPieceDetail(t *testing.T) {
 	}
 }
 
+func TestIsDashboardRouteIncludesFolios(t *testing.T) {
+	if !isDashboardRoute("/folios") {
+		t.Fatalf("Expected folios route to fall back to dashboard index")
+	}
+	if !isDashboardRoute("/folios/123") {
+		t.Fatalf("Expected folio detail route to fall back to dashboard index")
+	}
+}
+
 func TestHandleHealth_Healthy(t *testing.T) {
 	server, _ := setupTestServer(t)
 
