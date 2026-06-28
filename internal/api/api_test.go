@@ -44,7 +44,7 @@ func setupTestServer(t *testing.T) (*Server, *database.DB) {
 		t.Fatalf("Failed to create test database: %v", err)
 	}
 
-	if err := gormDB.AutoMigrate(&database.DownloadedPhoto{}, &database.ExtractionRun{}, &database.InboxItem{}, &database.ConnectorState{}, &database.ConnectorSource{}); err != nil {
+	if err := gormDB.AutoMigrate(&database.DownloadedPhoto{}, &database.ExtractionRun{}, &database.InboxItem{}, &database.ConnectorState{}, &database.ConnectorSource{}, &database.Folio{}); err != nil {
 		t.Fatalf("Failed to migrate test database: %v", err)
 	}
 
@@ -268,6 +268,95 @@ func TestConnectorSourceSettingsCRUD(t *testing.T) {
 	server.router.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("delete status=%d body=%q", w.Code, w.Body.String())
+	}
+}
+
+func TestFolioAPICRUD(t *testing.T) {
+	server, _ := setupTestServer(t)
+	defer safeShutdown(server)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/folios", bytes.NewBufferString(`{"name":"Sunsets"}`))
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create status=%d body=%q", w.Code, w.Body.String())
+	}
+	var created database.Folio
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode created folio: %v", err)
+	}
+	if created.ID == 0 || created.Name != "Sunsets" {
+		t.Fatalf("unexpected created folio: %#v", created)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/folios", nil)
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("list status=%d body=%q", w.Code, w.Body.String())
+	}
+	var listed foliosResponse
+	if err := json.NewDecoder(w.Body).Decode(&listed); err != nil {
+		t.Fatalf("decode folio list: %v", err)
+	}
+	if len(listed.Folios) != 1 || listed.Folios[0].Name != "Sunsets" {
+		t.Fatalf("unexpected folio list: %#v", listed)
+	}
+
+	idPath := strconv.FormatUint(created.ID, 10)
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/folios/"+idPath, nil)
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("get status=%d body=%q", w.Code, w.Body.String())
+	}
+	var got database.Folio
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatalf("decode fetched folio: %v", err)
+	}
+	if got.ID != created.ID {
+		t.Fatalf("unexpected fetched folio: %#v", got)
+	}
+
+	req = httptest.NewRequest(http.MethodPatch, "/api/v1/folios/"+idPath, bytes.NewBufferString(`{"name":"Golden hour","cover_photo_id":1}`))
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("patch status=%d body=%q", w.Code, w.Body.String())
+	}
+	var updated database.Folio
+	if err := json.NewDecoder(w.Body).Decode(&updated); err != nil {
+		t.Fatalf("decode updated folio: %v", err)
+	}
+	if updated.Name != "Golden hour" || updated.CoverPhotoID == nil || *updated.CoverPhotoID != 1 {
+		t.Fatalf("unexpected updated folio: %#v", updated)
+	}
+
+	req = httptest.NewRequest(http.MethodPatch, "/api/v1/folios/"+idPath, bytes.NewBufferString(`{"cover_photo_id":null}`))
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("clear cover status=%d body=%q", w.Code, w.Body.String())
+	}
+	if err := json.NewDecoder(w.Body).Decode(&updated); err != nil {
+		t.Fatalf("decode cover-cleared folio: %v", err)
+	}
+	if updated.CoverPhotoID != nil {
+		t.Fatalf("expected cleared cover override: %#v", updated)
+	}
+
+	req = httptest.NewRequest(http.MethodDelete, "/api/v1/folios/"+idPath, nil)
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("delete status=%d body=%q", w.Code, w.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/folios/"+idPath, nil)
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("get deleted status=%d body=%q", w.Code, w.Body.String())
 	}
 }
 

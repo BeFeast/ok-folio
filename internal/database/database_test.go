@@ -1,6 +1,7 @@
 package database
 
 import (
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -22,7 +23,7 @@ func setupTestDB(t *testing.T) *DB {
 	}
 
 	// Auto-migrate schemas
-	if err := gormDB.AutoMigrate(&DownloadedPhoto{}, &ExtractionRun{}, &InboxItem{}, &ConnectorState{}, &ConnectorSource{}); err != nil {
+	if err := gormDB.AutoMigrate(&DownloadedPhoto{}, &ExtractionRun{}, &InboxItem{}, &ConnectorState{}, &ConnectorSource{}, &Folio{}); err != nil {
 		t.Fatalf("Failed to migrate test database: %v", err)
 	}
 
@@ -791,6 +792,85 @@ func TestConnectorSourcesCRUDAndScopes(t *testing.T) {
 	}
 }
 
+func TestFolioCRUD(t *testing.T) {
+	db := setupTestDB(t)
+
+	if _, err := db.CreateFolio(Folio{Name: "   "}); err == nil {
+		t.Fatalf("expected empty folio name to fail")
+	}
+
+	first, err := db.CreateFolio(Folio{Name: "  Sunsets  "})
+	if err != nil {
+		t.Fatalf("CreateFolio first failed: %v", err)
+	}
+	if first.ID == 0 || first.Name != "Sunsets" {
+		t.Fatalf("unexpected first folio: %#v", first)
+	}
+	if _, err := db.CreateFolio(Folio{Name: "Sunsets"}); !IsUniqueViolation(err) {
+		t.Fatalf("expected duplicate folio name unique violation, got %v", err)
+	}
+
+	second, err := db.CreateFolio(Folio{Name: "Architecture"})
+	if err != nil {
+		t.Fatalf("CreateFolio second failed: %v", err)
+	}
+
+	folios, err := db.ListFolios()
+	if err != nil {
+		t.Fatalf("ListFolios failed: %v", err)
+	}
+	if len(folios) != 2 || folios[0].Name != "Architecture" || folios[1].Name != "Sunsets" {
+		t.Fatalf("unexpected folio list: %#v", folios)
+	}
+
+	got, err := db.GetFolio(first.ID)
+	if err != nil {
+		t.Fatalf("GetFolio failed: %v", err)
+	}
+	if got.ID != first.ID || got.Name != "Sunsets" {
+		t.Fatalf("unexpected fetched folio: %#v", got)
+	}
+	if _, err := db.GetFolio(999999); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("expected missing folio record-not-found, got %v", err)
+	}
+
+	renamed := "Golden hour"
+	updated, err := db.UpdateFolio(first.ID, FolioUpdates{Name: &renamed})
+	if err != nil {
+		t.Fatalf("UpdateFolio rename failed: %v", err)
+	}
+	if updated.Name != "Golden hour" {
+		t.Fatalf("expected renamed folio: %#v", updated)
+	}
+
+	coverID := uint64(42)
+	updated, err = db.UpdateFolio(first.ID, FolioUpdates{CoverProvided: true, CoverPhotoID: &coverID})
+	if err != nil {
+		t.Fatalf("UpdateFolio cover set failed: %v", err)
+	}
+	if updated.CoverPhotoID == nil || *updated.CoverPhotoID != coverID {
+		t.Fatalf("expected cover override: %#v", updated)
+	}
+
+	updated, err = db.UpdateFolio(first.ID, FolioUpdates{CoverProvided: true, CoverPhotoID: nil})
+	if err != nil {
+		t.Fatalf("UpdateFolio cover clear failed: %v", err)
+	}
+	if updated.CoverPhotoID != nil {
+		t.Fatalf("expected cleared cover override: %#v", updated)
+	}
+
+	if err := db.DeleteFolio(first.ID); err != nil {
+		t.Fatalf("DeleteFolio failed: %v", err)
+	}
+	if err := db.DeleteFolio(first.ID); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("expected second DeleteFolio record-not-found, got %v", err)
+	}
+	if err := db.DeleteFolio(second.ID); err != nil {
+		t.Fatalf("DeleteFolio second failed: %v", err)
+	}
+}
+
 func TestGetDownloadStats_Empty(t *testing.T) {
 	db := setupTestDB(t)
 
@@ -1221,7 +1301,7 @@ func TestGalleryFavoriteColumnPrefersCanonicalFavorite(t *testing.T) {
 	`).Error; err != nil {
 		t.Fatalf("Failed to create legacy photos table: %v", err)
 	}
-	if err := gormDB.AutoMigrate(&DownloadedPhoto{}, &ExtractionRun{}, &ConnectorState{}, &ConnectorSource{}); err != nil {
+	if err := gormDB.AutoMigrate(&DownloadedPhoto{}, &ExtractionRun{}, &ConnectorState{}, &ConnectorSource{}, &Folio{}); err != nil {
 		t.Fatalf("Failed to migrate test database: %v", err)
 	}
 
