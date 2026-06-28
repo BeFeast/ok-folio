@@ -150,7 +150,7 @@ func TestPostgresMigrateSchemaAndIdempotency(t *testing.T) {
 
 func TestPostgresMigrateQuarantinesExistingContentHashDuplicates(t *testing.T) {
 	db := openPostgresTestDB(t)
-	if err := db.DB.AutoMigrate(&DownloadedPhoto{}, &ExtractionRun{}, &InboxItem{}, &ConnectorState{}, &ConnectorSource{}, &ETLWatermark{}, &Folio{}); err != nil {
+	if err := db.DB.AutoMigrate(&DownloadedPhoto{}, &ExtractionRun{}, &InboxItem{}, &ConnectorState{}, &ConnectorSource{}, &ETLWatermark{}, &Folio{}, &FolioPiece{}); err != nil {
 		t.Fatalf("AutoMigrate seed schema failed: %v", err)
 	}
 

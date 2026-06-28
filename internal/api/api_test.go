@@ -45,7 +45,7 @@ func setupTestServer(t *testing.T) (*Server, *database.DB) {
 		t.Fatalf("Failed to create test database: %v", err)
 	}
 
-	if err := gormDB.AutoMigrate(&database.DownloadedPhoto{}, &database.ExtractionRun{}, &database.InboxItem{}, &database.ConnectorState{}, &database.ConnectorSource{}, &database.Folio{}); err != nil {
+	if err := gormDB.AutoMigrate(&database.DownloadedPhoto{}, &database.ExtractionRun{}, &database.InboxItem{}, &database.ConnectorState{}, &database.ConnectorSource{}, &database.Folio{}, &database.FolioPiece{}); err != nil {
 		t.Fatalf("Failed to migrate test database: %v", err)
 	}
 
@@ -388,6 +388,213 @@ func TestFolioAPICRUD(t *testing.T) {
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("get deleted status=%d body=%q", w.Code, w.Body.String())
 	}
+}
+
+func TestFolioPiecesAPI(t *testing.T) {
+	server, db := setupTestServer(t)
+	defer safeShutdown(server)
+
+	empty, err := db.CreateFolio(database.Folio{Name: "Empty"})
+	if err != nil {
+		t.Fatalf("CreateFolio empty failed: %v", err)
+	}
+	folio, err := db.CreateFolio(database.Folio{Name: "Members"})
+	if err != nil {
+		t.Fatalf("CreateFolio members failed: %v", err)
+	}
+	first := createAPITestDownloadedPhoto(t, db, "https://example.com/folio-first.jpg", "First")
+	second := createAPITestDownloadedPhoto(t, db, "https://example.com/folio-second.jpg", "Second")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/folios/"+strconv.FormatUint(empty.ID, 10), nil)
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("get empty folio status=%d body=%q", w.Code, w.Body.String())
+	}
+	var got database.Folio
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatalf("decode empty folio: %v", err)
+	}
+	if got.PieceCount != 0 || got.CoverPhotoID != nil {
+		t.Fatalf("expected empty folio with null cover: %#v", got)
+	}
+
+	folioPath := "/api/v1/folios/" + strconv.FormatUint(folio.ID, 10)
+	req = httptest.NewRequest(http.MethodPost, folioPath+"/pieces", bytes.NewBufferString(`{"photo_id":`+strconv.FormatUint(first.ID, 10)+`}`))
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated || !strings.Contains(w.Body.String(), `"added":true`) {
+		t.Fatalf("add first status=%d body=%q", w.Code, w.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodPost, folioPath+"/pieces", bytes.NewBufferString(`{"photo_id":`+strconv.FormatUint(second.ID, 10)+`}`))
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated || !strings.Contains(w.Body.String(), `"added":true`) {
+		t.Fatalf("add second status=%d body=%q", w.Code, w.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodPost, folioPath+"/pieces", bytes.NewBufferString(`{"photo_id":`+strconv.FormatUint(first.ID, 10)+`}`))
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated || !strings.Contains(w.Body.String(), `"added":true`) {
+		t.Fatalf("duplicate add status=%d body=%q", w.Code, w.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, folioPath+"/pieces?limit=1&offset=0", nil)
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("list pieces status=%d body=%q", w.Code, w.Body.String())
+	}
+	var listed struct {
+		Photos []database.DownloadedPhoto `json:"photos"`
+		Total  int64                      `json:"total"`
+		Limit  int                        `json:"limit"`
+		Offset int                        `json:"offset"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&listed); err != nil {
+		t.Fatalf("decode listed pieces: %v", err)
+	}
+	if listed.Total != 2 || listed.Limit != 1 || listed.Offset != 0 || len(listed.Photos) != 1 || listed.Photos[0].ID != second.ID {
+		t.Fatalf("unexpected listed pieces: %#v", listed)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, folioPath, nil)
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("get folio with members status=%d body=%q", w.Code, w.Body.String())
+	}
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatalf("decode folio with members: %v", err)
+	}
+	if got.PieceCount != 2 || got.CoverPhotoID == nil || *got.CoverPhotoID != second.ID {
+		t.Fatalf("expected auto cover from newest member: %#v", got)
+	}
+
+	req = httptest.NewRequest(http.MethodPatch, folioPath, bytes.NewBufferString(`{"cover_photo_id":`+strconv.FormatUint(first.ID, 10)+`}`))
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("set cover override status=%d body=%q", w.Code, w.Body.String())
+	}
+	req = httptest.NewRequest(http.MethodGet, folioPath, nil)
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("get folio override status=%d body=%q", w.Code, w.Body.String())
+	}
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatalf("decode folio override: %v", err)
+	}
+	if got.CoverPhotoID == nil || *got.CoverPhotoID != first.ID {
+		t.Fatalf("expected manual cover override to win: %#v", got)
+	}
+
+	req = httptest.NewRequest(http.MethodPatch, folioPath, bytes.NewBufferString(`{"cover_photo_id":null}`))
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("clear cover override status=%d body=%q", w.Code, w.Body.String())
+	}
+	var stored database.Folio
+	if err := db.DB.Where("id = ?", folio.ID).First(&stored).Error; err != nil {
+		t.Fatalf("fetch stored folio failed: %v", err)
+	}
+	if stored.CoverPhotoID != nil {
+		t.Fatalf("expected stored cover override to stay null: %#v", stored)
+	}
+
+	req = httptest.NewRequest(http.MethodDelete, folioPath+"/pieces/"+strconv.FormatUint(first.ID, 10), nil)
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"removed":true`) {
+		t.Fatalf("remove status=%d body=%q", w.Code, w.Body.String())
+	}
+	req = httptest.NewRequest(http.MethodDelete, folioPath+"/pieces/"+strconv.FormatUint(first.ID, 10), nil)
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("remove non-member status=%d body=%q", w.Code, w.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodPost, folioPath+"/pieces", bytes.NewBufferString(`{"photo_id":0}`))
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("add zero photo status=%d body=%q", w.Code, w.Body.String())
+	}
+	req = httptest.NewRequest(http.MethodPost, folioPath+"/pieces", bytes.NewBufferString(`{"photo_id":`))
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("add invalid json status=%d body=%q", w.Code, w.Body.String())
+	}
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/folios/999999/pieces", bytes.NewBufferString(`{"photo_id":`+strconv.FormatUint(second.ID, 10)+`}`))
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("add missing folio status=%d body=%q", w.Code, w.Body.String())
+	}
+	req = httptest.NewRequest(http.MethodPost, folioPath+"/pieces", bytes.NewBufferString(`{"photo_id":999999}`))
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("add missing photo status=%d body=%q", w.Code, w.Body.String())
+	}
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/folios/not-a-number/pieces", nil)
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("list invalid folio status=%d body=%q", w.Code, w.Body.String())
+	}
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/folios/999999/pieces", nil)
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("list missing folio status=%d body=%q", w.Code, w.Body.String())
+	}
+	req = httptest.NewRequest(http.MethodDelete, "/api/v1/folios/999999/pieces/"+strconv.FormatUint(second.ID, 10), nil)
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("remove missing folio status=%d body=%q", w.Code, w.Body.String())
+	}
+	req = httptest.NewRequest(http.MethodDelete, folioPath+"/pieces/0", nil)
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("remove invalid photo status=%d body=%q", w.Code, w.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodDelete, folioPath, nil)
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("delete folio status=%d body=%q", w.Code, w.Body.String())
+	}
+	var membershipCount int64
+	if err := db.Model(&database.FolioPiece{}).Where("folio_id = ?", folio.ID).Count(&membershipCount).Error; err != nil {
+		t.Fatalf("count deleted folio memberships: %v", err)
+	}
+	if membershipCount != 0 {
+		t.Fatalf("expected folio membership cleanup, got %d", membershipCount)
+	}
+}
+
+func createAPITestDownloadedPhoto(t *testing.T, db *database.DB, url, title string) database.DownloadedPhoto {
+	t.Helper()
+	photo := database.DownloadedPhoto{
+		URL:      url,
+		Title:    title,
+		FileName: title + ".jpg",
+		Status:   "downloaded",
+	}
+	if err := db.Create(&photo).Error; err != nil {
+		t.Fatalf("create test photo: %v", err)
+	}
+	return photo
 }
 
 func TestConnectorSourceSettingsCreateDisabled(t *testing.T) {
