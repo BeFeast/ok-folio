@@ -382,7 +382,7 @@ function ActiveMobileFilters() {
       {query.trim() ? <MobileFilterChip label={`Search: ${query.trim()}`} onRemove={() => setQuery("")} /> : null}
       {favoriteOnly ? <MobileFilterChip label="Favorites" onRemove={() => setFavoriteOnly(false)} /> : null}
       {artist ? <MobileFilterChip label={artist} onRemove={() => setArtist("")} /> : null}
-      {category ? <MobileFilterChip label={category} onRemove={() => setCategory("")} /> : null}
+      {category ? <MobileFilterChip label={mobileCategoryLabel(category)} onRemove={() => setCategory("")} /> : null}
     </div>
   );
 }
@@ -394,6 +394,11 @@ function categoryForMedium(categories: GalleryFacet[], medium: string): GalleryF
     const label = facet.display_name.trim().toLowerCase();
     return id === target || label === target;
   });
+}
+
+function mobileCategoryLabel(category: string): string {
+  const target = category.trim().toLowerCase();
+  return MOBILE_MEDIUMS.find((medium) => medium.toLowerCase() === target) ?? category;
 }
 
 function MobileFiltersSheet({ open, onClose }: { open: boolean; onClose: () => void }) {

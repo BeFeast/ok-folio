@@ -956,8 +956,20 @@ func TestHandleGalleryCatalog(t *testing.T) {
 	if response.Providers[0].Count != 2 || len(response.Providers[0].Sources) != 2 {
 		t.Fatalf("Expected provider facet counts from downloaded media only, got %#v", response.Providers[0])
 	}
-	if len(response.Facets.Categories) != 2 || len(response.Facets.Artists) != 2 || len(response.Facets.Favorites) != 2 {
+	if len(response.Facets.Categories) != 7 || len(response.Facets.Artists) != 2 || len(response.Facets.Favorites) != 2 {
 		t.Fatalf("Expected category, artist, and favorite facets, got %#v", response.Facets)
+	}
+	for _, medium := range galleryMediumCategories {
+		found := false
+		for _, category := range response.Facets.Categories {
+			if category.ID == medium.ID && category.DisplayName == medium.DisplayName {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("Expected medium category facet %#v in %#v", medium, response.Facets.Categories)
+		}
 	}
 
 	req = httptest.NewRequest(http.MethodGet, "/api/v1/gallery/catalog?provider=webgallery&source=https%3A%2F%2Fwebgallery%2Fgallery%2Fcategory%2F1%2Fold", nil)
@@ -995,7 +1007,7 @@ func TestHandleGalleryCatalog(t *testing.T) {
 	if response.Category != "2" || response.Artist != "Artist B" {
 		t.Fatalf("Expected category/artist filter echo, got category=%q artist=%q", response.Category, response.Artist)
 	}
-	if len(response.Facets.Categories) != 1 || response.Facets.Categories[0].ID != "2" {
+	if len(response.Facets.Categories) != 6 || categoryFacetCount(response.Facets.Categories, "2") != 1 {
 		t.Fatalf("Expected filtered category facets to reflect active filters, got %#v", response.Facets.Categories)
 	}
 	if len(response.Facets.Artists) != 1 || response.Facets.Artists[0].ID != "Artist B" {
@@ -2002,6 +2014,62 @@ func TestStatsStreamUsesNoStore(t *testing.T) {
 	if got := w.Header().Get("Cache-Control"); got != "no-store" {
 		t.Fatalf("Expected SSE no-store cache header, got %q", got)
 	}
+}
+
+func TestGalleryCategoryFacetsNormalizeMediums(t *testing.T) {
+	facets := galleryCategoryFacets([]database.GalleryFacetStats{
+		{ID: "Painting", Count: 2},
+		{ID: "painting", Count: 3},
+		{ID: "2", Count: 4},
+	})
+
+	expectedMediums := map[string]string{
+		"painting":    "Painting",
+		"photography": "Photography",
+		"drawing":     "Drawing",
+		"print":       "Print",
+		"sculpture":   "Sculpture",
+	}
+	for id, displayName := range expectedMediums {
+		facet, ok := galleryFacetByID(facets, id)
+		if !ok {
+			t.Fatalf("Expected medium category %q in %#v", id, facets)
+		}
+		if facet.DisplayName != displayName {
+			t.Fatalf("Expected medium %q display name %q, got %q", id, displayName, facet.DisplayName)
+		}
+	}
+
+	painting, _ := galleryFacetByID(facets, "painting")
+	if painting.Count != 5 {
+		t.Fatalf("Expected painting count to merge case variants, got %#v", painting)
+	}
+	generic, _ := galleryFacetByID(facets, "2")
+	if generic.DisplayName != "Category 2" || generic.Count != 4 {
+		t.Fatalf("Expected generic category to be preserved, got %#v", generic)
+	}
+}
+
+func categoryFacetCount(facets []struct {
+	ID          string `json:"id"`
+	DisplayName string `json:"display_name"`
+	Count       int64  `json:"count"`
+}, id string) int64 {
+	for _, facet := range facets {
+		if facet.ID == id {
+			return facet.Count
+		}
+	}
+	return 0
+}
+
+func galleryFacetByID(facets []galleryFacet, id string) (galleryFacet, bool) {
+	for _, facet := range facets {
+		if facet.ID == id {
+			return facet, true
+		}
+	}
+	return galleryFacet{}, false
 }
 
 func favoriteCount(facets []struct {

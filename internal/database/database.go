@@ -1937,7 +1937,7 @@ func (db *DB) applyGalleryCatalogFilters(query *gorm.DB, filters GalleryCatalogF
 	if filters.Category != "" {
 		// Match on the indexed category column (NULL/empty maps to "unknown"),
 		// replacing the previous N+1 derive-from-URL scan.
-		query = query.Where(galleryCategoryExpr+" = ?", filters.Category)
+		query = query.Where("LOWER("+galleryCategoryExpr+") = ?", strings.ToLower(strings.TrimSpace(filters.Category)))
 	}
 	if filters.ArtistSet || filters.Artist != "" {
 		query = query.Where("artist = ?", filters.Artist)
