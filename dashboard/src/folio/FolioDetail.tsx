@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type CSSProperties, type MouseEvent } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { fetchFolioPieces, fetchFolios, fetchGalleryCatalog, getPhotoThumbnailUrl } from "../api";
 import type { Folio, Photo } from "../types";
@@ -517,6 +517,7 @@ function MobileDetailMenu({
   onClose: () => void;
 }) {
   const { renameFolioAction, changeFolioCoverAction, deleteFolioAction } = useFolio();
+  const navigate = useNavigate();
   const [name, setName] = useState(folio.name);
   const [renaming, setRenaming] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -579,8 +580,12 @@ function MobileDetailMenu({
                     setConfirmDelete(true);
                     return;
                   }
-                  deleteFolioAction(folio.id);
-                  onClose();
+                  void deleteFolioAction(folio.id).then((deleted) => {
+                    if (deleted) {
+                      onClose();
+                      navigate("/folios");
+                    }
+                  });
                 }}
                 style={{ width: "100%", minHeight: 52, border: 0, borderTop: "1px solid var(--line)", background: "transparent", color: "var(--danger, #C0392B)", fontFamily: "var(--sans)", fontSize: 15, fontWeight: 700, textAlign: "left", padding: "0 18px" }}
               >
