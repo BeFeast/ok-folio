@@ -267,14 +267,19 @@ func HashURL(rawURL string) []byte {
 	return sum[:]
 }
 
+func normalizeArtist(rawArtist string) string {
+	if rawArtist == "" {
+		return ""
+	}
+	return strings.Join(strings.Fields(rawArtist), " ")
+}
+
 // BeforeSave populates the NOT NULL url_hash and the derived category from the
 // single hook so every insert/update path is covered. A NULL url_hash would let
 // duplicates slip the unique guard, so this must be the only place it is set.
 func (p *DownloadedPhoto) BeforeSave(tx *gorm.DB) error {
 	p.URLHash = HashURL(p.URL)
-	if p.Artist != "" {
-		p.Artist = strings.Join(strings.Fields(p.Artist), " ")
-	}
+	p.Artist = normalizeArtist(p.Artist)
 	p.Category = resolveCategory(p)
 	if p.Provider == "" {
 		p.Provider = DefaultProvider
@@ -699,10 +704,14 @@ func (db *DB) RecordDownload(photo *DownloadedPhoto) error {
 }
 
 func downloadAssignments(photo *DownloadedPhoto) map[string]interface{} {
+	provider := photo.Provider
+	if provider == "" {
+		provider = DefaultProvider
+	}
 	return map[string]interface{}{
 		"source_page":     photo.SourcePage,
 		"title":           photo.Title,
-		"artist":          photo.Artist,
+		"artist":          normalizeArtist(photo.Artist),
 		"category":        resolveCategory(photo),
 		"upload_date":     photo.UploadDate,
 		"file_path":       photo.FilePath,
@@ -711,7 +720,8 @@ func downloadAssignments(photo *DownloadedPhoto) map[string]interface{} {
 		"image_height":    photo.ImageHeight,
 		"file_size":       photo.FileSize,
 		"notes":           photo.Notes,
-		"provider":        photo.Provider,
+		"keywords":        photo.Keywords,
+		"provider":        provider,
 		"content_hash":    photo.ContentHash,
 		"perceptual_hash": photo.PerceptualHash,
 		"status":          photo.Status,

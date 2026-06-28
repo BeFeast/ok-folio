@@ -170,7 +170,14 @@ func TestRecordDownloadRetryPersistsDerivedCategory(t *testing.T) {
 	// The scraper retries with no Category set, relying on the hook to derive it.
 	// The conflict-update path must persist the derived category, not the caller's
 	// empty value, so the recovered download keeps matching its category facet.
-	retry := &DownloadedPhoto{URL: sharedURL, SourcePage: sourcePage, FileName: "retry.jpg", Status: "downloaded"}
+	retry := &DownloadedPhoto{
+		URL:        sharedURL,
+		SourcePage: sourcePage,
+		FileName:   "retry.jpg",
+		Artist:     "  _NonPS ",
+		Keywords:   Keywords{"gansovsky", "gold"},
+		Status:     "downloaded",
+	}
 	if err := db.RecordDownload(retry); err != nil {
 		t.Fatalf("Retry RecordDownload failed: %v", err)
 	}
@@ -184,6 +191,12 @@ func TestRecordDownloadRetryPersistsDerivedCategory(t *testing.T) {
 	}
 	if stored.Category != "42" {
 		t.Fatalf("Expected retry update to persist derived category %q, got %q", "42", stored.Category)
+	}
+	if stored.Artist != "_NonPS" {
+		t.Fatalf("Expected retry update to normalize artist, got %q", stored.Artist)
+	}
+	if len(stored.Keywords) != 2 || stored.Keywords[0] != "gansovsky" || stored.Keywords[1] != "gold" {
+		t.Fatalf("Expected retry update to persist keywords, got %#v", stored.Keywords)
 	}
 }
 
@@ -391,7 +404,8 @@ func TestRecordDownloadOrDuplicateRecoversFailedURLHashOwner(t *testing.T) {
 		URL:        sharedURL,
 		SourcePage: "https://example.com/source/retry",
 		Title:      "Recovered",
-		Artist:     "Retry Artist",
+		Artist:     "Влад  Троянский",
+		Keywords:   Keywords{"gansovsky", "gold"},
 		FileName:   "retry-success.jpg",
 		FileSize:   123,
 		Status:     "downloaded",
@@ -416,6 +430,12 @@ func TestRecordDownloadOrDuplicateRecoversFailedURLHashOwner(t *testing.T) {
 	}
 	if stored.Status != "downloaded" || stored.ErrorMessage != "" || stored.Title != retry.Title || stored.FileSize != retry.FileSize {
 		t.Fatalf("Expected failed row to be updated to successful download, got %#v", stored)
+	}
+	if stored.Artist != "Влад Троянский" {
+		t.Fatalf("Expected recovered row to normalize artist, got %q", stored.Artist)
+	}
+	if len(stored.Keywords) != 2 || stored.Keywords[0] != "gansovsky" || stored.Keywords[1] != "gold" {
+		t.Fatalf("Expected recovered row to persist keywords, got %#v", stored.Keywords)
 	}
 	if retry.ID == 0 || retry.ID != stored.ID || retry.DownloadedAt == nil {
 		t.Fatalf("Expected retry photo to be hydrated with persisted row, retry=%#v stored=%#v", retry, stored)
