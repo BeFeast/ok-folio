@@ -57,7 +57,7 @@ function FolioShell() {
           maxWidth: 1340,
           margin: "0 auto",
           padding: isMobile
-            ? "0 calc(20px + var(--safe-right)) calc(var(--mobile-tab-height) + var(--safe-bottom) + 34px) calc(20px + var(--safe-left))"
+            ? "14px calc(20px + var(--safe-right)) calc(var(--mobile-tab-height) + var(--safe-bottom) + 34px) calc(20px + var(--safe-left))"
             : "0 30px 110px",
         }}
       >
