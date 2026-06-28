@@ -22,7 +22,7 @@ export default defineConfig({
             urlPattern: ({ url, request }) =>
               request.method === "GET" &&
               /^\/api\/v1\/photos\/\d+\/(thumbnail|image)$/.test(url.pathname),
-            handler: "CacheFirst",
+            handler: "StaleWhileRevalidate",
             options: {
               cacheName: "ok-folio-piece-images",
               expiration: {
@@ -38,14 +38,15 @@ export default defineConfig({
             urlPattern: ({ url, request }) =>
               request.method === "GET" &&
               url.pathname.startsWith("/api/v1/") &&
+              !url.pathname.startsWith("/api/v1/stream/") &&
+              request.headers.get("accept") !== "text/event-stream" &&
               !/^\/api\/v1\/photos\/\d+\/(thumbnail|image)$/.test(url.pathname),
             handler: "NetworkFirst",
             options: {
               cacheName: "ok-folio-api-get",
-              networkTimeoutSeconds: 4,
               expiration: {
                 maxEntries: 120,
-                maxAgeSeconds: 60 * 60 * 24,
+                maxAgeSeconds: 60 * 60 * 6,
               },
               cacheableResponse: {
                 statuses: [0, 200],

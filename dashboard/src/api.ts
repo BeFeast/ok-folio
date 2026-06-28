@@ -28,6 +28,24 @@ import type {
 } from "./types";
 
 const API_BASE = "/api/v1";
+const API_GET_CACHE_NAME = "ok-folio-api-get";
+const PIECE_IMAGE_CACHE_NAME = "ok-folio-piece-images";
+
+async function clearOfflineCaches(cacheNames: string[] = [API_GET_CACHE_NAME]): Promise<void> {
+  if (typeof caches === "undefined") {
+    return;
+  }
+
+  await Promise.all(
+    cacheNames.map(async (cacheName) => {
+      try {
+        await caches.delete(cacheName);
+      } catch {
+        // Cache cleanup should not turn a successful server mutation into a UI error.
+      }
+    }),
+  );
+}
 
 export async function fetchStats(): Promise<Stats> {
   const response = await fetch(`${API_BASE}/stats`);
@@ -60,6 +78,7 @@ export async function triggerExtraction(): Promise<void> {
   if (!response.ok) {
     throw new Error("Failed to trigger extraction");
   }
+  await clearOfflineCaches([API_GET_CACHE_NAME, PIECE_IMAGE_CACHE_NAME]);
 }
 
 export async function triggerPageExtraction(page: number): Promise<void> {
@@ -69,6 +88,7 @@ export async function triggerPageExtraction(page: number): Promise<void> {
   if (!response.ok) {
     throw new Error("Failed to trigger page extraction");
   }
+  await clearOfflineCaches([API_GET_CACHE_NAME, PIECE_IMAGE_CACHE_NAME]);
 }
 
 export async function triggerPagesExtraction(count: number): Promise<void> {
@@ -78,6 +98,7 @@ export async function triggerPagesExtraction(count: number): Promise<void> {
   if (!response.ok) {
     throw new Error("Failed to trigger pages extraction");
   }
+  await clearOfflineCaches([API_GET_CACHE_NAME, PIECE_IMAGE_CACHE_NAME]);
 }
 
 export async function fetchWorkerStatus(): Promise<WorkerStatus> {
@@ -118,7 +139,9 @@ export async function createConnectorSource(input: ConnectorSourceInput): Promis
     const data = await response.json().catch(() => ({}));
     throw new Error(data.error || "Failed to create connector source");
   }
-  return response.json();
+  const source = await response.json();
+  await clearOfflineCaches();
+  return source;
 }
 
 export async function updateConnectorSource(id: number, input: ConnectorSourceInput): Promise<ConnectorSourceSetting> {
@@ -131,7 +154,9 @@ export async function updateConnectorSource(id: number, input: ConnectorSourceIn
     const data = await response.json().catch(() => ({}));
     throw new Error(data.error || "Failed to update connector source");
   }
-  return response.json();
+  const source = await response.json();
+  await clearOfflineCaches();
+  return source;
 }
 
 export async function deleteConnectorSource(id: number): Promise<void> {
@@ -142,6 +167,7 @@ export async function deleteConnectorSource(id: number): Promise<void> {
     const data = await response.json().catch(() => ({}));
     throw new Error(data.error || "Failed to delete connector source");
   }
+  await clearOfflineCaches();
 }
 
 export async function fetchFolios(): Promise<FoliosResponse> {
@@ -178,7 +204,9 @@ export async function createFolio(input: { name: string; cover_photo_id?: number
     const data = await response.json().catch(() => ({}));
     throw new Error(data.error || "Failed to create folio");
   }
-  return response.json();
+  const folio = await response.json();
+  await clearOfflineCaches();
+  return folio;
 }
 
 export async function updateFolio(id: number, input: { name?: string; cover_photo_id?: number | null }): Promise<Folio> {
@@ -191,7 +219,9 @@ export async function updateFolio(id: number, input: { name?: string; cover_phot
     const data = await response.json().catch(() => ({}));
     throw new Error(data.error || "Failed to update folio");
   }
-  return response.json();
+  const folio = await response.json();
+  await clearOfflineCaches();
+  return folio;
 }
 
 export async function deleteFolio(id: number): Promise<void> {
@@ -202,6 +232,7 @@ export async function deleteFolio(id: number): Promise<void> {
     const data = await response.json().catch(() => ({}));
     throw new Error(data.error || "Failed to delete folio");
   }
+  await clearOfflineCaches();
 }
 
 export async function addPieceToFolio(folioId: number, photoId: number): Promise<void> {
@@ -214,6 +245,7 @@ export async function addPieceToFolio(folioId: number, photoId: number): Promise
     const data = await response.json().catch(() => ({}));
     throw new Error(data.error || "Failed to add piece to folio");
   }
+  await clearOfflineCaches();
 }
 
 export async function removePieceFromFolio(folioId: number, photoId: number): Promise<void> {
@@ -224,6 +256,7 @@ export async function removePieceFromFolio(folioId: number, photoId: number): Pr
     const data = await response.json().catch(() => ({}));
     throw new Error(data.error || "Failed to remove piece from folio");
   }
+  await clearOfflineCaches();
 }
 
 export async function fetchTimeline(
@@ -263,6 +296,7 @@ export async function retryPhoto(id: number): Promise<void> {
   if (!response.ok) {
     throw new Error("Failed to retry photo");
   }
+  await clearOfflineCaches([API_GET_CACHE_NAME, PIECE_IMAGE_CACHE_NAME]);
 }
 
 export async function searchPhotos(
@@ -323,6 +357,7 @@ export async function triggerPhotoprismIndex(): Promise<void> {
   if (!response.ok) {
     throw new Error("Failed to trigger PhotoPrism indexing");
   }
+  await clearOfflineCaches([API_GET_CACHE_NAME, PIECE_IMAGE_CACHE_NAME]);
 }
 
 export async function fetchTodayPhotos(
@@ -424,6 +459,7 @@ export async function dismissInboxItem(id: number): Promise<void> {
     const data = await response.json().catch(() => ({}));
     throw new Error(data.error || "Failed to dismiss inbox item");
   }
+  await clearOfflineCaches();
 }
 
 export async function keepInboxItem(id: number): Promise<void> {
@@ -434,6 +470,7 @@ export async function keepInboxItem(id: number): Promise<void> {
     const data = await response.json().catch(() => ({}));
     throw new Error(data.error || "Failed to keep inbox item");
   }
+  await clearOfflineCaches();
 }
 
 export async function skipInboxItem(id: number): Promise<void> {
@@ -444,6 +481,7 @@ export async function skipInboxItem(id: number): Promise<void> {
     const data = await response.json().catch(() => ({}));
     throw new Error(data.error || "Failed to skip inbox item");
   }
+  await clearOfflineCaches();
 }
 
 export async function moveInboxItemToFolio(id: number, folioId: number, photoId?: number): Promise<void> {
@@ -460,6 +498,7 @@ export async function moveInboxItemToFolio(id: number, folioId: number, photoId?
     const data = await response.json().catch(() => ({}));
     throw new Error(data.error || "Failed to move inbox item");
   }
+  await clearOfflineCaches();
 }
 
 export async function fetchPhotoDetail(
@@ -520,6 +559,7 @@ export async function addToFavorites(photoId: number): Promise<void> {
     const data = await response.json();
     throw new Error(data.error || "Failed to add to favorites");
   }
+  await clearOfflineCaches();
 }
 
 export async function removeFromFavorites(photoId: number): Promise<void> {
@@ -530,6 +570,7 @@ export async function removeFromFavorites(photoId: number): Promise<void> {
     const data = await response.json();
     throw new Error(data.error || "Failed to remove from favorites");
   }
+  await clearOfflineCaches();
 }
 
 export interface CreatePieceInput {
@@ -571,5 +612,7 @@ export async function createPiece(input: CreatePieceInput): Promise<CreatePieceR
     }
     throw new Error(message);
   }
-  return response.json();
+  const result = await response.json();
+  await clearOfflineCaches([API_GET_CACHE_NAME, PIECE_IMAGE_CACHE_NAME]);
+  return result;
 }

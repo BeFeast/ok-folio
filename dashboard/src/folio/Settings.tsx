@@ -114,8 +114,8 @@ export default function Settings() {
       : "Unavailable";
   const offlineCacheDetail =
     storageEstimate.supported && storageEstimate.quota != null
-      ? `Browser storage used on this device. ${formatBytes(storageEstimate.quota)} available.`
-      : "Browser storage estimate is not available on this device.";
+      ? `Offline app-shell and media caches on this device. ${formatBytes(storageEstimate.quota)} browser quota available.`
+      : "Offline cache estimate is not available on this device.";
 
   useEffect(() => {
     document.documentElement.dataset.reduceMotion = reduceMotion ? "1" : "0";
