@@ -240,6 +240,10 @@ interface FolioContextValue {
   openAdd: () => void;
   closeAdd: () => void;
 
+  viewOpen: boolean;
+  openView: () => void;
+  closeView: () => void;
+
   isFav: (id: number) => boolean;
   toggleFav: (id: number) => void;
 
@@ -278,6 +282,7 @@ export function FolioProvider({ children }: { children: ReactNode }) {
   const [mode, setMode] = useState<GalleryMode>("library");
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [addOpen, setAddOpen] = useState(false);
+  const [viewOpen, setViewOpen] = useState(false);
   const [favOverride, setFavOverride] = useState<Record<number, boolean>>({});
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [viewerPieces, setViewerPiecesState] = useState<PieceVM[]>([]);
@@ -722,6 +727,9 @@ export function FolioProvider({ children }: { children: ReactNode }) {
     addOpen,
     openAdd: useCallback(() => setAddOpen(true), []),
     closeAdd: useCallback(() => setAddOpen(false), []),
+    viewOpen,
+    openView: useCallback(() => setViewOpen(true), []),
+    closeView: useCallback(() => setViewOpen(false), []),
     isFav,
     toggleFav,
     importPiece,

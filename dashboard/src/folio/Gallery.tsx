@@ -14,16 +14,6 @@ const MODES: { key: GalleryMode; label: string }[] = [
 
 const MOBILE_MEDIUMS = ["Painting", "Photography", "Drawing", "Print", "Sculpture"];
 
-function SlidersIcon({ size = 16 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-      <path d="M4 7h9M17 7h3M4 17h3M11 17h9" />
-      <circle cx="15" cy="7" r="2" />
-      <circle cx="9" cy="17" r="2" />
-    </svg>
-  );
-}
-
 function MagnifierMinusIcon({ size = 28 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.65" strokeLinecap="round">
@@ -388,7 +378,7 @@ function ActiveMobileFilters() {
   const { query, setQuery, favoriteOnly, setFavoriteOnly, artist, setArtist, category, setCategory } = useFolio();
   if (!query.trim() && !favoriteOnly && !artist && !category) return null;
   return (
-    <div style={{ display: "flex", flexWrap: "wrap", gap: 8, padding: "0 0 12px" }}>
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 8, padding: "10px 0 12px" }}>
       {query.trim() ? <MobileFilterChip label={`Search: ${query.trim()}`} onRemove={() => setQuery("")} /> : null}
       {favoriteOnly ? <MobileFilterChip label="Favorites" onRemove={() => setFavoriteOnly(false)} /> : null}
       {artist ? <MobileFilterChip label={artist} onRemove={() => setArtist("")} /> : null}
@@ -461,10 +451,10 @@ function MobileFiltersSheet({ open, onClose }: { open: boolean; onClose: () => v
 
   if (!open) return null;
   return (
-    <div role="dialog" aria-modal="true" aria-label="Filters">
+    <div role="dialog" aria-modal="true" aria-label="View">
       <button
         type="button"
-        aria-label="Close filters"
+        aria-label="Close view"
         onClick={onClose}
         style={{
           position: "fixed",
@@ -492,7 +482,7 @@ function MobileFiltersSheet({ open, onClose }: { open: boolean; onClose: () => v
       >
         <div style={{ width: 42, height: 4, borderRadius: 99, background: "color-mix(in srgb, var(--ink) 22%, transparent)", margin: "0 auto 17px" }} />
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14 }}>
-          <h2 style={{ margin: 0, fontFamily: "var(--serif)", fontWeight: 500, fontSize: 26, lineHeight: 1, color: "var(--ink)" }}>Filters</h2>
+          <h2 style={{ margin: 0, fontFamily: "var(--serif)", fontWeight: 500, fontSize: 26, lineHeight: 1, color: "var(--ink)" }}>View</h2>
           <button
             type="button"
             onClick={reset}
@@ -554,6 +544,13 @@ function MobileFiltersSheet({ open, onClose }: { open: boolean; onClose: () => v
             <span style={{ width: 22, height: 22, borderRadius: 99, background: favoriteOnly ? "var(--on-accent)" : "var(--surface)" }} />
           </span>
         </button>
+
+        <div style={{ marginTop: 23 }}>
+          <div style={{ fontFamily: "var(--sans)", fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", color: "var(--muted)" }}>LAYOUT</div>
+          <div style={{ marginTop: 10 }}>
+            <MobileModeTabs />
+          </div>
+        </div>
 
         <div style={{ marginTop: 23 }}>
           <div style={{ fontFamily: "var(--sans)", fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", color: "var(--muted)" }}>ARTIST</div>
@@ -734,39 +731,16 @@ function MobileFiltersSheet({ open, onClose }: { open: boolean; onClose: () => v
   );
 }
 
+// Image-first: NO permanent control row. The mode switch + all filters live in the
+// "View" sheet, opened from the top-bar view icon (Nav). Here we only surface active
+// filters as removable chips (conditional, never shown when nothing is filtered) and
+// host the sheet itself.
 function MobileGalleryHeader() {
-  const [filtersOpen, setFiltersOpen] = useState(false);
+  const { viewOpen, closeView } = useFolio();
   return (
     <>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "4px 0 12px" }}>
-        <MobileModeTabs />
-        <button
-          type="button"
-          onClick={() => setFiltersOpen(true)}
-          style={{
-            appearance: "none",
-            height: 44,
-            flex: "0 0 auto",
-            border: "1px solid var(--line-2)",
-            borderRadius: 13,
-            background: "var(--surface)",
-            color: "var(--ink)",
-            cursor: "pointer",
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 7,
-            padding: "0 12px",
-            fontFamily: "var(--sans)",
-            fontSize: 13,
-            fontWeight: 800,
-          }}
-        >
-          <SlidersIcon />
-          Filters
-        </button>
-      </div>
       <ActiveMobileFilters />
-      <MobileFiltersSheet open={filtersOpen} onClose={() => setFiltersOpen(false)} />
+      <MobileFiltersSheet open={viewOpen} onClose={closeView} />
     </>
   );
 }
