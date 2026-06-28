@@ -248,24 +248,22 @@ export default function PieceViewer() {
         title={panelOpen ? "Hide details" : "Show details"}
         style={{
           position: "absolute",
-          top: 70,
-          right: panelOpen ? "calc(min(416px, 92vw) - 19px)" : 16,
-          transition: "right .35s ease",
-          zIndex: 9,
+          top: 22,
+          right: 76,
+          zIndex: 8,
           appearance: "none",
           cursor: "pointer",
-          width: 38,
-          height: 38,
+          width: 42,
+          height: 42,
           borderRadius: 99,
-          border: "1px solid rgba(251,246,238,0.22)",
-          background: "rgba(16,12,9,0.72)",
-          backdropFilter: "blur(10px)",
-          WebkitBackdropFilter: "blur(10px)",
+          border: 0,
+          background: "rgba(251,246,238,0.12)",
+          backdropFilter: "blur(6px)",
+          WebkitBackdropFilter: "blur(6px)",
           color: "#FBF6EE",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          boxShadow: "0 6px 20px rgba(0,0,0,0.4)",
         }}
       >
         <ChevronIcon dir={panelOpen ? "right" : "left"} />
