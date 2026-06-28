@@ -291,6 +291,17 @@ export function FolioProvider({ children }: { children: ReactNode }) {
   // Theme: keep the document tokens in sync with state.
   useEffect(() => {
     applyTheme(theme);
+    if (theme !== "auto" || typeof window === "undefined" || typeof window.matchMedia !== "function") {
+      return;
+    }
+    const query = window.matchMedia("(prefers-color-scheme: dark)");
+    const update = () => applyTheme("auto");
+    if (typeof query.addEventListener === "function") {
+      query.addEventListener("change", update);
+      return () => query.removeEventListener("change", update);
+    }
+    query.addListener(update);
+    return () => query.removeListener(update);
   }, [theme]);
 
   const setTheme = useCallback((t: ThemeName) => {
