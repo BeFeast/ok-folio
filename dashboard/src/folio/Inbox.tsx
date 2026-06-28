@@ -79,12 +79,14 @@ function statusLabel(status: InboxItem["status"]): string {
   return status === "duplicate" ? "Duplicate" : "Ambiguous";
 }
 
-function sourceHost(value: string): string {
-  if (!value) return "";
+function sourceURL(value: string): URL | null {
+  if (!value) return null;
   try {
-    return new URL(value).hostname.replace(/^www\./, "");
+    const url = new URL(value);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    return url;
   } catch {
-    return value;
+    return null;
   }
 }
 
@@ -92,7 +94,9 @@ function InboxRow({ item }: { item: InboxItem }) {
   const { dismissInboxAction } = useFolio();
   const title = item.title.trim() || "Untitled piece";
   const artist = item.artist.trim() || "Unknown artist";
-  const source = sourceHost(item.source_url);
+  const source = item.source_url.trim();
+  const sourceLink = sourceURL(source);
+  const sourceLabel = sourceLink ? sourceLink.hostname.replace(/^www\./, "") : source;
 
   return (
     <div
@@ -131,10 +135,10 @@ function InboxRow({ item }: { item: InboxItem }) {
         <div style={{ fontFamily: "var(--sans)", fontSize: 13, color: "var(--graphite)", lineHeight: 1.5, marginTop: 12 }}>
           {item.reason || "No reason provided."}
         </div>
-        {item.source_url ? (
+        {sourceLink ? (
           <Hov
             as="a"
-            href={item.source_url}
+            href={sourceLink.toString()}
             target="_blank"
             rel="noreferrer"
             style={{
@@ -147,8 +151,10 @@ function InboxRow({ item }: { item: InboxItem }) {
             }}
             hover={{ color: "var(--ink)" }}
           >
-            {source || "Open source"}
+            {sourceLabel || "Open source"}
           </Hov>
+        ) : source ? (
+          <div style={{ marginTop: 10, fontFamily: "var(--sans)", fontSize: 12.5, color: "var(--muted)" }}>{sourceLabel}</div>
         ) : null}
       </div>
       <Hov
