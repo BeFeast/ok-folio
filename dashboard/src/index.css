@@ -133,6 +133,26 @@ img {
   }
 }
 
+.okf-shimmer {
+  position: relative;
+  overflow: hidden;
+}
+
+.okf-shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.28), transparent);
+  animation: okf-shimmer 1.15s ease-in-out infinite;
+}
+
+@keyframes okf-shimmer {
+  to {
+    transform: translateX(100%);
+  }
+}
+
 /* Honor the Reduce-motion preference toggled in Settings. */
 :root[data-reduce-motion="1"] *,
 :root[data-reduce-motion="1"] *::before,

@@ -210,6 +210,8 @@ interface FolioContextValue {
   setFavoriteOnly: (enabled: boolean) => void;
   artist: string;
   setArtist: (artist: string) => void;
+  category: string;
+  setCategory: (category: string) => void;
   filterByArtist: (artist: string) => void;
 
   mode: GalleryMode;
@@ -272,6 +274,7 @@ export function FolioProvider({ children }: { children: ReactNode }) {
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [favoriteOnly, setFavoriteOnly] = useState(false);
   const [artist, setArtist] = useState("");
+  const [category, setCategory] = useState("");
   const [mode, setMode] = useState<GalleryMode>("library");
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [addOpen, setAddOpen] = useState(false);
@@ -303,12 +306,13 @@ export function FolioProvider({ children }: { children: ReactNode }) {
   }, [query]);
 
   const catalog = useInfiniteQuery({
-    queryKey: ["folio-catalog", debouncedQuery, favoriteOnly, artist],
+    queryKey: ["folio-catalog", debouncedQuery, favoriteOnly, artist, category],
     queryFn: ({ pageParam }) => {
       const filters: Parameters<typeof fetchGalleryCatalog>[2] = {};
       if (debouncedQuery) filters.query = debouncedQuery;
       if (favoriteOnly) filters.favorite = true;
       if (artist) filters.artist = artist;
+      if (category) filters.category = category;
       return fetchGalleryCatalog(PAGE_SIZE, pageParam as number, filters);
     },
     initialPageParam: 0,
@@ -690,6 +694,8 @@ export function FolioProvider({ children }: { children: ReactNode }) {
     setFavoriteOnly,
     artist,
     setArtist,
+    category,
+    setCategory,
     filterByArtist,
     mode,
     setMode,
