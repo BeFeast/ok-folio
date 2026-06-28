@@ -915,6 +915,27 @@ func (db *DB) DeleteInboxItem(id uint64) error {
 	return nil
 }
 
+// ResolveInboxItem marks an active Inbox exception as handled while preserving
+// an audit row for later troubleshooting.
+func (db *DB) ResolveInboxItem(id uint64, status string) error {
+	if id == 0 {
+		return fmt.Errorf("inbox item ID is required")
+	}
+	if status != "kept" && status != "skipped" && status != "moved" {
+		return fmt.Errorf("invalid resolved inbox status: %s", status)
+	}
+	result := db.DB.Model(&InboxItem{}).
+		Where("id = ? AND status IN ?", id, []string{"duplicate", "ambiguous"}).
+		Updates(map[string]interface{}{"status": status})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
 // CountInboxByStatus returns the number of parked exceptions per status.
 func (db *DB) CountInboxByStatus() (map[string]int64, error) {
 	type row struct {
