@@ -1,8 +1,9 @@
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { createConnectorSource, deleteConnectorSource, fetchConnectorSources, updateConnectorSource } from "../api";
 import type { ConnectorSourceSetting } from "../types";
 import { useFolio, formatBytes } from "./context";
 import { BrandMark, Hov, PageHeader } from "./ui";
+import { useViewport } from "./useViewport";
 
 function useLocalPref<T extends string | boolean>(key: string, initial: T): [T, (v: T) => void] {
   const [value, setValue] = useState<T>(() => {
@@ -92,11 +93,13 @@ function Row({ title, desc, children }: { title: string; desc: string; children:
 }
 
 export default function Settings() {
-  const { theme, setTheme, totalPhotos, totalSizeBytes } = useFolio();
+  const { theme, setTheme, mode, setMode, totalPhotos, totalSizeBytes } = useFolio();
+  const { isMobile } = useViewport();
 
   const [reduceMotion, setReduceMotion] = useLocalPref<boolean>("okfolio-reduce-motion", false);
   const [autoCovers, setAutoCovers] = useLocalPref<boolean>("okfolio-auto-covers", true);
   const [suggestFolios, setSuggestFolios] = useLocalPref<boolean>("okfolio-suggest-folios", true);
+  const [syncCellular, setSyncCellular] = useLocalPref<boolean>("okfolio-sync-cellular", false);
   const [folioName, setFolioName] = useLocalPref<string>("okfolio-name", "OK Folio");
   const [sources, setSources] = useState<ConnectorSourceSetting[]>([]);
   const [sourceLabel, setSourceLabel] = useState("");
@@ -180,6 +183,74 @@ export default function Settings() {
     background: active ? "var(--surface-2)" : "transparent",
     boxShadow: active ? "0 1px 4px var(--shadow)" : "none",
   });
+
+  const mobileSegment = (active: boolean): CSSProperties => ({
+    flex: 1,
+    minHeight: 36,
+    border: 0,
+    borderRadius: 11,
+    background: active ? "var(--surface)" : "transparent",
+    color: active ? "var(--accent)" : "var(--graphite)",
+    boxShadow: active ? "0 1px 4px var(--shadow)" : "none",
+    fontFamily: "var(--sans)",
+    fontSize: 13,
+    fontWeight: 800,
+  });
+
+  const mobileRow = (title: string, detail: ReactNode, accessory?: ReactNode) => (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, minHeight: 52, padding: "13px 0", borderBottom: "1px solid var(--line)" }}>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontFamily: "var(--sans)", fontSize: 15, color: "var(--ink)" }}>{title}</div>
+        {detail ? <div style={{ marginTop: 3, fontFamily: "var(--sans)", fontSize: 12.5, color: "var(--muted)" }}>{detail}</div> : null}
+      </div>
+      {accessory}
+    </div>
+  );
+
+  if (isMobile) {
+    return (
+      <div>
+        <section style={{ padding: "18px 0 0" }}>
+          <h2 style={{ ...SECTION, margin: "0 0 8px", letterSpacing: "0.06em" }}>Appearance</h2>
+          <div style={{ padding: "4px 0 20px", borderBottom: "1px solid var(--line)" }}>
+            <div style={{ display: "flex", gap: 3, padding: 4, borderRadius: 13, background: "var(--wall)" }}>
+              <button type="button" onClick={() => setTheme("light")} style={mobileSegment(theme === "light")}>Light</button>
+              <button type="button" onClick={() => setTheme("dark")} style={mobileSegment(theme === "dark")}>Dark</button>
+              <button type="button" onClick={() => setTheme("auto")} style={mobileSegment(theme === "auto")}>Auto</button>
+            </div>
+            {mobileRow(
+              "Default gallery mode",
+              mode.charAt(0).toUpperCase() + mode.slice(1),
+              <select
+                value={mode}
+                onChange={(e) => setMode(e.target.value as typeof mode)}
+                aria-label="Default gallery mode"
+                style={{ border: 0, background: "transparent", color: "var(--accent)", fontFamily: "var(--sans)", fontSize: 14, fontWeight: 800 }}
+              >
+                <option value="magazine">Magazine</option>
+                <option value="library">Library</option>
+                <option value="wall">Wall</option>
+              </select>,
+            )}
+          </div>
+
+          <h2 style={{ ...SECTION, margin: "28px 0 8px", letterSpacing: "0.06em" }}>Storage & Sync</h2>
+          <div>
+            {mobileRow("Offline cache", "Thumbnail cache lands in the next mobile milestone.", <span style={{ fontFamily: "var(--sans)", fontSize: 13, color: "var(--graphite)" }}>Pending</span>)}
+            {mobileRow("Sync over cellular", "Stored on this device.", <Switch on={syncCellular} onClick={() => setSyncCellular(!syncCellular)} />)}
+            {mobileRow("Server address", "Self-hosted LAN endpoint.", <span style={{ fontFamily: "var(--sans)", fontSize: 13, color: "var(--graphite)" }}>folio.oklabs.uk</span>)}
+          </div>
+
+          <footer style={{ padding: "34px 0 10px", display: "flex", alignItems: "center", gap: 11, color: "var(--muted)" }}>
+            <BrandMark width={22} height={25} />
+            <div style={{ fontFamily: "var(--sans)", fontSize: 13 }}>
+              OK Folio · Version 2.4 · Installed
+            </div>
+          </footer>
+        </section>
+      </div>
+    );
+  }
 
   return (
     <div>

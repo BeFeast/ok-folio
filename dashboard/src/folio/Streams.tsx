@@ -1,7 +1,9 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { fetchConnectorStatus } from "../api";
 import type { ConnectorStatus } from "../types";
 import { DotsIcon, OutlineButton, PageHeader } from "./ui";
+import { useViewport } from "./useViewport";
 
 function formatAgo(iso: string | null): string {
   if (!iso) return "never";
@@ -42,6 +44,92 @@ function statusView(health: ConnectorStatus["health"]): {
     default:
       return { label: "Idle", dot: "var(--faint)", color: "var(--muted)" };
   }
+}
+
+function sourceType(s: ConnectorStatus): string {
+  const id = `${s.id} ${s.display_name}`.toLowerCase();
+  if (id.includes("rss")) return "RSS";
+  if (id.includes("manual")) return "Manual";
+  return "API";
+}
+
+function Toggle({ on, onClick, label }: { on: boolean; onClick: () => void; label: string }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      aria-label={label}
+      onClick={onClick}
+      style={{
+        flex: "none",
+        width: 48,
+        height: 29,
+        padding: 3,
+        border: 0,
+        borderRadius: 99,
+        background: on ? "var(--accent)" : "var(--line-2)",
+        display: "flex",
+        justifyContent: on ? "flex-end" : "flex-start",
+      }}
+    >
+      <span
+        style={{
+          width: 23,
+          height: 23,
+          borderRadius: 99,
+          background: on ? "var(--on-accent)" : "var(--surface)",
+          boxShadow: "0 1px 4px var(--shadow)",
+        }}
+      />
+    </button>
+  );
+}
+
+function MobileStreamCard({ s }: { s: ConnectorStatus }) {
+  const initial = (s.display_name || "?").trim().charAt(0).toUpperCase() || "?";
+  const [enabled, setEnabled] = useState(() => s.health !== "idle" && s.health !== "error");
+  const pieces = s.counts?.total ?? s.counts?.downloaded ?? 0;
+  return (
+    <article
+      style={{
+        display: "grid",
+        gridTemplateColumns: "44px minmax(0, 1fr) auto",
+        alignItems: "center",
+        gap: 13,
+        padding: "14px 0",
+        borderBottom: "1px solid var(--line)",
+      }}
+    >
+      <div
+        style={{
+          width: 44,
+          height: 44,
+          borderRadius: 10,
+          border: "1px solid var(--line)",
+          background: "var(--surface)",
+          color: "var(--accent)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontFamily: "var(--serif)",
+          fontSize: 19,
+          fontWeight: 500,
+        }}
+      >
+        {initial}
+      </div>
+      <div style={{ minWidth: 0 }}>
+        <h2 style={{ margin: 0, fontFamily: "var(--serif)", fontSize: 18, fontWeight: 500, lineHeight: 1.12, color: "var(--ink)" }}>
+          {s.display_name}
+        </h2>
+        <div style={{ marginTop: 4, fontFamily: "var(--sans)", fontSize: 12.5, color: "var(--muted)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+          {sourceType(s)} · synced {formatAgo(s.last_sync)} · {pieces.toLocaleString()} pieces
+        </div>
+      </div>
+      <Toggle on={enabled} onClick={() => setEnabled((current) => !current)} label={`Toggle ${s.display_name}`} />
+    </article>
+  );
 }
 
 function StreamRow({ s }: { s: ConnectorStatus }) {
@@ -117,11 +205,54 @@ function StreamRow({ s }: { s: ConnectorStatus }) {
 }
 
 export default function Streams() {
+  const { isMobile } = useViewport();
   const { data, isLoading, isError } = useQuery({
     queryKey: ["folio-connectors"],
     queryFn: fetchConnectorStatus,
   });
   const connectors = data?.connectors ?? [];
+
+  if (isMobile) {
+    return (
+      <div>
+        <div style={{ marginTop: 2, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+          <div style={{ fontFamily: "var(--sans)", fontSize: 13, color: "var(--muted)" }}>Sources that fill your folio</div>
+          <button
+            type="button"
+            style={{
+              width: 38,
+              height: 38,
+              border: "1px solid var(--accent)",
+              borderRadius: 99,
+              background: "var(--accent)",
+              color: "var(--on-accent)",
+              fontFamily: "var(--sans)",
+              fontSize: 23,
+              lineHeight: 1,
+            }}
+            aria-label="Add stream"
+          >
+            +
+          </button>
+        </div>
+        <section style={{ padding: "18px 0 0" }}>
+          {isError ? (
+            <div style={{ padding: "60px 0", fontFamily: "var(--serif)", fontSize: 20, color: "var(--graphite)" }}>
+              The streams could not be reached.
+            </div>
+          ) : isLoading ? (
+            <div style={{ padding: "60px 0", fontFamily: "var(--sans)", fontSize: 14, color: "var(--muted)" }}>Loading streams…</div>
+          ) : connectors.length === 0 ? (
+            <div style={{ padding: "60px 0", fontFamily: "var(--serif)", fontSize: 20, color: "var(--graphite)" }}>
+              No streams yet.
+            </div>
+          ) : (
+            connectors.map((s) => <MobileStreamCard key={s.id} s={s} />)
+          )}
+        </section>
+      </div>
+    );
+  }
 
   return (
     <div>

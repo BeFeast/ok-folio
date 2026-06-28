@@ -3,13 +3,14 @@
 // document-level applier mirror the design's __okfolioApplyTheme so the
 // running app and the design system stay pixel-identical.
 
-export type ThemeName = "light" | "dark";
+export type ThemeName = "light" | "dark" | "auto";
+export type ResolvedThemeName = "light" | "dark";
 
 export const SANS =
   "'Hanken Grotesk', system-ui, -apple-system, 'Segoe UI', sans-serif";
 export const SERIF = "'Spectral', Georgia, 'Times New Roman', serif";
 
-export const TOKENS: Record<ThemeName, Record<string, string>> = {
+export const TOKENS: Record<ResolvedThemeName, Record<string, string>> = {
   light: {
     "--bg": "#F3EFE7",
     "--surface": "#FBF9F3",
@@ -54,18 +55,29 @@ export const TOKENS: Record<ThemeName, Record<string, string>> = {
 
 const STORAGE_KEY = "okfolio-theme";
 
+export function resolveTheme(name: ThemeName): ResolvedThemeName {
+  if (name !== "auto") return name;
+  if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
+    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  }
+  return "light";
+}
+
 export function applyTheme(name: ThemeName): void {
-  const t = TOKENS[name] || TOKENS.light;
+  const resolved = resolveTheme(name);
+  const t = TOKENS[resolved] || TOKENS.light;
   const root = document.documentElement;
   for (const k in t) root.style.setProperty(k, t[k]);
-  root.style.colorScheme = name === "dark" ? "dark" : "light";
+  root.dataset.theme = name;
+  root.dataset.resolvedTheme = resolved;
+  root.style.colorScheme = resolved === "dark" ? "dark" : "light";
   if (document.body) document.body.style.background = t["--bg"];
 }
 
 export function readStoredTheme(): ThemeName {
   try {
     const s = localStorage.getItem(STORAGE_KEY);
-    if (s === "dark" || s === "light") return s;
+    if (s === "dark" || s === "light" || s === "auto") return s;
   } catch {
     /* ignore */
   }

@@ -1,5 +1,6 @@
 import type { CSSProperties } from "react";
 import { useFolio, type ToastStatus } from "./context";
+import { useViewport } from "./useViewport";
 
 function Spinner() {
   return (
@@ -57,19 +58,22 @@ const CARD: CSSProperties = {
 
 export default function Toaster() {
   const { toasts, dismissToast } = useFolio();
+  const { isMobile } = useViewport();
   if (toasts.length === 0) return null;
 
   return (
     <div
       style={{
         position: "fixed",
-        right: 24,
-        bottom: 24,
+        left: isMobile ? "calc(20px + var(--safe-left))" : undefined,
+        right: isMobile ? "calc(20px + var(--safe-right))" : 24,
+        bottom: isMobile ? "calc(var(--mobile-tab-height) + var(--safe-bottom) + 14px)" : 24,
         zIndex: 200,
         display: "flex",
         flexDirection: "column",
         gap: 10,
         pointerEvents: "none",
+        alignItems: isMobile ? "center" : undefined,
       }}
     >
       {toasts.map((t) => {
@@ -80,7 +84,7 @@ export default function Toaster() {
             role="status"
             onClick={() => dismissable && dismissToast(t.id)}
             title={dismissable ? "Dismiss" : undefined}
-            style={{ ...CARD, cursor: dismissable ? "pointer" : "default" }}
+            style={{ ...CARD, width: isMobile ? "100%" : undefined, cursor: dismissable ? "pointer" : "default" }}
           >
             <span
               style={{
