@@ -6,6 +6,8 @@ const TABLET_QUERY = "(min-width: 641px) and (max-width: 1024px)";
 interface ViewportState {
   isMobile: boolean;
   isTablet: boolean;
+  width: number;
+  height: number;
 }
 
 function addQueryListener(query: MediaQueryList, update: () => void): () => void {
@@ -20,11 +22,13 @@ function addQueryListener(query: MediaQueryList, update: () => void): () => void
 
 function getViewportState(): ViewportState {
   if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
-    return { isMobile: false, isTablet: false };
+    return { isMobile: false, isTablet: false, width: 0, height: 0 };
   }
   return {
     isMobile: window.matchMedia(MOBILE_QUERY).matches,
     isTablet: window.matchMedia(TABLET_QUERY).matches,
+    width: window.innerWidth,
+    height: window.innerHeight,
   };
 }
 
@@ -38,14 +42,16 @@ export function useViewport(): ViewportState {
 
     const mobile = window.matchMedia(MOBILE_QUERY);
     const tablet = window.matchMedia(TABLET_QUERY);
-    const update = () => setViewport({ isMobile: mobile.matches, isTablet: tablet.matches });
+    const update = () => setViewport({ isMobile: mobile.matches, isTablet: tablet.matches, width: window.innerWidth, height: window.innerHeight });
 
     update();
     const removeMobileListener = addQueryListener(mobile, update);
     const removeTabletListener = addQueryListener(tablet, update);
+    window.addEventListener("resize", update);
     return () => {
       removeMobileListener();
       removeTabletListener();
+      window.removeEventListener("resize", update);
     };
   }, []);
 
