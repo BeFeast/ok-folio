@@ -21,13 +21,14 @@ import {
   dismissInboxItem,
   fetchGalleryCatalog,
   fetchInboxCounts,
+  fetchPhotoDetail,
   fetchStats,
   getPhotoImageUrl,
   getPhotoThumbnailUrl,
   removeFromFavorites,
   type CreatePieceInput,
 } from "../api";
-import type { Photo } from "../types";
+import type { Photo, PhotoDetailResponse } from "../types";
 import {
   applyTheme,
   readStoredTheme,
@@ -137,6 +138,29 @@ function mapPhoto(p: Photo): PieceVM {
     size: formatBytes(p.FileSize),
     dim: p.ImageWidth && p.ImageHeight ? `${p.ImageWidth} x ${p.ImageHeight}` : "",
     added: relativeAdded(p.DownloadedAt),
+  };
+}
+
+function mapPhotoDetail(p: PhotoDetailResponse): PieceVM {
+  const title = (p.title || "").trim() || prettifyFileName(p.file_name);
+  const artist = (p.artist || "").trim();
+  return {
+    id: p.id,
+    t: title,
+    a: artist || "Unknown",
+    y: yearFrom(p.upload_date) || yearFrom(p.downloaded_at),
+    src: p.source || hostFrom(p.source_page) || p.source_page || "—",
+    med: "",
+    kind: p.category || p.provider || "",
+    note: "",
+    folio: "",
+    img: getPhotoImageUrl(p.id),
+    thumb: getPhotoThumbnailUrl(p.id, 400),
+    fav: !!p.favorite,
+    file: p.file_name || "—",
+    size: formatBytes(p.file_size),
+    dim: "",
+    added: relativeAdded(p.downloaded_at),
   };
 }
 
@@ -276,13 +300,31 @@ export function FolioProvider({ children }: { children: ReactNode }) {
     });
   }, [catalog.data, favOverride]);
 
+  const catalogSelected = useMemo(
+    () => (selectedId == null ? null : pieces.find((p) => p.id === selectedId) ?? null),
+    [selectedId, pieces],
+  );
+  const needsSelectedDetail = selectedId != null && catalogSelected == null;
+  const selectedDetail = useQuery({
+    queryKey: ["photo", selectedId],
+    queryFn: () => fetchPhotoDetail(selectedId as number),
+    enabled: needsSelectedDetail,
+  });
+  const fetchedSelected = useMemo<PieceVM | null>(() => {
+    if (!selectedDetail.data) return null;
+    const vm = mapPhotoDetail(selectedDetail.data);
+    const override = favOverride[vm.id];
+    return override === undefined ? vm : { ...vm, fav: override };
+  }, [selectedDetail.data, favOverride]);
+
   const isFav = useCallback(
     (id: number) => {
       const override = favOverride[id];
       if (override !== undefined) return override;
+      if (fetchedSelected?.id === id) return fetchedSelected.fav;
       return pieces.find((p) => p.id === id)?.fav ?? false;
     },
-    [favOverride, pieces],
+    [favOverride, fetchedSelected, pieces],
   );
 
   const inFlight = useRef<Set<number>>(new Set());
@@ -404,10 +446,7 @@ export function FolioProvider({ children }: { children: ReactNode }) {
     [pieces],
   );
 
-  const selected = useMemo(
-    () => (selectedId == null ? null : pieces.find((p) => p.id === selectedId) ?? null),
-    [selectedId, pieces],
-  );
+  const selected = catalogSelected ?? fetchedSelected;
   const selIndex = useMemo(
     () => (selectedId == null ? -1 : pieces.findIndex((p) => p.id === selectedId)),
     [selectedId, pieces],
