@@ -158,6 +158,9 @@ func TestRunConnectorContentHashCacheHitRoutesDuplicateToInbox(t *testing.T) {
 	if got.Status != "duplicate" || got.ProviderID != "fixture" || got.DedupeKey != "fixture:two" || got.SourceID != "source-two" || got.MediaID != "media-two" || got.SourceURL != "https://fixture.test/source/two" || got.Title != "Fixture two" || got.Artist != "Fixture Artist" {
 		t.Fatalf("expected full duplicate provenance, got %#v", got)
 	}
+	if !reflect.DeepEqual(got.ContentHash, sum[:]) {
+		t.Fatalf("expected duplicate content hash %x, got %x", sum[:], got.ContentHash)
+	}
 	if !reflect.DeepEqual(connector.resolved, []string{"fixture:one", "fixture:two"}) {
 		t.Fatalf("expected duplicate to skip download after resolve, got resolved=%#v", connector.resolved)
 	}

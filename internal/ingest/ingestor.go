@@ -186,7 +186,7 @@ func (i *Ingestor) ingestPages(ctx context.Context, connector provider.Connector
 				if _, hit, err := i.cache.DedupeHashOwner(ctx, resolved.Media.ContentHash); err != nil {
 					return result, err
 				} else if hit {
-					if err := i.recordInboxDuplicate(providerID, dedupeKey, *resolved, "exact content hash already kept"); err != nil {
+					if err := i.recordInboxDuplicate(providerID, dedupeKey, *resolved, "exact content hash already kept", resolved.Media.ContentHash); err != nil {
 						return result, err
 					}
 					if err := i.cache.MarkSeen(ctx, providerID, dedupeKey); err != nil {
@@ -261,17 +261,18 @@ func (i *Ingestor) ingestPages(ctx context.Context, connector provider.Connector
 	}
 }
 
-func (i *Ingestor) recordInboxDuplicate(providerID string, dedupeKey string, item provider.DiscoveredMedia, reason string) error {
+func (i *Ingestor) recordInboxDuplicate(providerID string, dedupeKey string, item provider.DiscoveredMedia, reason string, contentHash []byte) error {
 	return i.db.RecordInboxException(&database.InboxItem{
-		ProviderID: providerID,
-		DedupeKey:  dedupeKey,
-		SourceID:   item.Source.ExternalID,
-		MediaID:    item.Media.ExternalID,
-		SourceURL:  item.Source.URL,
-		Title:      item.Title,
-		Artist:     item.Artist,
-		Status:     "duplicate",
-		Reason:     reason,
+		ProviderID:  providerID,
+		DedupeKey:   dedupeKey,
+		SourceID:    item.Source.ExternalID,
+		MediaID:     item.Media.ExternalID,
+		SourceURL:   item.Source.URL,
+		Title:       item.Title,
+		Artist:      item.Artist,
+		Status:      "duplicate",
+		Reason:      reason,
+		ContentHash: contentHash,
 	})
 }
 

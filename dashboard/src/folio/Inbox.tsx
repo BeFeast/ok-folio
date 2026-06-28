@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
-import { fetchInbox, fetchInboxCounts } from "../api";
+import { fetchInbox, fetchInboxCounts, getPhotoThumbnailUrl } from "../api";
 import type { InboxItem } from "../types";
 import { useFolio } from "./context";
-import { Hov, PageHeader } from "./ui";
+import { Hov, OkfImage, PageHeader } from "./ui";
 
 const PAGE_SIZE = 50;
 
@@ -91,7 +91,7 @@ function sourceURL(value: string): URL | null {
 }
 
 function InboxRow({ item }: { item: InboxItem }) {
-  const { dismissInboxAction } = useFolio();
+  const { dismissInboxAction, openPiece } = useFolio();
   const title = item.title.trim() || "Untitled piece";
   const artist = item.artist.trim() || "Unknown artist";
   const source = item.source_url.trim();
@@ -110,6 +110,67 @@ function InboxRow({ item }: { item: InboxItem }) {
         background: "var(--surface)",
       }}
     >
+      {item.cover_photo_id != null ? (
+        <Hov
+          as="button"
+          onClick={() => openPiece(item.cover_photo_id as number)}
+          title="Open matched piece"
+          style={{
+            position: "relative",
+            flex: "none",
+            width: 76,
+            height: 76,
+            padding: 0,
+            overflow: "hidden",
+            border: "1px solid var(--line)",
+            borderRadius: 6,
+            background: "var(--surface-2)",
+            cursor: "zoom-in",
+          }}
+          hover={{ borderColor: "var(--accent)" }}
+        >
+          <OkfImage
+            src={getPhotoThumbnailUrl(item.cover_photo_id, 180)}
+            alt={title}
+            title={title}
+            artist={artist}
+            imgStyle={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+            matteStyle={{
+              width: "100%",
+              height: "100%",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: 8,
+              boxSizing: "border-box",
+              background: "var(--surface-2)",
+              color: "var(--graphite)",
+              textAlign: "center",
+              cursor: "zoom-in",
+            }}
+            matteTitleStyle={{ fontFamily: "var(--serif)", fontSize: 12, fontStyle: "italic", lineHeight: 1.1 }}
+            matteArtistStyle={{ display: "none" }}
+          />
+          <span
+            style={{
+              position: "absolute",
+              left: 6,
+              bottom: 6,
+              maxWidth: "calc(100% - 12px)",
+              padding: "3px 6px",
+              borderRadius: 99,
+              background: "rgba(18, 18, 18, 0.72)",
+              color: "#fff",
+              fontFamily: "var(--sans)",
+              fontSize: 10,
+              fontWeight: 600,
+              lineHeight: 1,
+              textTransform: "uppercase",
+            }}
+          >
+            Matches
+          </span>
+        </Hov>
+      ) : null}
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0, flexWrap: "wrap" }}>
           <div style={{ fontFamily: "var(--sans)", fontSize: 15, fontWeight: 500, color: "var(--ink)" }}>{title}</div>

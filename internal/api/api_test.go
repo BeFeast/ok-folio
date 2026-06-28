@@ -2062,14 +2062,26 @@ func TestHandleInboxReturnsOnlyExceptions(t *testing.T) {
 	server, db := setupTestServer(t)
 	defer safeShutdown(server)
 
+	contentHash := []byte("matched-content-hash")
+	winner := database.DownloadedPhoto{
+		URL:         "https://example.test/winner.jpg",
+		FileName:    "winner.jpg",
+		Status:      "downloaded",
+		ContentHash: contentHash,
+	}
+	if err := db.Create(&winner).Error; err != nil {
+		t.Fatalf("Failed to create winner photo: %v", err)
+	}
+
 	items := []database.InboxItem{
 		{
-			ProviderID: "telegram",
-			DedupeKey:  "telegram:source-1:media-1",
-			SourceID:   "source-1",
-			MediaID:    "media-1",
-			Status:     "duplicate",
-			Reason:     "dedupe key already kept",
+			ProviderID:  "telegram",
+			DedupeKey:   "telegram:source-1:media-1",
+			SourceID:    "source-1",
+			MediaID:     "media-1",
+			Status:      "duplicate",
+			Reason:      "dedupe key already kept",
+			ContentHash: contentHash,
 		},
 		{
 			ProviderID: "webgallery",
@@ -2114,6 +2126,12 @@ func TestHandleInboxReturnsOnlyExceptions(t *testing.T) {
 		if item.Status != "duplicate" && item.Status != "ambiguous" {
 			t.Fatalf("Inbox returned non-exception status: %#v", item)
 		}
+		if item.Status == "duplicate" && (item.CoverPhotoID == nil || *item.CoverPhotoID != winner.ID) {
+			t.Fatalf("Expected duplicate inbox item to expose cover photo id %d, got %#v", winner.ID, item)
+		}
+		if item.Status == "ambiguous" && item.CoverPhotoID != nil {
+			t.Fatalf("Expected ambiguous inbox item to expose null cover photo id, got %#v", item)
+		}
 	}
 }
 
@@ -2148,7 +2166,7 @@ func TestHandleInboxItemReturnsSnakeCaseJSON(t *testing.T) {
 	if err := json.NewDecoder(w.Body).Decode(&shape); err != nil {
 		t.Fatalf("Failed to decode inbox item response: %v", err)
 	}
-	for _, key := range []string{"id", "provider_id", "dedupe_key", "source_id", "media_id", "source_url", "title", "artist", "status", "reason", "created_at", "updated_at"} {
+	for _, key := range []string{"id", "provider_id", "dedupe_key", "source_id", "media_id", "source_url", "title", "artist", "status", "reason", "cover_photo_id", "created_at", "updated_at"} {
 		if _, ok := shape[key]; !ok {
 			t.Fatalf("Expected JSON key %q in response shape %#v", key, shape)
 		}
