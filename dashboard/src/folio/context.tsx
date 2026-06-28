@@ -17,11 +17,13 @@ import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-quer
 import { useNavigate } from "react-router-dom";
 import {
   addToFavorites,
+  createPiece,
   fetchGalleryCatalog,
   fetchStats,
   getPhotoImageUrl,
   getPhotoThumbnailUrl,
   removeFromFavorites,
+  type CreatePieceInput,
 } from "../api";
 import type { Photo } from "../types";
 import {
@@ -138,6 +140,17 @@ function mapPhoto(p: Photo): PieceVM {
 
 /* ---- context ---- */
 
+// A transient background-task notification (e.g. an Add-Piece import that runs
+// after the modal has already closed). Surfaced by the Toaster.
+export type ToastStatus = "loading" | "success" | "error";
+export interface Toast {
+  id: number;
+  status: ToastStatus;
+  title: string;
+  detail?: string;
+}
+let toastSeq = 0;
+
 interface FolioContextValue {
   theme: ThemeName;
   setTheme: (t: ThemeName) => void;
@@ -178,6 +191,10 @@ interface FolioContextValue {
 
   isFav: (id: number) => boolean;
   toggleFav: (id: number) => void;
+
+  importPiece: (input: CreatePieceInput) => void;
+  toasts: Toast[];
+  dismissToast: (id: number) => void;
 }
 
 const FolioContext = createContext<FolioContextValue | null>(null);
@@ -200,6 +217,7 @@ export function FolioProvider({ children }: { children: ReactNode }) {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [favOverride, setFavOverride] = useState<Record<number, boolean>>({});
+  const [toasts, setToasts] = useState<Toast[]>([]);
 
   // Theme: keep the document tokens in sync with state.
   useEffect(() => {
@@ -283,6 +301,49 @@ export function FolioProvider({ children }: { children: ReactNode }) {
     [isFav, queryClient],
   );
 
+  const dismissToast = useCallback((id: number) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+
+  // Fire-and-forget upload: the Add-Piece modal closes immediately and the
+  // import runs here (outside the modal's lifecycle), surfacing progress as a
+  // toast — a loading spinner that resolves to success/duplicate (auto-dismiss)
+  // or an error (stays until clicked).
+  const importPiece = useCallback(
+    (input: CreatePieceInput) => {
+      const id = ++toastSeq;
+      const label = input.title.trim() || input.file.name;
+      setToasts((prev) => [...prev, { id, status: "loading", title: "Adding piece", detail: label }]);
+      createPiece(input)
+        .then((res) => {
+          setToasts((prev) =>
+            prev.map((t) =>
+              t.id === id
+                ? { ...t, status: "success", title: res.duplicate ? "Already in your folio" : "Piece added", detail: label }
+                : t,
+            ),
+          );
+          window.setTimeout(() => {
+            setToasts((prev) => prev.filter((t) => t.id !== id));
+          }, 2800);
+          // Refresh the gallery + stats in the background; failures here must
+          // not flip the success toast, so they are deliberately swallowed.
+          void queryClient.invalidateQueries({ queryKey: ["folio-catalog"] });
+          void queryClient.invalidateQueries({ queryKey: ["folio-stats"] });
+        })
+        .catch((err: unknown) => {
+          setToasts((prev) =>
+            prev.map((t) =>
+              t.id === id
+                ? { ...t, status: "error", title: "Couldn’t add piece", detail: err instanceof Error ? err.message : label }
+                : t,
+            ),
+          );
+        });
+    },
+    [queryClient],
+  );
+
   const openPiece = useCallback((id: number) => setSelectedId(id), []);
   const closePiece = useCallback(() => setSelectedId(null), []);
   const filterByArtist = useCallback(
@@ -354,6 +415,9 @@ export function FolioProvider({ children }: { children: ReactNode }) {
     closeAdd: useCallback(() => setAddOpen(false), []),
     isFav,
     toggleFav,
+    importPiece,
+    toasts,
+    dismissToast,
   };
 
   return <FolioContext.Provider value={value}>{children}</FolioContext.Provider>;

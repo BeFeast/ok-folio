@@ -10,6 +10,7 @@ import Streams from "./folio/Streams";
 import Settings from "./folio/Settings";
 import PieceViewer from "./folio/PieceViewer";
 import AddPieceModal from "./folio/AddPieceModal";
+import Toaster from "./folio/Toaster";
 
 // Legacy operations surfaces — kept reachable by direct URL (not in the
 // primary navigation) so existing deep links and tooling still work.
@@ -79,6 +80,7 @@ function FolioShell() {
 
       <PieceViewer />
       <AddPieceModal />
+      <Toaster />
     </div>
   );
 }

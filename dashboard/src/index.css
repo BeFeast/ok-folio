@@ -108,6 +108,12 @@ img {
   }
 }
 
+@keyframes okf-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* Honor the Reduce-motion preference toggled in Settings. */
 :root[data-reduce-motion="1"] *,
 :root[data-reduce-motion="1"] *::before,
