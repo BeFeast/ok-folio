@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
 import { fetchInbox, fetchInboxCounts, getPhotoThumbnailUrl } from "../api";
 import type { InboxItem } from "../types";
 import { useFolio } from "./context";
@@ -91,7 +92,8 @@ function sourceURL(value: string): URL | null {
 }
 
 function InboxRow({ item }: { item: InboxItem }) {
-  const { dismissInboxAction, openPiece } = useFolio();
+  const navigate = useNavigate();
+  const { dismissInboxAction } = useFolio();
   const title = item.title.trim() || "Untitled piece";
   const artist = item.artist.trim() || "Unknown artist";
   const source = item.source_url.trim();
@@ -114,7 +116,7 @@ function InboxRow({ item }: { item: InboxItem }) {
       {coverPhotoId != null ? (
         <button
           type="button"
-          onClick={() => openPiece(coverPhotoId)}
+          onClick={() => navigate(`/pieces/${coverPhotoId}`)}
           aria-label={`Open matched piece: ${title}`}
           title="Open matched piece"
           style={{

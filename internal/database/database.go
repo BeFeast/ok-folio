@@ -826,17 +826,21 @@ func (db *DB) RecordInboxException(item *InboxItem) error {
 		return fmt.Errorf("provider ID is required")
 	}
 
+	updates := map[string]interface{}{
+		"source_id":  item.SourceID,
+		"media_id":   item.MediaID,
+		"source_url": item.SourceURL,
+		"title":      item.Title,
+		"artist":     item.Artist,
+		"reason":     item.Reason,
+	}
+	if len(item.ContentHash) > 0 {
+		updates["content_hash"] = item.ContentHash
+	}
+
 	return db.Clauses(clause.OnConflict{
-		Columns: []clause.Column{{Name: "fingerprint"}},
-		DoUpdates: clause.Assignments(map[string]interface{}{
-			"source_id":    item.SourceID,
-			"media_id":     item.MediaID,
-			"source_url":   item.SourceURL,
-			"title":        item.Title,
-			"artist":       item.Artist,
-			"reason":       item.Reason,
-			"content_hash": item.ContentHash,
-		}),
+		Columns:   []clause.Column{{Name: "fingerprint"}},
+		DoUpdates: clause.Assignments(updates),
 	}).Create(item).Error
 }
 
