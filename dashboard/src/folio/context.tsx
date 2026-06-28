@@ -51,6 +51,7 @@ export interface PieceVM {
   med: string; // medium (empty when unknown)
   kind: string; // eyebrow kind label
   note: string; // personal note (empty when none)
+  keywords: string[];
   folio: string; // suggested/assigned folio (empty when none)
   img: string;
   thumb: string;
@@ -134,6 +135,7 @@ export function mapPhoto(p: Photo): PieceVM {
     med: "",
     kind: "",
     note: (p.Notes || "").trim(),
+    keywords: Array.isArray(p.keywords) ? p.keywords.map((keyword) => keyword.trim()).filter(Boolean) : [],
     folio: "",
     img: getPhotoImageUrl(p.ID),
     thumb: getPhotoThumbnailUrl(p.ID, 400),

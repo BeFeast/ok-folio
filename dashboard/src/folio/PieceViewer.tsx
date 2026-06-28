@@ -29,6 +29,18 @@ const ROW_VAL: CSSProperties = {
   fontSize: 14,
   color: "#FBF6EE",
 };
+const KEYWORD_CHIP: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  minHeight: 24,
+  padding: "3px 9px",
+  borderRadius: 999,
+  border: "1px solid rgba(251,246,238,0.16)",
+  background: "rgba(251,246,238,0.07)",
+  fontFamily: "var(--sans)",
+  fontSize: 12,
+  color: "rgba(251,246,238,0.78)",
+};
 const META_KEY: CSSProperties = { fontFamily: "var(--sans)", fontSize: 11, color: "rgba(251,246,238,0.52)" };
 const META_VAL: CSSProperties = { fontFamily: "var(--sans)", fontSize: 13, color: "rgba(251,246,238,0.78)", marginTop: 2 };
 
@@ -301,6 +313,15 @@ export default function PieceViewer() {
 
         <div style={{ height: 1, background: "rgba(251,246,238,0.12)", margin: "24px 0 18px" }} />
         <div style={{ ...LABEL, marginBottom: 6 }}>Museum label</div>
+        {p.keywords.length ? (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 7, margin: "0 0 10px" }}>
+            {p.keywords.map((keyword) => (
+              <span key={keyword} style={KEYWORD_CHIP}>
+                {keyword}
+              </span>
+            ))}
+          </div>
+        ) : null}
 
         <div style={ROW}>
           <div style={ROW_KEY}>Source</div>

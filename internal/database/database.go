@@ -2,6 +2,8 @@ package database
 
 import (
 	"crypto/sha256"
+	"database/sql/driver"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -12,6 +14,7 @@ import (
 	"ok-folio/internal/testguard"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/lib/pq"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -31,6 +34,7 @@ const (
 	URLHashUniqueIndex     = "idx_downloaded_photos_url_hash"
 	ContentHashUniqueIndex = "idx_downloaded_photos_content_hash_unique"
 	CatalogSortIndex       = "idx_downloaded_photos_catalog_sort"
+	KeywordsGINIndex       = "idx_downloaded_photos_keywords"
 
 	downloadedStatusPredicate = "status = 'downloaded'"
 )
@@ -58,7 +62,7 @@ type DownloadedPhoto struct {
 	SourcePage string `gorm:"type:text"`
 	Title      string `gorm:"type:text;index"`
 	// Artist carries its own single-column index plus position 2 of the
-	// (downloaded_at, artist) composite. Values are preserved byte-for-byte.
+	// (downloaded_at, artist) composite. Whitespace is normalized on write.
 	Artist      string     `gorm:"type:text;index;index:idx_downloaded_photos_downloaded_at_artist,priority:2"`
 	UploadDate  *time.Time `gorm:"index"`
 	FilePath    string     `gorm:"type:text;default:''"`
@@ -70,7 +74,8 @@ type DownloadedPhoto struct {
 	// index is intentionally dropped.
 	DownloadedAt *time.Time `gorm:"autoCreateTime;index:idx_downloaded_photos_downloaded_at_artist,priority:1"`
 	FileSize     int64
-	Notes        string `gorm:"type:text"`
+	Notes        string   `gorm:"type:text"`
+	Keywords     Keywords `gorm:"type:text[]" json:"keywords"`
 	// Favorite is OK Folio-owned and never written by the ETL.
 	Favorite bool `gorm:"not null;default:false;index"`
 	// Provider is set on INSERT only; it is text, NOT a Postgres ENUM.
@@ -87,6 +92,40 @@ type DownloadedPhoto struct {
 	PerceptualHash int64  `gorm:"index"`
 	Status         string `gorm:"type:text;index;default:'downloaded'"` // downloaded, failed, deleted, pending (transient)
 	ErrorMessage   string `gorm:"type:text"`                            // Error message if status is 'failed'
+}
+
+type Keywords []string
+
+func (k Keywords) Value() (driver.Value, error) {
+	if k == nil {
+		return pq.StringArray{}.Value()
+	}
+	return pq.StringArray(k).Value()
+}
+
+func (k *Keywords) Scan(value any) error {
+	var items pq.StringArray
+	if err := items.Scan(value); err != nil {
+		return err
+	}
+	*k = Keywords(items)
+	return nil
+}
+
+func (k Keywords) MarshalJSON() ([]byte, error) {
+	if k == nil {
+		return []byte("[]"), nil
+	}
+	return json.Marshal([]string(k))
+}
+
+func (k *Keywords) UnmarshalJSON(data []byte) error {
+	var items []string
+	if err := json.Unmarshal(data, &items); err != nil {
+		return err
+	}
+	*k = Keywords(items)
+	return nil
 }
 
 // InboxItem is an ingestion exception that needs an operator decision.
@@ -233,9 +272,19 @@ func HashURL(rawURL string) []byte {
 // duplicates slip the unique guard, so this must be the only place it is set.
 func (p *DownloadedPhoto) BeforeSave(tx *gorm.DB) error {
 	p.URLHash = HashURL(p.URL)
+	if p.Artist != "" {
+		p.Artist = strings.Join(strings.Fields(p.Artist), " ")
+	}
 	p.Category = resolveCategory(p)
 	if p.Provider == "" {
 		p.Provider = DefaultProvider
+	}
+	return nil
+}
+
+func (p *DownloadedPhoto) AfterFind(tx *gorm.DB) error {
+	if p.Keywords == nil {
+		p.Keywords = Keywords{}
 	}
 	return nil
 }
@@ -438,6 +487,7 @@ func postMigratePostgres(db *gorm.DB) error {
 		`DROP INDEX IF EXISTS idx_downloaded_photos_source_page`,
 		`CREATE INDEX IF NOT EXISTS idx_downloaded_photos_source_page_hash ON downloaded_photos USING hash (source_page)`,
 		`CREATE INDEX IF NOT EXISTS idx_downloaded_photos_catalog_sort ON downloaded_photos ((COALESCE(downloaded_at, upload_date)) DESC NULLS LAST, id DESC) WHERE status = 'downloaded'`,
+		`CREATE INDEX IF NOT EXISTS ` + KeywordsGINIndex + ` ON downloaded_photos USING gin (keywords)`,
 	}
 	for _, stmt := range indexStmts {
 		if err := db.Exec(stmt).Error; err != nil {
@@ -1348,7 +1398,7 @@ func (db *DB) ResetPhotoStatus(photoID uint64) error {
 		Update("status", "pending").Error
 }
 
-// SearchPhotos searches photos by title, artist, or filename
+// SearchPhotos searches photos by title, artist, filename, or keyword.
 func (db *DB) SearchPhotos(query string, limit int, offset int) ([]DownloadedPhoto, int64, error) {
 	var photos []DownloadedPhoto
 	var total int64
@@ -1357,9 +1407,16 @@ func (db *DB) SearchPhotos(query string, limit int, offset int) ([]DownloadedPho
 
 	// Get total count. Search is case-insensitive (ILIKE on Postgres).
 	op := db.caseInsensitiveLike()
+	keywordsExpr := db.keywordsSearchExpr()
 	countQuery := db.DB.Model(&DownloadedPhoto{}).
 		Where("status = ?", "downloaded").
-		Where("title "+op+" ? OR artist "+op+" ? OR file_name "+op+" ?", searchPattern, searchPattern, searchPattern)
+		Where(
+			"title "+op+" ? OR artist "+op+" ? OR file_name "+op+" ? OR "+keywordsExpr+" "+op+" ?",
+			searchPattern,
+			searchPattern,
+			searchPattern,
+			searchPattern,
+		)
 
 	if err := countQuery.Count(&total).Error; err != nil {
 		return nil, 0, err
@@ -1724,9 +1781,11 @@ func (db *DB) applyGalleryCatalogFilters(query *gorm.DB, filters GalleryCatalogF
 		// text-search index, so LIKE over either URL-shaped field would force a
 		// full text scan on the real catalog.
 		op := db.caseInsensitiveLike()
+		keywordsExpr := db.keywordsSearchExpr()
 		searchPattern := "%" + escapeSQLLike(filters.Query) + "%"
 		query = query.Where(
-			"title "+op+" ? ESCAPE '\\' OR artist "+op+" ? ESCAPE '\\' OR file_name "+op+" ? ESCAPE '\\'",
+			"title "+op+" ? ESCAPE '\\' OR artist "+op+" ? ESCAPE '\\' OR file_name "+op+" ? ESCAPE '\\' OR "+keywordsExpr+" "+op+" ? ESCAPE '\\'",
+			searchPattern,
 			searchPattern,
 			searchPattern,
 			searchPattern,
@@ -1743,6 +1802,13 @@ func (db *DB) caseInsensitiveLike() string {
 		return "ILIKE"
 	}
 	return "LIKE"
+}
+
+func (db *DB) keywordsSearchExpr() string {
+	if db.Dialector.Name() == "postgres" {
+		return "array_to_string(keywords, ' ')"
+	}
+	return "COALESCE(keywords, '')"
 }
 
 func escapeSQLLike(value string) string {

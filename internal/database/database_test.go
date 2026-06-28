@@ -224,10 +224,34 @@ func TestGalleryCatalogQueryExcludesURLShapedTextColumns(t *testing.T) {
 			t.Fatalf("Expected gallery free-text SQL to avoid %q, got %s", forbidden, sql)
 		}
 	}
-	for _, required := range []string{"title like", "artist like", "file_name like"} {
+	for _, required := range []string{"title like", "artist like", "file_name like", "keywords"} {
 		if !strings.Contains(sql, required) {
 			t.Fatalf("Expected gallery free-text SQL to include %q, got %s", required, sql)
 		}
+	}
+}
+
+func TestSearchPhotosMatchesKeywords(t *testing.T) {
+	db := setupTestDB(t)
+
+	photo := &DownloadedPhoto{
+		URL:      "https://example.com/keyword.jpg",
+		Title:    "No textual match",
+		Artist:   "Keyword Artist",
+		FileName: "keyword.jpg",
+		Keywords: Keywords{"gansovsky", "gold"},
+		Status:   "downloaded",
+	}
+	if err := db.Create(photo).Error; err != nil {
+		t.Fatalf("Failed to create photo: %v", err)
+	}
+
+	results, total, err := db.SearchPhotos("gansovsky", 10, 0)
+	if err != nil {
+		t.Fatalf("SearchPhotos failed: %v", err)
+	}
+	if total != 1 || len(results) != 1 || results[0].ID != photo.ID {
+		t.Fatalf("Expected keyword search to find photo, total=%d results=%#v", total, results)
 	}
 }
 
@@ -253,6 +277,71 @@ func TestBeforeSaveHookPopulatesURLHash(t *testing.T) {
 	}
 	if stored.ID != photo.ID {
 		t.Fatalf("Expected url_hash lookup to return the inserted row")
+	}
+}
+
+func TestBeforeSaveHookNormalizesArtistWhitespace(t *testing.T) {
+	db := setupTestDB(t)
+
+	tests := []struct {
+		name   string
+		artist string
+		want   string
+	}{
+		{name: "bucket handle", artist: "  _NonPS ", want: "_NonPS"},
+		{name: "internal whitespace", artist: "Влад  Троянский", want: "Влад Троянский"},
+		{name: "empty", artist: "", want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			photo := &DownloadedPhoto{
+				URL:      "https://example.com/" + tt.name + ".jpg",
+				Artist:   tt.artist,
+				FileName: tt.name + ".jpg",
+				Status:   "downloaded",
+			}
+			if err := db.Create(photo).Error; err != nil {
+				t.Fatalf("Failed to create photo: %v", err)
+			}
+
+			stored, err := db.GetPhotoByID(photo.ID)
+			if err != nil {
+				t.Fatalf("Failed to fetch photo: %v", err)
+			}
+			if stored.Artist != tt.want {
+				t.Fatalf("Expected artist %q, got %q", tt.want, stored.Artist)
+			}
+		})
+	}
+}
+
+func TestSetPhotoFavoriteDoesNotBlankArtist(t *testing.T) {
+	db := setupTestDB(t)
+
+	photo := &DownloadedPhoto{
+		URL:      "https://example.com/favorite-artist.jpg",
+		Artist:   "  _NonPS ",
+		FileName: "favorite-artist.jpg",
+		Status:   "downloaded",
+	}
+	if err := db.Create(photo).Error; err != nil {
+		t.Fatalf("Failed to create photo: %v", err)
+	}
+
+	if err := db.SetPhotoFavorite(photo.ID, true); err != nil {
+		t.Fatalf("SetPhotoFavorite failed: %v", err)
+	}
+
+	stored, err := db.GetPhotoByID(photo.ID)
+	if err != nil {
+		t.Fatalf("Failed to fetch photo: %v", err)
+	}
+	if stored.Artist != "_NonPS" {
+		t.Fatalf("Expected favorite update to preserve artist, got %q", stored.Artist)
+	}
+	if !stored.Favorite {
+		t.Fatalf("Expected favorite to be true")
 	}
 }
 

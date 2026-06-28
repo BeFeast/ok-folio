@@ -224,6 +224,7 @@ func (s *Server) handlePhotoDetail(w http.ResponseWriter, r *http.Request) {
 		"category":      categoryDisplayName(galleryCategoryIDFromSourcePage(photo.SourcePage)),
 		"title":         photo.Title,
 		"artist":        photo.Artist,
+		"keywords":      photo.Keywords,
 		"upload_date":   photo.UploadDate,
 		"file_path":     photo.FilePath,
 		"file_name":     photo.FileName,

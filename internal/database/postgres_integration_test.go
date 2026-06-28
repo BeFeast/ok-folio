@@ -94,6 +94,9 @@ func TestPostgresMigrateSchemaAndIdempotency(t *testing.T) {
 	if !indexExists(db, CatalogSortIndex) {
 		t.Fatalf("expected catalog sort index %s", CatalogSortIndex)
 	}
+	if !indexExists(db, KeywordsGINIndex) {
+		t.Fatalf("expected keywords GIN index %s", KeywordsGINIndex)
+	}
 
 	// The raw url carries no btree (uniqueness lives on url_hash).
 	if urlHasBtree(db) {
