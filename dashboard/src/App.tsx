@@ -12,6 +12,7 @@ import Settings from "./folio/Settings";
 import PieceViewer from "./folio/PieceViewer";
 import AddPieceModal from "./folio/AddPieceModal";
 import Toaster from "./folio/Toaster";
+import { useViewport } from "./folio/useViewport";
 
 // Legacy operations surfaces — kept reachable by direct URL (not in the
 // primary navigation) so existing deep links and tooling still work.
@@ -37,10 +38,12 @@ const queryClient = new QueryClient({
 });
 
 function FolioShell() {
+  const { isMobile } = useViewport();
+
   return (
     <div
       style={{
-        minHeight: "100vh",
+        minHeight: "100dvh",
         background: "var(--bg)",
         color: "var(--ink)",
         fontFamily: "var(--sans)",
@@ -49,7 +52,15 @@ function FolioShell() {
       }}
     >
       <Nav />
-      <main style={{ maxWidth: 1340, margin: "0 auto", padding: "0 30px 110px" }}>
+      <main
+        style={{
+          maxWidth: 1340,
+          margin: "0 auto",
+          padding: isMobile
+            ? "0 calc(20px + var(--safe-right)) calc(var(--mobile-tab-height) + var(--safe-bottom) + 34px) calc(20px + var(--safe-left))"
+            : "0 30px 110px",
+        }}
+      >
         <Routes>
           <Route path="/" element={<Gallery />} />
           <Route path="/folios" element={<Folios />} />
