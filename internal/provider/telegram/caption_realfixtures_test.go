@@ -20,6 +20,10 @@ func TestParseArtworkCaptionRealFixtures(t *testing.T) {
 		{"sentence-title+single-year", "Да здравствует Франция!\n\nОмар Ортис (Omar Ortiz, 1977)\n\nСекретный контент 🔞", "Да здравствует Франция!", "Омар Ортис (Omar Ortiz, 1977)", "", 0},
 		{"dash-title+linen-medium", "-\n\nлён, масло\n\nСтивен Карнелиус Робертс (США, р. 1952)\n\nСекретный контент 🔞", "", "Стивен Карнелиус Робертс (США, р. 1952)", "лён, масло", 0},
 		{"medium+born-only", "\"Обнажённая\"\n\nхолст, масло\n\nДжонни Идальго (Перу, р. 1970)\n\nСекретный контент 🔞", "Обнажённая", "Джонни Идальго (Перу, р. 1970)", "холст, масло", 0},
+		{"english-medium-artist-born", "⚡️ Pastel. Spanish artist Vicente Romero Redondo (b. 1956)", "", "Vicente Romero Redondo (Spanish, b. 1956)", "Pastel", 0},
+		{"english-oil-no-space", "⚡️Oil. British artist Tina Spratt (b. 1976)", "", "Tina Spratt (British, b. 1976)", "Oil", 0},
+		{"artist-prefix+emoji-title", "⚡️ Brunette\nхудожник: Лео Янсен (1930 — 1980)", "Brunette", "Лео Янсен (1930 — 1980)", "", 0},
+		{"emoji-trailing-title", "Горячие альтушки 🔥\nДжереми Липкинг (США, р. 1975)", "Горячие альтушки", "Джереми Липкинг (США, р. 1975)", "", 0},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
