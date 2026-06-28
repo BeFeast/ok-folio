@@ -20,6 +20,7 @@ func TestNormalizeTitleDropsJunk(t *testing.T) {
 		{name: "compact uuid", raw: "550e8400e29b41d4a716446655440000", want: ""},
 		{name: "source filename", raw: "piece.jpg", sources: []string{"piece.jpg"}, want: ""},
 		{name: "source filename without extension", raw: "piece", sources: []string{"/downloads/piece.jpg"}, want: ""},
+		{name: "windows source filename without extension", raw: "piece", sources: []string{`C:\downloads\piece.jpg`}, want: ""},
 		{name: "keeps real title", raw: "  Portrait in Blue  ", sources: []string{"portrait.jpg"}, want: "Portrait in Blue"},
 	}
 

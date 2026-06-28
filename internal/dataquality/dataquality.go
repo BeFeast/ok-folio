@@ -87,7 +87,8 @@ func sourceMatchesTitle(titleKey string, sourceName string) bool {
 }
 
 func comparableName(s string) string {
-	base := filepath.Base(strings.TrimSpace(s))
+	normalized := strings.ReplaceAll(strings.TrimSpace(s), `\`, `/`)
+	base := filepath.Base(normalized)
 	base = strings.TrimSpace(base)
 	if base == "." || base == string(filepath.Separator) {
 		return ""
