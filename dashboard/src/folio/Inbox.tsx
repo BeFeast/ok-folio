@@ -1,20 +1,266 @@
-import { PageHeader } from "./ui";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { fetchInbox, fetchInboxCounts } from "../api";
+import type { InboxItem } from "../types";
+import { useFolio } from "./context";
+import { Hov, PageHeader } from "./ui";
+
+const PAGE_SIZE = 50;
+
+type InboxStatus = "" | InboxItem["status"];
+
+const STATUSES: { key: InboxStatus; label: string }[] = [
+  { key: "", label: "All" },
+  { key: "duplicate", label: "Duplicate" },
+  { key: "ambiguous", label: "Ambiguous" },
+];
+
+function StatusTabs({
+  status,
+  setStatus,
+  counts,
+}: {
+  status: InboxStatus;
+  setStatus: (status: InboxStatus) => void;
+  counts?: { duplicate: number; ambiguous: number };
+}) {
+  const countFor = (key: InboxStatus) => {
+    if (!counts) return undefined;
+    if (key === "duplicate") return counts.duplicate;
+    if (key === "ambiguous") return counts.ambiguous;
+    return counts.duplicate + counts.ambiguous;
+  };
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 3,
+        padding: 4,
+        border: "1px solid var(--line)",
+        borderRadius: 99,
+        background: "var(--surface)",
+      }}
+    >
+      {STATUSES.map((s) => {
+        const active = status === s.key;
+        const count = countFor(s.key);
+        return (
+          <button
+            key={s.key || "all"}
+            onClick={() => setStatus(s.key)}
+            style={{
+              appearance: "none",
+              cursor: "pointer",
+              fontFamily: "var(--sans)",
+              fontSize: 13.5,
+              letterSpacing: "0.1px",
+              padding: "8px 14px",
+              border: 0,
+              borderRadius: 99,
+              color: active ? "var(--ink)" : "var(--graphite)",
+              background: active ? "var(--surface-2)" : "transparent",
+              boxShadow: active ? "0 1px 4px var(--shadow)" : "none",
+            }}
+          >
+            {s.label}
+            {count !== undefined ? (
+              <span style={{ color: active ? "var(--graphite)" : "var(--muted)", marginLeft: 6 }}>{count}</span>
+            ) : null}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function statusLabel(status: InboxItem["status"]): string {
+  return status === "duplicate" ? "Duplicate" : "Ambiguous";
+}
+
+function sourceHost(value: string): string {
+  if (!value) return "";
+  try {
+    return new URL(value).hostname.replace(/^www\./, "");
+  } catch {
+    return value;
+  }
+}
+
+function InboxRow({ item }: { item: InboxItem }) {
+  const { dismissInboxAction } = useFolio();
+  const title = item.title.trim() || "Untitled piece";
+  const artist = item.artist.trim() || "Unknown artist";
+  const source = sourceHost(item.source_url);
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 20,
+        padding: "18px 22px",
+        border: "1px solid var(--line)",
+        borderRadius: 6,
+        background: "var(--surface)",
+      }}
+    >
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0, flexWrap: "wrap" }}>
+          <div style={{ fontFamily: "var(--sans)", fontSize: 15, fontWeight: 500, color: "var(--ink)" }}>{title}</div>
+          <span
+            style={{
+              flex: "none",
+              fontFamily: "var(--sans)",
+              fontSize: 11,
+              fontWeight: 600,
+              letterSpacing: "0.08em",
+              textTransform: "uppercase",
+              color: "var(--graphite)",
+              border: "1px solid var(--line)",
+              borderRadius: 99,
+              padding: "4px 8px",
+              background: "var(--surface-2)",
+            }}
+          >
+            {statusLabel(item.status)}
+          </span>
+        </div>
+        <div style={{ fontFamily: "var(--sans)", fontSize: 12.5, color: "var(--muted)", marginTop: 4 }}>{artist}</div>
+        <div style={{ fontFamily: "var(--sans)", fontSize: 13, color: "var(--graphite)", lineHeight: 1.5, marginTop: 12 }}>
+          {item.reason || "No reason provided."}
+        </div>
+        {item.source_url ? (
+          <Hov
+            as="a"
+            href={item.source_url}
+            target="_blank"
+            rel="noreferrer"
+            style={{
+              display: "inline-flex",
+              marginTop: 10,
+              fontFamily: "var(--sans)",
+              fontSize: 12.5,
+              color: "var(--muted)",
+              textDecoration: "none",
+            }}
+            hover={{ color: "var(--ink)" }}
+          >
+            {source || "Open source"}
+          </Hov>
+        ) : null}
+      </div>
+      <Hov
+        as="button"
+        onClick={() => dismissInboxAction(item.id)}
+        style={{
+          flex: "none",
+          appearance: "none",
+          cursor: "pointer",
+          fontFamily: "var(--sans)",
+          fontSize: 13,
+          fontWeight: 500,
+          padding: "10px 14px",
+          borderRadius: 99,
+          border: "1px solid var(--line)",
+          background: "transparent",
+          color: "var(--graphite)",
+        }}
+        hover={{ color: "var(--ink)", borderColor: "var(--accent)" }}
+      >
+        Dismiss
+      </Hov>
+    </div>
+  );
+}
+
+function LoadMoreSentinel({
+  hasMore,
+  loadingMore,
+  loadMore,
+}: {
+  hasMore: boolean;
+  loadingMore: boolean;
+  loadMore: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || !hasMore) return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) loadMore();
+      },
+      { rootMargin: "600px" },
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [hasMore, loadMore]);
+  if (!hasMore && !loadingMore) return null;
+  return (
+    <div
+      ref={ref}
+      style={{ padding: "44px 0 12px", textAlign: "center", fontFamily: "var(--sans)", fontSize: 12.5, letterSpacing: "0.04em", color: "var(--faint)" }}
+    >
+      {loadingMore ? "Loading more…" : ""}
+    </div>
+  );
+}
 
 export default function Inbox() {
+  const [status, setStatus] = useState<InboxStatus>("");
+  const counts = useQuery({ queryKey: ["inbox-counts"], queryFn: fetchInboxCounts });
+  const inbox = useInfiniteQuery({
+    queryKey: ["inbox", status],
+    queryFn: ({ pageParam }) => fetchInbox(status, PAGE_SIZE, pageParam as number),
+    initialPageParam: 0,
+    getNextPageParam: (lastPage, allPages) => {
+      const loaded = allPages.reduce((n, pg) => n + pg.items.length, 0);
+      return loaded < lastPage.total ? loaded : undefined;
+    },
+  });
+  const items = useMemo(() => inbox.data?.pages.flatMap((page) => page.items) ?? [], [inbox.data]);
+  const total = inbox.data?.pages[0]?.total ?? counts.data?.total ?? 0;
+
   return (
     <div>
       <PageHeader
         eyebrow="Inbox"
         title="To review"
-        subcopy="New pieces gathered from your streams. Review at your pace — nothing is urgent."
+        subcopy={inbox.isLoading ? "Gathering exceptions…" : `${total.toLocaleString()} exceptions waiting for review.`}
+        action={<StatusTabs status={status} setStatus={setStatus} counts={counts.data?.counts} />}
       />
-      <section style={{ maxWidth: 880, padding: "18px 0 0" }}>
-        <div style={{ textAlign: "center", padding: "90px 0", color: "var(--muted)" }}>
-          <div style={{ fontFamily: "var(--serif)", fontStyle: "italic", fontSize: 24, color: "var(--graphite)" }}>All caught up.</div>
-          <div style={{ fontFamily: "var(--sans)", fontSize: 14, marginTop: 10 }}>
-            Nothing waiting. Pieces will appear here as your streams gather them.
+      <section style={{ maxWidth: 920, padding: "34px 0 0", display: "flex", flexDirection: "column", gap: 12 }}>
+        {inbox.isError ? (
+          <div style={{ padding: "60px 0", fontFamily: "var(--serif)", fontStyle: "italic", fontSize: 20, color: "var(--graphite)" }}>
+            The inbox could not be reached.
           </div>
-        </div>
+        ) : inbox.isLoading ? (
+          <div style={{ padding: "60px 0", fontFamily: "var(--sans)", fontSize: 14, color: "var(--muted)" }}>Loading inbox…</div>
+        ) : items.length === 0 ? (
+          <div style={{ textAlign: "center", padding: "90px 0", color: "var(--muted)" }}>
+            <div style={{ fontFamily: "var(--serif)", fontStyle: "italic", fontSize: 24, color: "var(--graphite)" }}>All caught up.</div>
+            <div style={{ fontFamily: "var(--sans)", fontSize: 14, marginTop: 10 }}>
+              Nothing waiting. Pieces will appear here as your streams gather them.
+            </div>
+          </div>
+        ) : (
+          <>
+            {items.map((item) => (
+              <InboxRow key={item.id} item={item} />
+            ))}
+            <LoadMoreSentinel
+              hasMore={!!inbox.hasNextPage}
+              loadingMore={inbox.isFetchingNextPage}
+              loadMore={() => {
+                if (inbox.hasNextPage && !inbox.isFetchingNextPage) {
+                  void inbox.fetchNextPage();
+                }
+              }}
+            />
+          </>
+        )}
       </section>
     </div>
   );
