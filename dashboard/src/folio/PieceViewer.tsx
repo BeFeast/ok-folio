@@ -50,28 +50,46 @@ export default function PieceViewer() {
     return () => window.removeEventListener("keydown", onKey);
   }, [selected, closePiece, stepPiece]);
 
-  // The info panel auto-hides a moment after opening / last interaction so the
-  // artwork can be viewed unobstructed; it reappears on mouse movement and stays
-  // while the cursor is over the panel.
-  const [chromeShown, setChromeShown] = useState(true);
-  const hideTimer = useRef<number | null>(null);
+  // The info panel is a collapsible drawer. It opens with the piece, auto-tucks
+  // a few seconds after opening / on idle so the artwork shows unobstructed, and
+  // reappears on mouse movement. The edge handle gives explicit manual control;
+  // once the user toggles it, auto-hide stops fighting their choice.
+  const [panelOpen, setPanelOpen] = useState(true);
+  const idleTimer = useRef<number | null>(null);
   const overPanel = useRef(false);
+  const userControlled = useRef(false);
 
-  const revealChrome = useCallback(() => {
-    setChromeShown(true);
-    if (hideTimer.current) window.clearTimeout(hideTimer.current);
-    hideTimer.current = window.setTimeout(() => {
-      if (!overPanel.current) setChromeShown(false);
-    }, 2600);
+  const togglePanel = useCallback(() => {
+    userControlled.current = true;
+    if (idleTimer.current) window.clearTimeout(idleTimer.current);
+    setPanelOpen((open) => !open);
   }, []);
 
+  // Tuck the panel away after `delay`, unless the user has taken manual control
+  // or is currently hovering the panel (i.e. reading it).
+  const scheduleTuck = useCallback((delay: number) => {
+    if (idleTimer.current) window.clearTimeout(idleTimer.current);
+    idleTimer.current = window.setTimeout(() => {
+      if (!userControlled.current && !overPanel.current) setPanelOpen(false);
+    }, delay);
+  }, []);
+
+  // Key the effect on the piece id (a primitive), NOT the `selected` object —
+  // its identity changes on every context re-render, and that churn (re-running
+  // the effect, resetting the timer) is what made the previous version fire
+  // erratically. On each new piece: open, then auto-tuck once. After that the
+  // edge handle drives it — no global listeners, no flicker.
+  const pieceId = selected?.id ?? null;
   useEffect(() => {
-    if (!selected) return;
-    revealChrome();
+    if (pieceId == null) return;
+    userControlled.current = false;
+    overPanel.current = false;
+    setPanelOpen(true);
+    scheduleTuck(3000);
     return () => {
-      if (hideTimer.current) window.clearTimeout(hideTimer.current);
+      if (idleTimer.current) window.clearTimeout(idleTimer.current);
     };
-  }, [selected, revealChrome]);
+  }, [pieceId, scheduleTuck]);
 
   if (!selected) return null;
   const p = selected;
@@ -82,7 +100,6 @@ export default function PieceViewer() {
   return (
     <div
       onClick={closePiece}
-      onMouseMove={revealChrome}
       style={{
         position: "fixed",
         inset: 0,
@@ -183,7 +200,7 @@ export default function PieceViewer() {
         aria-label="Next"
         style={{
           position: "absolute",
-          right: chromeShown ? "calc(min(416px, 92vw) + 18px)" : 24,
+          right: panelOpen ? "calc(min(416px, 92vw) + 18px)" : 24,
           top: "50%",
           transform: "translateY(-50%)",
           transition: "right .35s ease",
@@ -222,16 +239,47 @@ export default function PieceViewer() {
         {selIndex >= 0 ? `${selIndex + 1} / ${selCount}` : ""}
       </div>
 
+      <button
+        onClick={(e) => {
+          stop(e);
+          togglePanel();
+        }}
+        aria-label={panelOpen ? "Hide details" : "Show details"}
+        title={panelOpen ? "Hide details" : "Show details"}
+        style={{
+          position: "absolute",
+          top: 70,
+          right: panelOpen ? "calc(min(416px, 92vw) - 19px)" : 16,
+          transition: "right .35s ease",
+          zIndex: 9,
+          appearance: "none",
+          cursor: "pointer",
+          width: 38,
+          height: 38,
+          borderRadius: 99,
+          border: "1px solid rgba(251,246,238,0.22)",
+          background: "rgba(16,12,9,0.72)",
+          backdropFilter: "blur(10px)",
+          WebkitBackdropFilter: "blur(10px)",
+          color: "#FBF6EE",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          boxShadow: "0 6px 20px rgba(0,0,0,0.4)",
+        }}
+      >
+        <ChevronIcon dir={panelOpen ? "right" : "left"} />
+      </button>
+
       <div
         onClick={stop}
         onMouseEnter={() => {
           overPanel.current = true;
-          if (hideTimer.current) window.clearTimeout(hideTimer.current);
-          setChromeShown(true);
+          if (idleTimer.current) window.clearTimeout(idleTimer.current);
         }}
         onMouseLeave={() => {
           overPanel.current = false;
-          revealChrome();
+          if (!userControlled.current) scheduleTuck(1200);
         }}
         style={{
           position: "absolute",
@@ -247,10 +295,10 @@ export default function PieceViewer() {
           WebkitBackdropFilter: "blur(24px)",
           borderLeft: "1px solid rgba(251,246,238,0.12)",
           boxShadow: "-30px 0 80px rgba(0,0,0,0.4)",
-          opacity: chromeShown ? 1 : 0,
-          transform: chromeShown ? "translateX(0)" : "translateX(100%)",
+          opacity: panelOpen ? 1 : 0,
+          transform: panelOpen ? "translateX(0)" : "translateX(100%)",
           transition: "opacity .35s ease, transform .35s ease",
-          pointerEvents: chromeShown ? "auto" : "none",
+          pointerEvents: panelOpen ? "auto" : "none",
         }}
       >
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, paddingRight: 44 }}>
