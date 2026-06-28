@@ -217,7 +217,10 @@ export default function Nav() {
               </div>
               <Hov
                 as="button"
-                onClick={() => setMobileSearchOpen(false)}
+                onClick={() => {
+                  setQuery("");
+                  setMobileSearchOpen(false);
+                }}
                 style={{
                   appearance: "none",
                   border: 0,

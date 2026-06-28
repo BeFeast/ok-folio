@@ -8,6 +8,16 @@ interface ViewportState {
   isTablet: boolean;
 }
 
+function addQueryListener(query: MediaQueryList, update: () => void): () => void {
+  if (typeof query.addEventListener === "function") {
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }
+
+  query.addListener(update);
+  return () => query.removeListener(update);
+}
+
 function getViewportState(): ViewportState {
   if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
     return { isMobile: false, isTablet: false };
@@ -31,11 +41,11 @@ export function useViewport(): ViewportState {
     const update = () => setViewport({ isMobile: mobile.matches, isTablet: tablet.matches });
 
     update();
-    mobile.addEventListener("change", update);
-    tablet.addEventListener("change", update);
+    const removeMobileListener = addQueryListener(mobile, update);
+    const removeTabletListener = addQueryListener(tablet, update);
     return () => {
-      mobile.removeEventListener("change", update);
-      tablet.removeEventListener("change", update);
+      removeMobileListener();
+      removeTabletListener();
     };
   }, []);
 
