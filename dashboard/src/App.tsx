@@ -11,6 +11,7 @@ import Streams from "./folio/Streams";
 import Settings from "./folio/Settings";
 import PieceViewer from "./folio/PieceViewer";
 import AddPieceModal from "./folio/AddPieceModal";
+import OfflineBanner from "./folio/OfflineBanner";
 import Toaster from "./folio/Toaster";
 import { useViewport } from "./folio/useViewport";
 
@@ -52,6 +53,7 @@ function FolioShell() {
       }}
     >
       <Nav />
+      <OfflineBanner />
       <main
         style={{
           maxWidth: 1340,
