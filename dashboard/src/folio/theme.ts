@@ -6,8 +6,8 @@
 export type ThemeName = "light" | "dark";
 
 export const SANS =
-  "'Instrument Sans', system-ui, -apple-system, 'Segoe UI', sans-serif";
-export const SERIF = "'Newsreader', Georgia, 'Times New Roman', serif";
+  "'Hanken Grotesk', system-ui, -apple-system, 'Segoe UI', sans-serif";
+export const SERIF = "'Spectral', Georgia, 'Times New Roman', serif";
 
 export const TOKENS: Record<ThemeName, Record<string, string>> = {
   light: {
