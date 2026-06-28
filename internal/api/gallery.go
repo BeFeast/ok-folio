@@ -84,7 +84,7 @@ type cacheGalleryCatalogETagShape struct {
 }
 
 const catalogCacheControl = "private, no-cache, stale-while-revalidate=120"
-const catalogCacheVersion = 3
+const catalogCacheVersion = 4
 
 func (s *Server) handleGalleryCatalog(w http.ResponseWriter, r *http.Request) {
 	limit, offset := s.parsePagination(r)

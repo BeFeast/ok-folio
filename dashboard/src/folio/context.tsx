@@ -59,6 +59,9 @@ export interface PieceVM {
   file: string;
   size: string;
   dim: string; // dimensions (empty when unknown)
+  captured: string;
+  camera: string;
+  lens: string;
   added: string;
 }
 
@@ -123,6 +126,22 @@ function relativeAdded(value: string): string {
   return d.toLocaleDateString(undefined, { month: "short", year: "numeric" });
 }
 
+function formatMetadataDate(value: string | null): string {
+  if (!value) return "";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+}
+
+function cameraLabel(make: string, model: string): string {
+  const cleanMake = (make || "").trim();
+  const cleanModel = (model || "").trim();
+  if (!cleanMake) return cleanModel;
+  if (!cleanModel) return cleanMake;
+  if (cleanModel.toLowerCase().startsWith(cleanMake.toLowerCase())) return cleanModel;
+  return `${cleanMake} ${cleanModel}`;
+}
+
 export function mapPhoto(p: Photo): PieceVM {
   const title = (p.Title || "").trim() || prettifyFileName(p.FileName);
   const artist = (p.Artist || "").trim();
@@ -143,6 +162,9 @@ export function mapPhoto(p: Photo): PieceVM {
     file: p.FileName || "—",
     size: formatBytes(p.FileSize),
     dim: p.ImageWidth && p.ImageHeight ? `${p.ImageWidth} x ${p.ImageHeight}` : "",
+    captured: formatMetadataDate(p.CapturedAt),
+    camera: cameraLabel(p.CameraMake, p.CameraModel),
+    lens: (p.LensModel || "").trim(),
     added: relativeAdded(p.DownloadedAt),
   };
 }

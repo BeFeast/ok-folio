@@ -377,6 +377,20 @@ export default function PieceViewer() {
               <div style={META_KEY}>Added</div>
               <div style={META_VAL}>{p.added}</div>
             </div>
+            <div>
+              <div style={META_KEY}>Captured</div>
+              <div style={META_VAL}>{p.captured || "—"}</div>
+            </div>
+            <div>
+              <div style={META_KEY}>Camera</div>
+              <div style={META_VAL}>{p.camera || "—"}</div>
+            </div>
+            {p.lens ? (
+              <div style={{ gridColumn: "1 / -1" }}>
+                <div style={META_KEY}>Lens</div>
+                <div style={META_VAL}>{p.lens}</div>
+              </div>
+            ) : null}
           </div>
         </div>
       </div>

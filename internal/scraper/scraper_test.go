@@ -287,6 +287,12 @@ func TestDownloadResolvedMediaWarmsThumbnailsOnIngest(t *testing.T) {
 	if !kept {
 		t.Fatal("expected new media to be kept")
 	}
+	if photo.ImageWidth != 32 || photo.ImageHeight != 24 {
+		t.Fatalf("expected downloaded image dimensions 32x24, got %dx%d", photo.ImageWidth, photo.ImageHeight)
+	}
+	if photo.CapturedAt != nil || photo.CameraMake != "" || photo.CameraModel != "" {
+		t.Fatalf("expected JPEG without EXIF to leave EXIF fields empty, got captured=%v make=%q model=%q", photo.CapturedAt, photo.CameraMake, photo.CameraModel)
+	}
 
 	cache := derivatives.NewCache(cfg.Storage)
 	validator, err := derivatives.Validator(photo, photo.FilePath)

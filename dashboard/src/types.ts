@@ -167,6 +167,13 @@ export interface Photo {
   FileName: string;
   ImageWidth: number;
   ImageHeight: number;
+  CapturedAt: string | null;
+  CameraMake: string;
+  CameraModel: string;
+  LensModel: string;
+  Orientation: string;
+  GPSLatitude: number | null;
+  GPSLongitude: number | null;
   DownloadedAt: string;
   FileSize: number;
   Notes: string;

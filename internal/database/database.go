@@ -63,12 +63,19 @@ type DownloadedPhoto struct {
 	Title      string `gorm:"type:text;index"`
 	// Artist carries its own single-column index plus position 2 of the
 	// (downloaded_at, artist) composite. Whitespace is normalized on write.
-	Artist      string     `gorm:"type:text;index;index:idx_downloaded_photos_downloaded_at_artist,priority:2"`
-	UploadDate  *time.Time `gorm:"index"`
-	FilePath    string     `gorm:"type:text;default:''"`
-	FileName    string     `gorm:"type:text;index"`
-	ImageWidth  int
-	ImageHeight int
+	Artist       string     `gorm:"type:text;index;index:idx_downloaded_photos_downloaded_at_artist,priority:2"`
+	UploadDate   *time.Time `gorm:"index"`
+	FilePath     string     `gorm:"type:text;default:''"`
+	FileName     string     `gorm:"type:text;index"`
+	ImageWidth   int
+	ImageHeight  int
+	CapturedAt   *time.Time `gorm:"index"`
+	CameraMake   string     `gorm:"type:text"`
+	CameraModel  string     `gorm:"type:text"`
+	LensModel    string     `gorm:"type:text"`
+	Orientation  string     `gorm:"type:text"`
+	GPSLatitude  *float64
+	GPSLongitude *float64
 	// DownloadedAt is position 1 of the composite index; its leading column also
 	// serves ORDER BY downloaded_at, so the redundant standalone downloaded_at
 	// index is intentionally dropped.
@@ -720,6 +727,13 @@ func downloadAssignments(photo *DownloadedPhoto) map[string]interface{} {
 		"file_name":       photo.FileName,
 		"image_width":     photo.ImageWidth,
 		"image_height":    photo.ImageHeight,
+		"captured_at":     photo.CapturedAt,
+		"camera_make":     photo.CameraMake,
+		"camera_model":    photo.CameraModel,
+		"lens_model":      photo.LensModel,
+		"orientation":     photo.Orientation,
+		"gps_latitude":    photo.GPSLatitude,
+		"gps_longitude":   photo.GPSLongitude,
 		"file_size":       photo.FileSize,
 		"notes":           photo.Notes,
 		"keywords":        photo.Keywords,
