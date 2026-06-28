@@ -2,7 +2,7 @@ import { useMemo, useRef, useState, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useFolio } from "./context";
 import { useViewport } from "./useViewport";
-import { BrandMark, CloseIcon, Hov, MoonIcon, PlusIcon, SearchIcon } from "./ui";
+import { BrandMark, CloseIcon, Hov, MoonIcon, PlusIcon, SearchIcon, SlidersIcon } from "./ui";
 
 interface NavItem {
   label: string;
@@ -118,7 +118,7 @@ function IconButton({
 export default function Nav() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { query, setQuery, toggleTheme, openAdd, inboxCount } = useFolio();
+  const { query, setQuery, toggleTheme, openAdd, openView, inboxCount } = useFolio();
   const { isMobile } = useViewport();
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
   const mobileSearchRef = useRef<HTMLInputElement | null>(null);
@@ -256,6 +256,11 @@ export default function Nav() {
               <IconButton label="Search" onClick={() => setMobileSearchOpen(true)}>
                 <SearchIcon />
               </IconButton>
+              {location.pathname === "/" ? (
+                <IconButton label="View options" onClick={openView}>
+                  <SlidersIcon />
+                </IconButton>
+              ) : null}
               <IconButton label="Toggle theme" onClick={toggleTheme}>
                 <MoonIcon />
               </IconButton>
