@@ -198,50 +198,28 @@ func (s *Server) handleMoveInboxItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	item, err := s.db.GetInboxItem(id)
-	if errors.Is(err, gorm.ErrRecordNotFound) {
+	photoID, err := s.db.MoveInboxItemToFolio(id, input.FolioID, input.PhotoID)
+	if errors.Is(err, database.ErrFolioNotFound) {
+		s.writeError(w, http.StatusNotFound, "Folio not found")
+		return
+	}
+	if errors.Is(err, database.ErrInboxItemNotFound) {
 		s.writeError(w, http.StatusNotFound, "Inbox item not found")
 		return
 	}
-	if err != nil {
-		s.logger.Error().Err(err).Msg("Failed to fetch inbox item")
-		s.writeError(w, http.StatusInternalServerError, "Failed to fetch inbox item")
-		return
-	}
-
-	photoID := input.PhotoID
-	if photoID == 0 && len(item.ContentHash) > 0 {
-		photo, err := s.db.GetPhotoByContentHash(item.ContentHash)
-		if err == nil {
-			photoID = photo.ID
-		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-			s.writeError(w, http.StatusInternalServerError, "Failed to resolve matched piece")
-			return
-		}
-	}
-	if photoID == 0 {
-		s.writeError(w, http.StatusBadRequest, "photo_id is required when the inbox item has no matched piece")
-		return
-	}
-
-	photo, err := s.db.GetPhotoByID(photoID)
-	if errors.Is(err, gorm.ErrRecordNotFound) || (err == nil && photo.Status != "downloaded") {
+	if errors.Is(err, database.ErrPhotoNotFound) {
 		s.writeError(w, http.StatusNotFound, "Photo not found")
 		return
 	}
+	if errors.Is(err, database.ErrInboxItemNoMatchedPhoto) {
+		s.writeError(w, http.StatusBadRequest, "Inbox item has no matched piece")
+		return
+	}
+	if errors.Is(err, database.ErrInboxItemPhotoMismatch) {
+		s.writeError(w, http.StatusBadRequest, "photo_id does not match the inbox item")
+		return
+	}
 	if err != nil {
-		s.writeError(w, http.StatusInternalServerError, "Failed to fetch photo")
-		return
-	}
-
-	if err := s.db.AddPieceToFolio(input.FolioID, photoID); err != nil {
-		s.writeError(w, http.StatusInternalServerError, "Failed to add piece to folio")
-		return
-	}
-	if err := s.db.ResolveInboxItem(id, "moved"); errors.Is(err, gorm.ErrRecordNotFound) {
-		s.writeError(w, http.StatusNotFound, "Inbox item not found")
-		return
-	} else if err != nil {
 		s.writeError(w, http.StatusInternalServerError, "Failed to resolve inbox item")
 		return
 	}

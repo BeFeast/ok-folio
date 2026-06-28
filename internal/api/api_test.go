@@ -2481,6 +2481,97 @@ func TestHandleMoveInboxItemValidatesTarget(t *testing.T) {
 	}
 }
 
+func TestHandleMoveInboxItemRejectsMismatchedPhotoID(t *testing.T) {
+	server, db := setupTestServer(t)
+	defer safeShutdown(server)
+
+	contentHash := []byte("move-inbox-right-hash")
+	photo := createAPITestDownloadedPhoto(t, db, "https://example.com/inbox-right.jpg", "Right")
+	if err := db.Model(&database.DownloadedPhoto{}).Where("id = ?", photo.ID).Update("content_hash", contentHash).Error; err != nil {
+		t.Fatalf("Failed to set content hash: %v", err)
+	}
+	other := createAPITestDownloadedPhoto(t, db, "https://example.com/inbox-wrong.jpg", "Wrong")
+	if err := db.Model(&database.DownloadedPhoto{}).Where("id = ?", other.ID).Update("content_hash", []byte("move-inbox-wrong-hash")).Error; err != nil {
+		t.Fatalf("Failed to set other content hash: %v", err)
+	}
+	folio, err := db.CreateFolio(database.Folio{Name: "Mismatch"})
+	if err != nil {
+		t.Fatalf("CreateFolio failed: %v", err)
+	}
+	item := database.InboxItem{
+		ProviderID:  "telegram",
+		DedupeKey:   "telegram:source-1:media-2",
+		Status:      "duplicate",
+		ContentHash: contentHash,
+	}
+	if err := db.Create(&item).Error; err != nil {
+		t.Fatalf("Failed to create inbox item: %v", err)
+	}
+
+	body := `{"folio_id":` + strconv.FormatUint(folio.ID, 10) + `,"photo_id":` + strconv.FormatUint(other.ID, 10) + `}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/inbox/"+strconv.FormatUint(item.ID, 10)+"/move", bytes.NewBufferString(body))
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected mismatched photo status 400, got %d body=%q", w.Code, w.Body.String())
+	}
+
+	pieces, total, err := db.ListFolioPieces(folio.ID, 10, 0)
+	if err != nil {
+		t.Fatalf("ListFolioPieces failed: %v", err)
+	}
+	if total != 0 || len(pieces) != 0 {
+		t.Fatalf("expected no folio pieces after rejected move, total=%d pieces=%#v", total, pieces)
+	}
+	_, total, err = db.GetInboxExceptions(10, 0)
+	if err != nil {
+		t.Fatalf("GetInboxExceptions failed: %v", err)
+	}
+	if total != 1 {
+		t.Fatalf("expected inbox item to remain active, got total=%d", total)
+	}
+}
+
+func TestHandleMoveInboxItemDoesNotAddPieceForResolvedItem(t *testing.T) {
+	server, db := setupTestServer(t)
+	defer safeShutdown(server)
+
+	contentHash := []byte("move-inbox-resolved-hash")
+	photo := createAPITestDownloadedPhoto(t, db, "https://example.com/inbox-resolved.jpg", "Resolved")
+	if err := db.Model(&database.DownloadedPhoto{}).Where("id = ?", photo.ID).Update("content_hash", contentHash).Error; err != nil {
+		t.Fatalf("Failed to set content hash: %v", err)
+	}
+	folio, err := db.CreateFolio(database.Folio{Name: "Resolved"})
+	if err != nil {
+		t.Fatalf("CreateFolio failed: %v", err)
+	}
+	item := database.InboxItem{
+		ProviderID:  "telegram",
+		DedupeKey:   "telegram:source-1:media-3",
+		Status:      "kept",
+		ContentHash: contentHash,
+	}
+	if err := db.Create(&item).Error; err != nil {
+		t.Fatalf("Failed to create inbox item: %v", err)
+	}
+
+	body := `{"folio_id":` + strconv.FormatUint(folio.ID, 10) + `,"photo_id":` + strconv.FormatUint(photo.ID, 10) + `}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/inbox/"+strconv.FormatUint(item.ID, 10)+"/move", bytes.NewBufferString(body))
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected resolved inbox item status 404, got %d body=%q", w.Code, w.Body.String())
+	}
+
+	pieces, total, err := db.ListFolioPieces(folio.ID, 10, 0)
+	if err != nil {
+		t.Fatalf("ListFolioPieces failed: %v", err)
+	}
+	if total != 0 || len(pieces) != 0 {
+		t.Fatalf("expected no folio pieces for resolved inbox item, total=%d pieces=%#v", total, pieces)
+	}
+}
+
 func TestHandleInboxStatusFilter(t *testing.T) {
 	server, db := setupTestServer(t)
 	defer safeShutdown(server)

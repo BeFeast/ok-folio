@@ -1,6 +1,7 @@
 package database
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"database/sql/driver"
 	"encoding/json"
@@ -37,6 +38,14 @@ const (
 	KeywordsGINIndex       = "idx_downloaded_photos_keywords"
 
 	downloadedStatusPredicate = "status = 'downloaded'"
+)
+
+var (
+	ErrFolioNotFound           = errors.New("folio not found")
+	ErrInboxItemNotFound       = errors.New("inbox item not found")
+	ErrInboxItemNoMatchedPhoto = errors.New("inbox item has no matched photo")
+	ErrInboxItemPhotoMismatch  = errors.New("photo does not match inbox item")
+	ErrPhotoNotFound           = errors.New("photo not found")
 )
 
 // DownloadedPhoto represents a photo that has been downloaded.
@@ -1315,6 +1324,80 @@ func (db *DB) AddPieceToFolio(folioID, photoID uint64) error {
 		FolioID: folioID,
 		PhotoID: photoID,
 	}).Error
+}
+
+// MoveInboxItemToFolio atomically resolves an active inbox item as moved and
+// adds its matched downloaded photo to the target folio.
+func (db *DB) MoveInboxItemToFolio(inboxItemID, folioID, requestedPhotoID uint64) (uint64, error) {
+	if inboxItemID == 0 {
+		return 0, fmt.Errorf("inbox item ID is required")
+	}
+	if folioID == 0 {
+		return 0, fmt.Errorf("folio ID is required")
+	}
+
+	var movedPhotoID uint64
+	err := db.Transaction(func(tx *gorm.DB) error {
+		var folio Folio
+		if err := tx.Where("id = ?", folioID).First(&folio).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrFolioNotFound
+			}
+			return err
+		}
+
+		var item InboxItem
+		if err := tx.Where("id = ? AND status IN ?", inboxItemID, []string{"duplicate", "ambiguous"}).First(&item).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrInboxItemNotFound
+			}
+			return err
+		}
+		if len(item.ContentHash) == 0 {
+			return ErrInboxItemNoMatchedPhoto
+		}
+
+		var photo DownloadedPhoto
+		query := tx.Where("status = ?", "downloaded")
+		if requestedPhotoID != 0 {
+			query = query.Where("id = ?", requestedPhotoID)
+		} else {
+			query = query.Where("content_hash = ?", item.ContentHash)
+		}
+		if err := query.First(&photo).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrPhotoNotFound
+			}
+			return err
+		}
+		if !bytes.Equal(photo.ContentHash, item.ContentHash) {
+			return ErrInboxItemPhotoMismatch
+		}
+
+		result := tx.Model(&InboxItem{}).
+			Where("id = ? AND status IN ?", inboxItemID, []string{"duplicate", "ambiguous"}).
+			Updates(map[string]interface{}{"status": "moved"})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return ErrInboxItemNotFound
+		}
+
+		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&FolioPiece{
+			FolioID: folioID,
+			PhotoID: photo.ID,
+		}).Error; err != nil {
+			return err
+		}
+
+		movedPhotoID = photo.ID
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return movedPhotoID, nil
 }
 
 func (db *DB) RemovePieceFromFolio(folioID, photoID uint64) error {
