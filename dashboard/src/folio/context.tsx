@@ -254,6 +254,7 @@ interface FolioContextValue {
   moveInboxToFolioAction: (id: number, folioId: number, photoId?: number) => void;
   createFolioAction: (name: string) => void;
   renameFolioAction: (id: number, name: string) => void;
+  changeFolioCoverAction: (id: number, photoId: number | null) => void;
   deleteFolioAction: (id: number) => void;
   addPieceToFolioAction: (folioId: number, photoId: number) => void;
   removePieceFromFolioAction: (folioId: number, photoId: number) => void;
@@ -565,6 +566,33 @@ export function FolioProvider({ children }: { children: ReactNode }) {
     [queryClient],
   );
 
+  const changeFolioCoverAction = useCallback(
+    (folioId: number, photoId: number | null) => {
+      const id = ++toastSeq;
+      setToasts((prev) => [...prev, { id, status: "loading", title: "Changing folio cover" }]);
+      updateFolio(folioId, { cover_photo_id: photoId })
+        .then(() => {
+          setToasts((prev) =>
+            prev.map((t) => (t.id === id ? { ...t, status: "success", title: "Folio cover changed" } : t)),
+          );
+          window.setTimeout(() => {
+            setToasts((prev) => prev.filter((t) => t.id !== id));
+          }, 2800);
+          void queryClient.invalidateQueries({ queryKey: ["folios"] });
+        })
+        .catch((err: unknown) => {
+          setToasts((prev) =>
+            prev.map((t) =>
+              t.id === id
+                ? { ...t, status: "error", title: "Couldn’t change folio cover", detail: err instanceof Error ? err.message : undefined }
+                : t,
+            ),
+          );
+        });
+    },
+    [queryClient],
+  );
+
   const deleteFolioAction = useCallback(
     (folioId: number) => {
       const id = ++toastSeq;
@@ -739,6 +767,7 @@ export function FolioProvider({ children }: { children: ReactNode }) {
     moveInboxToFolioAction,
     createFolioAction,
     renameFolioAction,
+    changeFolioCoverAction,
     deleteFolioAction,
     addPieceToFolioAction,
     removePieceFromFolioAction,
