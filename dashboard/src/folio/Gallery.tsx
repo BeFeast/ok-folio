@@ -50,20 +50,21 @@ function Spinner({ size = 22 }: { size?: number }) {
 }
 
 function useArtistSuggestions(draft: string) {
-  const { query, favoriteOnly } = useFolio();
+  const { query, favoriteOnly, category } = useFolio();
   const trimmedQuery = query.trim();
-  const useScopedSuggestions = favoriteOnly || !!trimmedQuery;
+  const useScopedSuggestions = favoriteOnly || !!trimmedQuery || !!category;
   const artistsQuery = useQuery({
     queryKey: ["folio-artists"],
     queryFn: () => fetchArtists(500, 0, "count"),
     enabled: !useScopedSuggestions,
   });
   const scopedArtistsQuery = useQuery({
-    queryKey: ["folio-artist-facets", trimmedQuery, favoriteOnly],
+    queryKey: ["folio-artist-facets", trimmedQuery, favoriteOnly, category],
     queryFn: () => {
       const filters: Parameters<typeof fetchGalleryCatalog>[2] = {};
       if (trimmedQuery) filters.query = trimmedQuery;
       if (favoriteOnly) filters.favorite = true;
+      if (category) filters.category = category;
       return fetchGalleryCatalog(1, 0, filters);
     },
     enabled: useScopedSuggestions,
