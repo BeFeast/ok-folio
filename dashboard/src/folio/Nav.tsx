@@ -1,6 +1,6 @@
 import { useLocation, useNavigate } from "react-router-dom";
 import { useFolio } from "./context";
-import { BrandMark, Hov, MoonIcon, PlusIcon, SearchIcon } from "./ui";
+import { BrandMark, CloseIcon, Hov, MoonIcon, PlusIcon, SearchIcon } from "./ui";
 
 interface NavItem {
   label: string;
@@ -147,6 +147,29 @@ export default function Nav() {
               width: 128,
             }}
           />
+          {query ? (
+            <Hov
+              as="button"
+              onClick={() => setQuery("")}
+              aria-label="Clear search"
+              title="Clear search"
+              style={{
+                appearance: "none",
+                cursor: "pointer",
+                flex: "none",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                border: 0,
+                padding: 0,
+                background: "transparent",
+                color: "var(--muted)",
+              }}
+              hover={{ color: "var(--ink)" }}
+            >
+              <CloseIcon size={13} />
+            </Hov>
+          ) : null}
         </div>
         <Hov
           as="button"
