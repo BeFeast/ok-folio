@@ -1,6 +1,4 @@
 import { useRef, useState, type CSSProperties, type DragEvent } from "react";
-import { useQueryClient } from "@tanstack/react-query";
-import { createPiece } from "../api";
 import { useFolio } from "./context";
 import { BrandMark, CloseIcon, Hov } from "./ui";
 
@@ -71,8 +69,7 @@ function Field({
 }
 
 export default function AddPieceModal() {
-  const { addOpen, closeAdd } = useFolio();
-  const queryClient = useQueryClient();
+  const { addOpen, closeAdd, importPiece } = useFolio();
   const fileRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
   const [title, setTitle] = useState("");
@@ -81,7 +78,6 @@ export default function AddPieceModal() {
   const [date, setDate] = useState("");
   const [notes, setNotes] = useState("");
   const [error, setError] = useState("");
-  const [uploading, setUploading] = useState(false);
 
   if (!addOpen) return null;
 
@@ -93,7 +89,6 @@ export default function AddPieceModal() {
     setDate("");
     setNotes("");
     setError("");
-    setUploading(false);
     if (fileRef.current) fileRef.current.value = "";
     closeAdd();
   };
@@ -112,25 +107,15 @@ export default function AddPieceModal() {
     event.stopPropagation();
     stageFile(event.dataTransfer.files?.[0]);
   };
-  const handleAdd = async () => {
+  const handleAdd = () => {
     if (!file) {
       setError("Choose an image before adding the piece.");
       return;
     }
-    setUploading(true);
-    setError("");
-    try {
-      await createPiece({ file, title, source, artist, date, notes });
-      // Close immediately once the upload succeeds; refresh the gallery and
-      // stats in the background so a slow/hanging refetch can never keep the
-      // dialog stuck on "Adding...".
-      resetAndClose();
-      void queryClient.invalidateQueries({ queryKey: ["folio-catalog"] });
-      void queryClient.invalidateQueries({ queryKey: ["folio-stats"] });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to add piece");
-      setUploading(false);
-    }
+    // Hand the upload off to the context and close instantly — progress is shown
+    // as a background toast, so the dialog never feels frozen behind the request.
+    importPiece({ file, title, source, artist, date, notes });
+    resetAndClose();
   };
 
   return (
@@ -228,7 +213,6 @@ export default function AddPieceModal() {
             <Hov
               as="button"
               onClick={resetAndClose}
-              disabled={uploading}
               style={{ appearance: "none", cursor: "pointer", fontFamily: "var(--sans)", fontSize: 13.5, padding: "10px 18px", borderRadius: 99, border: 0, background: "transparent", color: "var(--muted)" }}
               hover={{ color: "var(--ink)" }}
             >
@@ -237,11 +221,11 @@ export default function AddPieceModal() {
             <Hov
               as="button"
               onClick={handleAdd}
-              disabled={uploading || !file}
-              style={{ appearance: "none", cursor: uploading || !file ? "not-allowed" : "pointer", opacity: uploading || !file ? 0.6 : 1, fontFamily: "var(--sans)", fontSize: 13.5, fontWeight: 500, padding: "10px 22px", borderRadius: 99, border: 0, background: "var(--accent)", color: "var(--on-accent)" }}
+              disabled={!file}
+              style={{ appearance: "none", cursor: !file ? "not-allowed" : "pointer", opacity: !file ? 0.6 : 1, fontFamily: "var(--sans)", fontSize: 13.5, fontWeight: 500, padding: "10px 22px", borderRadius: 99, border: 0, background: "var(--accent)", color: "var(--on-accent)" }}
               hover={{ filter: "brightness(1.06)" }}
             >
-              {uploading ? "Adding..." : "Add Piece"}
+              Add Piece
             </Hov>
           </div>
         </div>
