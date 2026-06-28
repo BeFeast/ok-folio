@@ -18,6 +18,9 @@ import type {
   InboxResponse,
   PhotoDetailResponse,
   RunPhotosResponse,
+  Folio,
+  FoliosResponse,
+  FolioPiecesResponse,
   Photo,
   ConnectorSourceInput,
   ConnectorSourceSetting,
@@ -138,6 +141,88 @@ export async function deleteConnectorSource(id: number): Promise<void> {
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
     throw new Error(data.error || "Failed to delete connector source");
+  }
+}
+
+export async function fetchFolios(): Promise<FoliosResponse> {
+  const response = await fetch(`${API_BASE}/folios`);
+  if (!response.ok) {
+    throw new Error("Failed to fetch folios");
+  }
+  return response.json();
+}
+
+export async function fetchFolioPieces(
+  id: number,
+  limit: number = 100,
+  offset: number = 0,
+): Promise<FolioPiecesResponse> {
+  const params = new URLSearchParams({
+    limit: limit.toString(),
+    offset: offset.toString(),
+  });
+  const response = await fetch(`${API_BASE}/folios/${id}/pieces?${params}`);
+  if (!response.ok) {
+    throw new Error("Failed to fetch folio pieces");
+  }
+  return response.json();
+}
+
+export async function createFolio(input: { name: string; cover_photo_id?: number | null }): Promise<Folio> {
+  const response = await fetch(`${API_BASE}/folios`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || "Failed to create folio");
+  }
+  return response.json();
+}
+
+export async function updateFolio(id: number, input: { name?: string; cover_photo_id?: number | null }): Promise<Folio> {
+  const response = await fetch(`${API_BASE}/folios/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || "Failed to update folio");
+  }
+  return response.json();
+}
+
+export async function deleteFolio(id: number): Promise<void> {
+  const response = await fetch(`${API_BASE}/folios/${id}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || "Failed to delete folio");
+  }
+}
+
+export async function addPieceToFolio(folioId: number, photoId: number): Promise<void> {
+  const response = await fetch(`${API_BASE}/folios/${folioId}/pieces`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ photo_id: photoId }),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || "Failed to add piece to folio");
+  }
+}
+
+export async function removePieceFromFolio(folioId: number, photoId: number): Promise<void> {
+  const response = await fetch(`${API_BASE}/folios/${folioId}/pieces/${photoId}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || "Failed to remove piece from folio");
   }
 }
 
