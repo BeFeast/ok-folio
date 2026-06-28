@@ -121,11 +121,12 @@ export default function AddPieceModal() {
     setError("");
     try {
       await createPiece({ file, title, source, artist, date, notes });
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["folio-catalog"] }),
-        queryClient.invalidateQueries({ queryKey: ["folio-stats"] }),
-      ]);
+      // Close immediately once the upload succeeds; refresh the gallery and
+      // stats in the background so a slow/hanging refetch can never keep the
+      // dialog stuck on "Adding...".
       resetAndClose();
+      void queryClient.invalidateQueries({ queryKey: ["folio-catalog"] });
+      void queryClient.invalidateQueries({ queryKey: ["folio-stats"] });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to add piece");
       setUploading(false);
