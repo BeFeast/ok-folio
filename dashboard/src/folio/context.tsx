@@ -73,26 +73,17 @@ const PAGE_SIZE = 120;
 
 /* ---- mapping helpers ---- */
 
-function prettifyFileName(fn: string): string {
-  if (!fn) return "Untitled piece";
-  const base = fn.replace(/\.[a-z0-9]{2,5}$/i, "");
-  const cleaned = base
-    .replace(/[_]+/g, " ")
-    .replace(/\s*-\s*/g, " ")
-    .replace(/\s{2,}/g, " ")
-    .trim();
-  return cleaned || "Untitled piece";
-}
-
-function yearFrom(value: string): string {
-  if (!value) return "";
-  const parsed = new Date(value);
-  if (!Number.isNaN(parsed.getTime())) {
-    const y = parsed.getFullYear();
-    if (y > 1000 && y < 3000) return String(y);
-  }
-  const m = value.match(/\b(1[0-9]{3}|20[0-9]{2})\b/);
-  return m ? m[1] : "";
+// A real title or "" — we never fabricate one. The catalog stores junk for most pieces
+// (empty, "***"/punctuation-only, or a UUID filename leaked into the title field); treat
+// all of those as untitled so the gallery shows the artist only (an empty title collapses
+// the title line). Real artwork dates are unknown, so museum captions omit the year and
+// dates live in the info sheet (Added / Captured) instead.
+function cleanTitle(raw: string): string {
+  const t = (raw || "").trim();
+  if (!t) return "";
+  if (/^[\s*_.\-—–·•]+$/.test(t)) return "";
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}/i.test(t)) return "";
+  return t;
 }
 
 function hostFrom(value: string): string {
@@ -159,13 +150,13 @@ function cameraLabel(make: string, model: string): string {
 }
 
 export function mapPhoto(p: Photo): PieceVM {
-  const title = (p.Title || "").trim() || prettifyFileName(p.FileName);
+  const title = cleanTitle(p.Title);
   const artist = (p.Artist || "").trim();
   return {
     id: p.ID,
     t: title,
     a: artist || "Unknown",
-    y: yearFrom(p.UploadDate) || yearFrom(p.DownloadedAt),
+    y: "",
     src: hostFrom(p.SourcePage) || p.SourcePage || "—",
     med: "",
     kind: "",

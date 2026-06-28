@@ -491,7 +491,6 @@ export default function PieceViewer() {
 
             <div style={{ marginTop: 20 }}>
               {[
-                ["Date", p.y || "—"],
                 ["Medium", p.med || "—"],
                 ["Source", p.src || "—"],
                 ["Dimensions", p.dim || "—"],
@@ -908,10 +907,6 @@ export default function PieceViewer() {
           >
             {p.a}
           </button>
-        </div>
-        <div style={ROW}>
-          <div style={ROW_KEY}>Date</div>
-          <div style={ROW_VAL}>{p.y || "—"}</div>
         </div>
         <div style={ROW}>
           <div style={ROW_KEY}>Medium</div>
