@@ -31,10 +31,17 @@ const (
 var (
 	// captionArtistPattern matches an artist line ending in a parenthetical with a
 	// year: a lifespan range "(США, 1928 - 2017)", a single year "(Omar Ortiz, 1977)",
-	// or a birth-only "(США, р. 1975)".
-	captionArtistPattern = regexp.MustCompile(`(?i)^.+?\s*\((?:[^)]*,\s*)?(?:р\.\s*)?\d{4}(?:\s*[-–—]\s*\d{4})?\)\s*$`)
+	// or a birth-only "(США, р. 1975)" / "(b. 1956)".
+	captionArtistPattern = regexp.MustCompile(`(?i)^.+?\s*\((?:[^)]*,\s*)?(?:р\.\s*|b\.\s*)?\d{4}(?:\s*[-–—]\s*\d{4})?\)\s*$`)
 	captionYearPattern   = regexp.MustCompile(`\s+(\d{4})\s*г\.?\s*$`)
-	// captionTitleStrip trims surrounding quotes and dash-only placeholders.
+	// captionEnglishArtistPattern matches the English one-line form
+	// "<Medium>. <Nationality> artist <Name> (b. <year>)", e.g.
+	// "Pastel. Spanish artist Vicente Romero Redondo (b. 1956)" — medium + artist
+	// on one line, no separate title.
+	captionEnglishArtistPattern = regexp.MustCompile(`(?i)^(\p{L}+)\.\s+(\p{L}+)\s+artist\s+(.+?)\s*\(\s*b\.?\s*(\d{4})\s*\)\s*$`)
+	// captionArtistPrefix strips a leading role label such as "Художник:".
+	captionArtistPrefix = regexp.MustCompile(`(?i)^\s*(?:художник|painter|artist|автор)\s*[:\-—]\s*`)
+	// captionDashOnly trims dash-only placeholder titles.
 	captionDashOnly = regexp.MustCompile(`^[-–—\s]*$`)
 )
 
@@ -366,9 +373,24 @@ func parseArtworkCaption(caption string) parsedArtworkCaption {
 	artistIndex := -1
 	mediumIndex := -1
 	parsed := parsedArtworkCaption{}
+
+	// English one-line form "<Medium>. <Nationality> artist <Name> (b. <year>)"
+	// packs medium + artist together and carries no separate title.
+	for idx, line := range lines {
+		m := captionEnglishArtistPattern.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		parsed.Artist = fmt.Sprintf("%s (%s, b. %s)", strings.TrimSpace(m[3]), strings.TrimSpace(m[2]), m[4])
+		parsed.Medium = strings.TrimSpace(m[1])
+		artistIndex = idx
+		mediumIndex = idx
+		break
+	}
+
 	for idx, line := range lines {
 		if parsed.Artist == "" && captionArtistPattern.MatchString(line) {
-			parsed.Artist = line
+			parsed.Artist = stripArtistPrefix(line)
 			artistIndex = idx
 			continue
 		}
@@ -434,12 +456,28 @@ func captionLines(caption string) []string {
 	lines := make([]string, 0, len(rawLines))
 	for _, line := range rawLines {
 		line = strings.TrimSpace(line)
+		line = stripCaptionDecorations(line)
 		if line == "" || isJunkCaptionLine(line) {
 			continue
 		}
 		lines = append(lines, line)
 	}
 	return lines
+}
+
+// stripCaptionDecorations trims leading/trailing decorative emoji/symbols
+// (e.g. ⚡️, 🔥) and their variation selectors so they don't leak into a title.
+func stripCaptionDecorations(line string) string {
+	return strings.TrimFunc(line, func(r rune) bool {
+		// So/Sk = emoji & symbol modifiers, Cf = ZWJ, Mn/Me = variation
+		// selectors (e.g. U+FE0F after ⚡) and other combining marks.
+		return unicode.IsSpace(r) || unicode.In(r, unicode.So, unicode.Sk, unicode.Cf, unicode.Mn, unicode.Me)
+	})
+}
+
+// stripArtistPrefix removes a leading role label such as "Художник:" / "Artist -".
+func stripArtistPrefix(s string) string {
+	return strings.TrimSpace(captionArtistPrefix.ReplaceAllString(s, ""))
 }
 
 func isJunkCaptionLine(line string) bool {
