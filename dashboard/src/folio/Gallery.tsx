@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { fetchArtists, fetchGalleryCatalog, getPhotoThumbnailUrl } from "../api";
 import { useFolio, type GalleryMode, type PieceVM } from "./context";
 import { CloseIcon, HeartIcon, Hov, OkfImage, PageHeader } from "./ui";
+import { useViewport } from "./useViewport";
 
 const MODES: { key: GalleryMode; label: string }[] = [
   { key: "magazine", label: "Magazine" },
@@ -512,14 +513,15 @@ function LibraryTile({ piece }: { piece: PieceVM }) {
 }
 
 function LibraryView({ pieces, total }: { pieces: PieceVM[]; total: number }) {
+  const { isMobile } = useViewport();
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "30px 0 22px", fontFamily: "var(--sans)", fontSize: 13, color: "var(--muted)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 14, padding: isMobile ? "6px 0 14px" : "30px 0 22px", fontFamily: "var(--sans)", fontSize: 13, color: "var(--muted)" }}>
         <span>{total.toLocaleString()} pieces</span>
         <span style={{ opacity: 0.5 }}>·</span>
         <span>Newest first</span>
         <span style={{ flex: 1 }} />
-        <span style={{ color: "var(--faint)" }}>Hover a piece to preview · click to open</span>
+        {isMobile ? null : <span style={{ color: "var(--faint)" }}>Hover a piece to preview · click to open</span>}
       </div>
       <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(166px, 1fr))", gap: 13 }}>
         {pieces.map((p) => (
@@ -616,6 +618,7 @@ function LoadMoreSentinel() {
 
 export default function Gallery() {
   const { pieces, total, mode, isLoading, isError } = useFolio();
+  const { isMobile } = useViewport();
 
   const subcopy = isLoading
     ? "Gathering your pieces…"
@@ -623,7 +626,15 @@ export default function Gallery() {
 
   return (
     <div>
-      <PageHeader eyebrow="Gallery" title="Your gathered pieces" subcopy={subcopy} action={<ModeTabs />} pad="54px 0 26px" />
+      {isMobile ? (
+        // Image-first on mobile: the top bar already shows "Gallery", so drop the
+        // editorial hero and surface the grid near the top. Just the mode tabs here.
+        <div style={{ padding: "4px 0 12px" }}>
+          <ModeTabs />
+        </div>
+      ) : (
+        <PageHeader eyebrow="Gallery" title="Your gathered pieces" subcopy={subcopy} action={<ModeTabs />} pad="54px 0 26px" />
+      )}
       <GalleryFilterBar />
       {isError ? (
         <div style={{ padding: "90px 0", textAlign: "center", fontFamily: "var(--serif)", fontStyle: "italic", fontSize: 22, color: "var(--graphite)" }}>
