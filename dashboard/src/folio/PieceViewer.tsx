@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { fetchFolios } from "../api";
 import { useFolio } from "./context";
 import { ChevronIcon, CloseIcon, HeartIcon, OkfImage } from "./ui";
 import { useViewport } from "./useViewport";
@@ -106,7 +108,7 @@ function ShareIcon() {
 }
 
 export default function PieceViewer() {
-  const { selected, closePiece, stepPiece, isFav, toggleFav, selIndex, selCount, filterByArtist } = useFolio();
+  const { selected, closePiece, stepPiece, isFav, toggleFav, selIndex, selCount, filterByArtist, addPieceToFolioAction } = useFolio();
   const { isMobile } = useViewport();
   const reducedMotion = useReducedMotion();
 
@@ -127,10 +129,12 @@ export default function PieceViewer() {
   const [panelOpen, setPanelOpen] = useState(false);
   const [chromeVisible, setChromeVisible] = useState(true);
   const [drag, setDrag] = useState({ x: 0, y: 0, active: false });
+  const [folioPickerOpen, setFolioPickerOpen] = useState(false);
   const touchStartRef = useRef<{ x: number; y: number; target: "art" | "sheet" } | null>(null);
   const lastTouchDeltaRef = useRef({ x: 0, y: 0 });
   const suppressClickRef = useRef(false);
   const chromeTimerRef = useRef<number | null>(null);
+  const folios = useQuery({ queryKey: ["folios"], queryFn: fetchFolios, enabled: !!selected && isMobile });
 
   const togglePanel = useCallback(() => setPanelOpen((open) => !open), []);
   const showChrome = useCallback(() => {
@@ -144,9 +148,14 @@ export default function PieceViewer() {
   const pieceId = selected?.id ?? null;
   useEffect(() => {
     setPanelOpen(false);
+    setFolioPickerOpen(false);
     setChromeVisible(true);
     setDrag({ x: 0, y: 0, active: false });
   }, [pieceId]);
+
+  useEffect(() => {
+    if (!panelOpen) setFolioPickerOpen(false);
+  }, [panelOpen]);
 
   useEffect(() => {
     if (!selected || !isMobile) return;
@@ -158,13 +167,19 @@ export default function PieceViewer() {
 
   const handleShare = useCallback(() => {
     if (!selected) return;
-    const shareData = { title: selected.t, text: selected.a, url: window.location.href };
+    const pieceUrl = new URL(`/pieces/${selected.id}`, window.location.origin).toString();
+    const shareData = { title: selected.t, text: selected.a, url: pieceUrl };
     if (navigator.share) {
       void navigator.share(shareData).catch(() => undefined);
       return;
     }
-    void navigator.clipboard?.writeText(window.location.href).catch(() => undefined);
+    void navigator.clipboard?.writeText(pieceUrl).catch(() => undefined);
   }, [selected]);
+
+  const handleAddToFolio = useCallback((folioId: number, photoId: number) => {
+    addPieceToFolioAction(folioId, photoId);
+    setFolioPickerOpen(false);
+  }, [addPieceToFolioAction]);
 
   const onArtworkTouchStart = useCallback((e: React.TouchEvent) => {
     const touch = e.touches[0];
@@ -506,6 +521,75 @@ export default function PieceViewer() {
             ) : null}
           </div>
 
+          {folioPickerOpen ? (
+            <div
+              role="menu"
+              aria-label="Choose folio"
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                position: "absolute",
+                left: 18,
+                right: 18,
+                bottom: "calc(env(safe-area-inset-bottom) + 86px)",
+                zIndex: 2,
+                maxHeight: "min(44vh, 320px)",
+                overflowY: "auto",
+                padding: 8,
+                borderRadius: 16,
+                border: "1px solid rgba(236,230,218,.14)",
+                background: "rgba(22,19,16,.96)",
+                boxShadow: "0 20px 70px rgba(0,0,0,.42)",
+                backdropFilter: "blur(14px)",
+                WebkitBackdropFilter: "blur(14px)",
+              }}
+            >
+              {folios.isLoading ? (
+                <div style={{ minHeight: 48, display: "flex", alignItems: "center", padding: "0 12px", fontFamily: "var(--sans)", fontSize: 13, color: "rgba(236,230,218,.62)" }}>
+                  Loading folios...
+                </div>
+              ) : folios.isError ? (
+                <div style={{ minHeight: 48, display: "flex", alignItems: "center", padding: "0 12px", fontFamily: "var(--sans)", fontSize: 13, color: "rgba(236,230,218,.62)" }}>
+                  Folios unavailable
+                </div>
+              ) : (folios.data?.folios ?? []).length === 0 ? (
+                <div style={{ minHeight: 48, display: "flex", alignItems: "center", padding: "0 12px", fontFamily: "var(--sans)", fontSize: 13, color: "rgba(236,230,218,.62)" }}>
+                  No folios yet
+                </div>
+              ) : (
+                (folios.data?.folios ?? []).map((folio) => (
+                  <button
+                    key={folio.id}
+                    type="button"
+                    role="menuitem"
+                    onClick={() => handleAddToFolio(folio.id, p.id)}
+                    style={{
+                      appearance: "none",
+                      width: "100%",
+                      minHeight: 48,
+                      border: 0,
+                      borderRadius: 11,
+                      background: "transparent",
+                      color: "#ECE6DA",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 12,
+                      padding: "0 12px",
+                      fontFamily: "var(--sans)",
+                      fontSize: 14,
+                      textAlign: "left",
+                    }}
+                  >
+                    <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{folio.name}</span>
+                    <span style={{ flex: "none", fontSize: 12, color: "rgba(236,230,218,.48)" }}>
+                      {folio.piece_count.toLocaleString()}
+                    </span>
+                  </button>
+                ))
+              )}
+            </div>
+          ) : null}
+
           <div
             style={{
               position: "absolute",
@@ -521,7 +605,11 @@ export default function PieceViewer() {
           >
             <button
               type="button"
-              onClick={(e) => e.stopPropagation()}
+              aria-expanded={folioPickerOpen}
+              onClick={(e) => {
+                e.stopPropagation();
+                setFolioPickerOpen((open) => !open);
+              }}
               style={{
                 appearance: "none",
                 border: 0,
@@ -532,6 +620,7 @@ export default function PieceViewer() {
                 fontFamily: "var(--sans)",
                 fontSize: 14.5,
                 fontWeight: 700,
+                cursor: "pointer",
               }}
             >
               Add to folio
