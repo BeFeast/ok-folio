@@ -63,6 +63,7 @@ export interface PieceVM {
   camera: string;
   lens: string;
   added: string;
+  addedExact: string; // absolute date-time for the "Added" tooltip ("" when unknown)
 }
 
 const PAGE_SIZE = 120;
@@ -126,6 +127,13 @@ function relativeAdded(value: string): string {
   return d.toLocaleDateString(undefined, { month: "short", year: "numeric" });
 }
 
+function absoluteAdded(value: string): string {
+  if (!value) return "";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleString(undefined, { dateStyle: "long", timeStyle: "short" });
+}
+
 function formatMetadataDate(value: string | null): string {
   if (!value) return "";
   const d = new Date(value);
@@ -171,6 +179,7 @@ export function mapPhoto(p: Photo): PieceVM {
     camera: cameraLabel(p.CameraMake, p.CameraModel),
     lens: (p.LensModel || "").trim(),
     added: relativeAdded(p.DownloadedAt),
+    addedExact: absoluteAdded(p.DownloadedAt),
   };
 }
 

@@ -375,7 +375,12 @@ export default function PieceViewer() {
             </div>
             <div>
               <div style={META_KEY}>Added</div>
-              <div style={META_VAL}>{p.added}</div>
+              <div
+                style={p.addedExact ? { ...META_VAL, cursor: "help" } : META_VAL}
+                title={p.addedExact || undefined}
+              >
+                {p.added}
+              </div>
             </div>
             <div>
               <div style={META_KEY}>Captured</div>
