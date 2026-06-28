@@ -86,9 +86,53 @@ export function OkfImage({
   const [failed, setFailed] = useState(false);
   if (failed) {
     return (
-      <div onClick={onClick} style={{ display: "flex", ...matteStyle }}>
-        <div style={matteTitleStyle}>{title}</div>
-        {artist ? <div style={matteArtistStyle}>{artist}</div> : null}
+      <div
+        onClick={onClick}
+        aria-label={artist ? `${title} by ${artist}` : title}
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 8,
+          color: "color-mix(in srgb, var(--ink) 42%, transparent)",
+          ...matteStyle,
+          background: "#E7E1D4",
+        }}
+      >
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.45" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <rect x="4" y="5" width="16" height="14" rx="1.8" />
+          <path d="M7.5 16 10.4 13.2 12.7 15.2 15 12.8 18.5 16.3" />
+          <circle cx="9" cy="9.5" r="1.1" />
+        </svg>
+        <div
+          style={{
+            maxWidth: "100%",
+            overflow: "hidden",
+            display: "-webkit-box",
+            WebkitBoxOrient: "vertical",
+            WebkitLineClamp: 2,
+            textOverflow: "ellipsis",
+            ...matteTitleStyle,
+            color: "color-mix(in srgb, var(--ink) 62%, transparent)",
+          }}
+        >
+          {title}
+        </div>
+        {artist ? (
+          <div
+            style={{
+              maxWidth: "100%",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              ...matteArtistStyle,
+              color: "color-mix(in srgb, var(--ink) 48%, transparent)",
+            }}
+          >
+            {artist}
+          </div>
+        ) : null}
       </div>
     );
   }

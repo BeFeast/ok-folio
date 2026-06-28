@@ -1,6 +1,7 @@
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { createConnectorSource, deleteConnectorSource, fetchConnectorSources, updateConnectorSource } from "../api";
 import type { ConnectorSourceSetting } from "../types";
+import { useStorageEstimate } from "../hooks/useStorageEstimate";
 import { useFolio, formatBytes } from "./context";
 import { BrandMark, Hov, PageHeader } from "./ui";
 import { useViewport } from "./useViewport";
@@ -106,6 +107,15 @@ export default function Settings() {
   const [sourceChatID, setSourceChatID] = useState("");
   const [sourceBusy, setSourceBusy] = useState(false);
   const [sourceError, setSourceError] = useState("");
+  const storageEstimate = useStorageEstimate();
+  const offlineCacheSize =
+    storageEstimate.supported && storageEstimate.usage != null
+      ? formatBytes(storageEstimate.usage)
+      : "Unavailable";
+  const offlineCacheDetail =
+    storageEstimate.supported && storageEstimate.quota != null
+      ? `Offline app-shell and media caches on this device. ${formatBytes(storageEstimate.quota)} browser quota available.`
+      : "Offline cache estimate is not available on this device.";
 
   useEffect(() => {
     document.documentElement.dataset.reduceMotion = reduceMotion ? "1" : "0";
@@ -236,7 +246,7 @@ export default function Settings() {
 
           <h2 style={{ ...SECTION, margin: "28px 0 8px", letterSpacing: "0.06em" }}>Storage & Sync</h2>
           <div>
-            {mobileRow("Offline cache", "Thumbnail cache lands in the next mobile milestone.", <span style={{ fontFamily: "var(--sans)", fontSize: 13, color: "var(--graphite)" }}>Pending</span>)}
+            {mobileRow("Offline cache (size)", offlineCacheDetail, <span style={{ fontFamily: "var(--sans)", fontSize: 13, color: "var(--graphite)", whiteSpace: "nowrap" }}>{offlineCacheSize}</span>)}
             {mobileRow("Sync over cellular", "Stored on this device.", <Switch on={syncCellular} onClick={() => setSyncCellular(!syncCellular)} />)}
             {mobileRow("Server address", "Self-hosted LAN endpoint.", <span style={{ fontFamily: "var(--sans)", fontSize: 13, color: "var(--graphite)" }}>folio.oklabs.uk</span>)}
           </div>
@@ -286,6 +296,11 @@ export default function Settings() {
         <Row title="Storage" desc="Where your pieces live.">
           <div style={{ fontFamily: "var(--sans)", fontSize: 13.5, color: "var(--graphite)", textAlign: "right" }}>
             {totalPhotos.toLocaleString()} pieces · {formatBytes(totalSizeBytes)}
+          </div>
+        </Row>
+        <Row title="Offline cache (size)" desc={offlineCacheDetail}>
+          <div style={{ fontFamily: "var(--sans)", fontSize: 13.5, color: "var(--graphite)", textAlign: "right" }}>
+            {offlineCacheSize}
           </div>
         </Row>
 
