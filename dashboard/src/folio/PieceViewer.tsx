@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useState, type CSSProperties } from "react";
 import { useFolio } from "./context";
 import { ChevronIcon, CloseIcon, HeartIcon, OkfImage } from "./ui";
 
@@ -50,46 +50,19 @@ export default function PieceViewer() {
     return () => window.removeEventListener("keydown", onKey);
   }, [selected, closePiece, stepPiece]);
 
-  // The info panel is a collapsible drawer. It opens with the piece, auto-tucks
-  // a few seconds after opening / on idle so the artwork shows unobstructed, and
-  // reappears on mouse movement. The edge handle gives explicit manual control;
-  // once the user toggles it, auto-hide stops fighting their choice.
-  const [panelOpen, setPanelOpen] = useState(true);
-  const idleTimer = useRef<number | null>(null);
-  const overPanel = useRef(false);
-  const userControlled = useRef(false);
+  // The info panel is hidden by default so the artwork shows unobstructed; the
+  // edge handle (top-right, beside Close) toggles it open/closed on click, and
+  // it resets to hidden on each new piece.
+  const [panelOpen, setPanelOpen] = useState(false);
 
-  const togglePanel = useCallback(() => {
-    userControlled.current = true;
-    if (idleTimer.current) window.clearTimeout(idleTimer.current);
-    setPanelOpen((open) => !open);
-  }, []);
+  const togglePanel = useCallback(() => setPanelOpen((open) => !open), []);
 
-  // Tuck the panel away after `delay`, unless the user has taken manual control
-  // or is currently hovering the panel (i.e. reading it).
-  const scheduleTuck = useCallback((delay: number) => {
-    if (idleTimer.current) window.clearTimeout(idleTimer.current);
-    idleTimer.current = window.setTimeout(() => {
-      if (!userControlled.current && !overPanel.current) setPanelOpen(false);
-    }, delay);
-  }, []);
-
-  // Key the effect on the piece id (a primitive), NOT the `selected` object —
-  // its identity changes on every context re-render, and that churn (re-running
-  // the effect, resetting the timer) is what made the previous version fire
-  // erratically. On each new piece: open, then auto-tuck once. After that the
-  // edge handle drives it — no global listeners, no flicker.
+  // Keyed on the piece id (a primitive), NOT the `selected` object — its
+  // identity churns on every context re-render.
   const pieceId = selected?.id ?? null;
   useEffect(() => {
-    if (pieceId == null) return;
-    userControlled.current = false;
-    overPanel.current = false;
-    setPanelOpen(true);
-    scheduleTuck(3000);
-    return () => {
-      if (idleTimer.current) window.clearTimeout(idleTimer.current);
-    };
-  }, [pieceId, scheduleTuck]);
+    setPanelOpen(false);
+  }, [pieceId]);
 
   if (!selected) return null;
   const p = selected;
@@ -271,14 +244,6 @@ export default function PieceViewer() {
 
       <div
         onClick={stop}
-        onMouseEnter={() => {
-          overPanel.current = true;
-          if (idleTimer.current) window.clearTimeout(idleTimer.current);
-        }}
-        onMouseLeave={() => {
-          overPanel.current = false;
-          if (!userControlled.current) scheduleTuck(1200);
-        }}
         style={{
           position: "absolute",
           top: 0,
