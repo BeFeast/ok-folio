@@ -197,6 +197,13 @@ func (s *Server) setupRoutes() {
 		r.Patch("/settings/connector-sources/{id}", s.handleUpdateConnectorSource)
 		r.Delete("/settings/connector-sources/{id}", s.handleDeleteConnectorSource)
 
+		// Folios (Issue A: model + CRUD; membership in Issue B)
+		r.Get("/folios", s.handleListFolios)
+		r.Post("/folios", s.handleCreateFolio)
+		r.Get("/folios/{id}", s.handleGetFolio)
+		r.Patch("/folios/{id}", s.handleUpdateFolio)
+		r.Delete("/folios/{id}", s.handleDeleteFolio)
+
 		// PhotoPrism integration
 		r.Post("/photoprism/index", s.handleTriggerIndex)
 

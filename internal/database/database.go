@@ -165,6 +165,32 @@ func (ConnectorSource) TableName() string {
 	return "connector_sources"
 }
 
+// Folio is a user-curated, named collection of pieces. Membership (a piece
+// may belong to many folios) is owned by Issue B's FolioPiece join; this model
+// holds only the collection identity plus an optional manual cover override.
+type Folio struct {
+	ID   uint64 `gorm:"primarykey" json:"id"`
+	Name string `gorm:"column:name;type:text;not null;uniqueIndex" json:"name"`
+	// CoverPhotoID is a nullable logical reference to downloaded_photos(id).
+	// Issue A only sets it as a manual override; Issue B fills it by resolving
+	// the newest member when no override is set. It is a plain indexed column
+	// with no DB-level FK constraint.
+	CoverPhotoID *uint64   `gorm:"column:cover_photo_id;index" json:"cover_photo_id"`
+	CreatedAt    time.Time `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt    time.Time `gorm:"autoUpdateTime" json:"updated_at"`
+}
+
+func (Folio) TableName() string {
+	return "folios"
+}
+
+// FolioUpdates carries optional fields for a partial folio update.
+type FolioUpdates struct {
+	Name          *string
+	CoverProvided bool
+	CoverPhotoID  *uint64
+}
+
 // ETLWatermark stores legacy import progress in OK Folio Postgres. The legacy
 // source remains read-only; incremental runs advance this row only after the
 // loader transaction commits.
@@ -365,7 +391,7 @@ func New(cfg *config.DatabaseConfig) (*DB, error) {
 // non-destructive post-migrate steps (identity PK, embedding column). It is the
 // single migration entry point so tests exercise the same path as boot.
 func Migrate(db *gorm.DB) error {
-	if err := db.AutoMigrate(&DownloadedPhoto{}, &ExtractionRun{}, &InboxItem{}, &ConnectorState{}, &ConnectorSource{}, &ETLWatermark{}); err != nil {
+	if err := db.AutoMigrate(&DownloadedPhoto{}, &ExtractionRun{}, &InboxItem{}, &ConnectorState{}, &ConnectorSource{}, &ETLWatermark{}, &Folio{}); err != nil {
 		return fmt.Errorf("failed to migrate database: %w", err)
 	}
 	if db.Dialector.Name() == "postgres" {
@@ -1031,6 +1057,93 @@ func (db *DB) DeleteConnectorSource(id uint64) error {
 		return fmt.Errorf("connector source ID is required")
 	}
 	result := db.Delete(&ConnectorSource{}, id)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
+func normalizeFolio(folio Folio) (Folio, error) {
+	folio.Name = strings.TrimSpace(folio.Name)
+	if folio.Name == "" {
+		return Folio{}, fmt.Errorf("folio name is required")
+	}
+	return folio, nil
+}
+
+// CreateFolio inserts a new user-curated folio.
+func (db *DB) CreateFolio(folio Folio) (*Folio, error) {
+	normalized, err := normalizeFolio(folio)
+	if err != nil {
+		return nil, err
+	}
+	if err := db.Create(&normalized).Error; err != nil {
+		return nil, err
+	}
+	return &normalized, nil
+}
+
+// ListFolios returns all folios ordered by name.
+func (db *DB) ListFolios() ([]Folio, error) {
+	var folios []Folio
+	if err := db.Order("name ASC, id ASC").Find(&folios).Error; err != nil {
+		return nil, err
+	}
+	return folios, nil
+}
+
+// GetFolio returns one folio by id.
+func (db *DB) GetFolio(id uint64) (*Folio, error) {
+	var folio Folio
+	if err := db.Where("id = ?", id).First(&folio).Error; err != nil {
+		return nil, err
+	}
+	return &folio, nil
+}
+
+// UpdateFolio applies a partial folio update and returns the refreshed row.
+func (db *DB) UpdateFolio(id uint64, updates FolioUpdates) (*Folio, error) {
+	if id == 0 {
+		return nil, fmt.Errorf("folio ID is required")
+	}
+	attrs := map[string]interface{}{}
+	if updates.Name != nil {
+		name := strings.TrimSpace(*updates.Name)
+		if name == "" {
+			return nil, fmt.Errorf("folio name is required")
+		}
+		attrs["name"] = name
+	}
+	if updates.CoverProvided {
+		attrs["cover_photo_id"] = updates.CoverPhotoID
+	}
+
+	if len(attrs) > 0 {
+		result := db.Model(&Folio{}).Where("id = ?", id).Updates(attrs)
+		if result.Error != nil {
+			return nil, result.Error
+		}
+		if result.RowsAffected == 0 {
+			return nil, gorm.ErrRecordNotFound
+		}
+	}
+
+	var folio Folio
+	if err := db.Where("id = ?", id).First(&folio).Error; err != nil {
+		return nil, err
+	}
+	return &folio, nil
+}
+
+// DeleteFolio hard-deletes a folio.
+func (db *DB) DeleteFolio(id uint64) error {
+	if id == 0 {
+		return fmt.Errorf("folio ID is required")
+	}
+	result := db.Delete(&Folio{}, id)
 	if result.Error != nil {
 		return result.Error
 	}
