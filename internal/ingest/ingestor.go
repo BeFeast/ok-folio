@@ -263,15 +263,16 @@ func (i *Ingestor) ingestPages(ctx context.Context, connector provider.Connector
 
 func (i *Ingestor) recordInboxDuplicate(providerID string, dedupeKey string, item provider.DiscoveredMedia, reason string) error {
 	return i.db.RecordInboxException(&database.InboxItem{
-		ProviderID: providerID,
-		DedupeKey:  dedupeKey,
-		SourceID:   item.Source.ExternalID,
-		MediaID:    item.Media.ExternalID,
-		SourceURL:  item.Source.URL,
-		Title:      item.Title,
-		Artist:     item.Artist,
-		Status:     "duplicate",
-		Reason:     reason,
+		ProviderID:  providerID,
+		DedupeKey:   dedupeKey,
+		SourceID:    item.Source.ExternalID,
+		MediaID:     item.Media.ExternalID,
+		SourceURL:   item.Source.URL,
+		Title:       item.Title,
+		Artist:      item.Artist,
+		Status:      "duplicate",
+		Reason:      reason,
+		ContentHash: item.Media.ContentHash,
 	})
 }
 

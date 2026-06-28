@@ -1,6 +1,7 @@
 package database
 
 import (
+	"bytes"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -362,13 +363,14 @@ func TestRecordDownloadOrDuplicateRoutesLoserToInbox(t *testing.T) {
 	db := setupTestDB(t)
 
 	const sharedURL = "https://example.com/loser.jpg"
-	first := &DownloadedPhoto{URL: sharedURL, FileName: "loser.jpg", Status: "downloaded"}
+	contentHash := []byte("shared-content-hash")
+	first := &DownloadedPhoto{URL: sharedURL, FileName: "loser.jpg", Status: "downloaded", ContentHash: contentHash}
 	kept, err := db.RecordDownloadOrDuplicate(first, nil)
 	if err != nil || !kept {
 		t.Fatalf("Expected first insert to win, kept=%v err=%v", kept, err)
 	}
 
-	second := &DownloadedPhoto{URL: sharedURL, FileName: "loser-2.jpg", Status: "downloaded"}
+	second := &DownloadedPhoto{URL: sharedURL, FileName: "loser-2.jpg", Status: "downloaded", ContentHash: contentHash}
 	duplicate := &InboxItem{
 		ProviderID: "webgallery",
 		DedupeKey:  "webgallery:loser",
@@ -389,6 +391,17 @@ func TestRecordDownloadOrDuplicateRoutesLoserToInbox(t *testing.T) {
 	}
 	if total != 1 || len(exceptions) != 1 || exceptions[0].Status != "duplicate" {
 		t.Fatalf("Expected one duplicate inbox exception, got total=%d items=%#v", total, exceptions)
+	}
+	if !bytes.Equal(exceptions[0].ContentHash, contentHash) {
+		t.Fatalf("Expected duplicate inbox item to store content hash %x, got %x", contentHash, exceptions[0].ContentHash)
+	}
+
+	winner, err := db.GetPhotoByContentHash(contentHash)
+	if err != nil {
+		t.Fatalf("GetPhotoByContentHash failed: %v", err)
+	}
+	if winner.ID != first.ID {
+		t.Fatalf("Expected content hash winner %d, got %d", first.ID, winner.ID)
 	}
 }
 
@@ -656,15 +669,17 @@ func TestGetInboxExceptionsFiltered(t *testing.T) {
 
 func TestRecordInboxExceptionUpsertsDuplicateByStableKey(t *testing.T) {
 	db := setupTestDB(t)
+	contentHash := bytes.Repeat([]byte{0x4a}, 32)
 
 	first := &InboxItem{
-		ProviderID: "telegram",
-		DedupeKey:  "telegram:source-1:media-1",
-		SourceID:   "source-1",
-		MediaID:    "media-1",
-		Title:      "Original title",
-		Status:     "duplicate",
-		Reason:     "dedupe key already kept",
+		ProviderID:  "telegram",
+		DedupeKey:   "telegram:source-1:media-1",
+		SourceID:    "source-1",
+		MediaID:     "media-1",
+		Title:       "Original title",
+		Status:      "duplicate",
+		Reason:      "dedupe key already kept",
+		ContentHash: contentHash,
 	}
 	if err := db.RecordInboxException(first); err != nil {
 		t.Fatalf("Failed to record first duplicate: %v", err)
@@ -672,6 +687,7 @@ func TestRecordInboxExceptionUpsertsDuplicateByStableKey(t *testing.T) {
 
 	second := *first
 	second.Title = "Updated title"
+	second.ContentHash = nil
 	if err := db.RecordInboxException(&second); err != nil {
 		t.Fatalf("Failed to update duplicate: %v", err)
 	}
@@ -690,6 +706,9 @@ func TestRecordInboxExceptionUpsertsDuplicateByStableKey(t *testing.T) {
 	}
 	if stored.Title != "Updated title" {
 		t.Fatalf("Expected inbox item update, got title %q", stored.Title)
+	}
+	if !bytes.Equal(stored.ContentHash, contentHash) {
+		t.Fatalf("Expected stored content hash to be preserved, got %x", stored.ContentHash)
 	}
 }
 

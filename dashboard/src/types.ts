@@ -322,6 +322,7 @@ export interface InboxItem {
   artist: string;
   status: "duplicate" | "ambiguous";
   reason: string;
+  cover_photo_id: number | null;
   created_at: string;
   updated_at: string;
 }

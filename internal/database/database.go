@@ -130,16 +130,18 @@ func (k *Keywords) UnmarshalJSON(data []byte) error {
 
 // InboxItem is an ingestion exception that needs an operator decision.
 type InboxItem struct {
-	ID         uint64 `gorm:"primarykey" json:"id"`
-	ProviderID string `gorm:"type:text;index;not null" json:"provider_id"`
-	DedupeKey  string `gorm:"type:text;index" json:"dedupe_key"`
-	SourceID   string `gorm:"type:text;index" json:"source_id"`
-	MediaID    string `gorm:"type:text;index" json:"media_id"`
-	SourceURL  string `gorm:"type:text" json:"source_url"`
-	Title      string `gorm:"type:text" json:"title"`
-	Artist     string `gorm:"type:text" json:"artist"`
-	Status     string `gorm:"type:text;index;not null" json:"status"` // duplicate, ambiguous
-	Reason     string `gorm:"type:text" json:"reason"`
+	ID           uint64  `gorm:"primarykey" json:"id"`
+	ProviderID   string  `gorm:"type:text;index;not null" json:"provider_id"`
+	DedupeKey    string  `gorm:"type:text;index" json:"dedupe_key"`
+	SourceID     string  `gorm:"type:text;index" json:"source_id"`
+	MediaID      string  `gorm:"type:text;index" json:"media_id"`
+	SourceURL    string  `gorm:"type:text" json:"source_url"`
+	Title        string  `gorm:"type:text" json:"title"`
+	Artist       string  `gorm:"type:text" json:"artist"`
+	Status       string  `gorm:"type:text;index;not null" json:"status"` // duplicate, ambiguous
+	Reason       string  `gorm:"type:text" json:"reason"`
+	ContentHash  []byte  `gorm:"type:bytea;index" json:"content_hash,omitempty"`
+	CoverPhotoID *uint64 `gorm:"-" json:"cover_photo_id"`
 	// Fingerprint is a stable identity used as the ON CONFLICT target so inbox
 	// exceptions upsert atomically. It is populated by the BeforeSave hook.
 	Fingerprint string    `gorm:"type:text;uniqueIndex" json:"-"`
@@ -747,7 +749,7 @@ func (db *DB) RecordDownloadOrDuplicate(photo *DownloadedPhoto, duplicate *Inbox
 			updated, updateErr := db.updateNonDownloadedURLHashOwner(photo)
 			if updateErr != nil {
 				if IsUniqueViolation(updateErr) && uniqueViolationConstraint(updateErr) == ContentHashUniqueIndex {
-					return db.routeDuplicateToInbox(duplicate)
+					return db.routeDuplicateToInbox(duplicate, photo.ContentHash)
 				}
 				return false, updateErr
 			}
@@ -755,7 +757,7 @@ func (db *DB) RecordDownloadOrDuplicate(photo *DownloadedPhoto, duplicate *Inbox
 				return true, nil
 			}
 		}
-		return db.routeDuplicateToInbox(duplicate)
+		return db.routeDuplicateToInbox(duplicate, photo.ContentHash)
 	}
 	return false, err
 }
@@ -773,9 +775,12 @@ func (db *DB) updateNonDownloadedURLHashOwner(photo *DownloadedPhoto) (bool, err
 	return true, nil
 }
 
-func (db *DB) routeDuplicateToInbox(duplicate *InboxItem) (bool, error) {
+func (db *DB) routeDuplicateToInbox(duplicate *InboxItem, contentHash []byte) (bool, error) {
 	if duplicate == nil {
 		return false, nil
+	}
+	if duplicate.Status == "duplicate" && len(contentHash) > 0 {
+		duplicate.ContentHash = contentHash
 	}
 	if err := db.RecordInboxException(duplicate); err != nil {
 		return false, err
@@ -821,16 +826,21 @@ func (db *DB) RecordInboxException(item *InboxItem) error {
 		return fmt.Errorf("provider ID is required")
 	}
 
+	updates := map[string]interface{}{
+		"source_id":  item.SourceID,
+		"media_id":   item.MediaID,
+		"source_url": item.SourceURL,
+		"title":      item.Title,
+		"artist":     item.Artist,
+		"reason":     item.Reason,
+	}
+	if len(item.ContentHash) > 0 {
+		updates["content_hash"] = item.ContentHash
+	}
+
 	return db.Clauses(clause.OnConflict{
-		Columns: []clause.Column{{Name: "fingerprint"}},
-		DoUpdates: clause.Assignments(map[string]interface{}{
-			"source_id":  item.SourceID,
-			"media_id":   item.MediaID,
-			"source_url": item.SourceURL,
-			"title":      item.Title,
-			"artist":     item.Artist,
-			"reason":     item.Reason,
-		}),
+		Columns:   []clause.Column{{Name: "fingerprint"}},
+		DoUpdates: clause.Assignments(updates),
 	}).Create(item).Error
 }
 
@@ -1454,6 +1464,38 @@ func (db *DB) GetPhotoByID(id uint64) (*DownloadedPhoto, error) {
 		return nil, err
 	}
 	return &photo, nil
+}
+
+// GetPhotoByContentHash returns the catalog row that owns an exact-content hash.
+func (db *DB) GetPhotoByContentHash(hash []byte) (*DownloadedPhoto, error) {
+	if len(hash) == 0 {
+		return nil, gorm.ErrRecordNotFound
+	}
+	var photo DownloadedPhoto
+	err := db.DB.Where("content_hash = ?", hash).First(&photo).Error
+	if err != nil {
+		return nil, err
+	}
+	return &photo, nil
+}
+
+// GetPhotosByContentHashes returns catalog rows matching exact-content hashes.
+func (db *DB) GetPhotosByContentHashes(hashes [][]byte) ([]DownloadedPhoto, error) {
+	filtered := make([][]byte, 0, len(hashes))
+	for _, hash := range hashes {
+		if len(hash) > 0 {
+			filtered = append(filtered, hash)
+		}
+	}
+	var photos []DownloadedPhoto
+	if len(filtered) == 0 {
+		return photos, nil
+	}
+	err := db.DB.Where("content_hash IN ?", filtered).Find(&photos).Error
+	if err != nil {
+		return nil, err
+	}
+	return photos, nil
 }
 
 // SetPhotoFavorite persists the local OK Folio favorite state for a photo.
