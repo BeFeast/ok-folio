@@ -1637,6 +1637,49 @@ func TestGetGalleryCatalogFiltersCategoryCaseInsensitive(t *testing.T) {
 	}
 }
 
+func TestGetGalleryCatalogFiltersGenericCategoriesCaseSensitive(t *testing.T) {
+	db := setupTestDB(t)
+	baseTime := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+
+	photos := []DownloadedPhoto{
+		{
+			URL:          "https://example.com/upper.jpg",
+			SourcePage:   "https://example.com/gallery/upper",
+			Title:        "Upper Download",
+			Artist:       "Artist A",
+			Category:     "ABC",
+			FilePath:     filepath.Join(t.TempDir(), "upper.jpg"),
+			FileName:     "upper.jpg",
+			DownloadedAt: ptrTime(baseTime),
+			Status:       "downloaded",
+		},
+		{
+			URL:          "https://example.com/lower.jpg",
+			SourcePage:   "https://example.com/gallery/lower",
+			Title:        "Lower Download",
+			Artist:       "Artist B",
+			Category:     "abc",
+			FilePath:     filepath.Join(t.TempDir(), "lower.jpg"),
+			FileName:     "lower.jpg",
+			DownloadedAt: ptrTime(baseTime.Add(-time.Minute)),
+			Status:       "downloaded",
+		},
+	}
+	for i := range photos {
+		if err := db.Create(&photos[i]).Error; err != nil {
+			t.Fatalf("Failed to create photo: %v", err)
+		}
+	}
+
+	filtered, total, err := db.GetGalleryCatalog(10, 0, GalleryCatalogFilters{Category: "ABC"})
+	if err != nil {
+		t.Fatalf("Failed to get generic category-filtered gallery catalog: %v", err)
+	}
+	if total != 1 || len(filtered) != 1 || filtered[0].Title != "Upper Download" {
+		t.Fatalf("Expected exact generic category filter to isolate uppercase fixture, total=%d rows=%#v", total, filtered)
+	}
+}
+
 func TestGalleryFavoriteColumnPrefersCanonicalFavorite(t *testing.T) {
 	gormDB, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent),

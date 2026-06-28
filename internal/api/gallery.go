@@ -86,12 +86,17 @@ type cacheGalleryCatalogETagShape struct {
 const catalogCacheControl = "private, no-cache, stale-while-revalidate=120"
 const catalogCacheVersion = 5
 
-var galleryMediumCategories = []galleryFacet{
-	{ID: "painting", DisplayName: "Painting"},
-	{ID: "photography", DisplayName: "Photography"},
-	{ID: "drawing", DisplayName: "Drawing"},
-	{ID: "print", DisplayName: "Print"},
-	{ID: "sculpture", DisplayName: "Sculpture"},
+var galleryMediumCategories = galleryMediumCategoryFacets()
+
+func galleryMediumCategoryFacets() []galleryFacet {
+	facets := make([]galleryFacet, 0, len(gallery.MediumCategories))
+	for _, medium := range gallery.MediumCategories {
+		facets = append(facets, galleryFacet{
+			ID:          medium.ID,
+			DisplayName: medium.DisplayName,
+		})
+	}
+	return facets
 }
 
 func (s *Server) handleGalleryCatalog(w http.ResponseWriter, r *http.Request) {
@@ -413,13 +418,7 @@ func normalizedCategoryFacet(category string) (string, string) {
 }
 
 func normalizedMediumCategory(category string) (string, string, bool) {
-	normalized := strings.ToLower(strings.TrimSpace(category))
-	for _, medium := range galleryMediumCategories {
-		if normalized == medium.ID || normalized == strings.ToLower(medium.DisplayName) {
-			return medium.ID, medium.DisplayName, true
-		}
-	}
-	return "", "", false
+	return gallery.NormalizeMediumCategory(category)
 }
 
 func galleryCategoryIDFromSourcePage(sourcePage string) string {
