@@ -170,7 +170,14 @@ func TestRecordDownloadRetryPersistsDerivedCategory(t *testing.T) {
 	// The scraper retries with no Category set, relying on the hook to derive it.
 	// The conflict-update path must persist the derived category, not the caller's
 	// empty value, so the recovered download keeps matching its category facet.
-	retry := &DownloadedPhoto{URL: sharedURL, SourcePage: sourcePage, FileName: "retry.jpg", Status: "downloaded"}
+	retry := &DownloadedPhoto{
+		URL:        sharedURL,
+		SourcePage: sourcePage,
+		FileName:   "retry.jpg",
+		Artist:     "  _NonPS ",
+		Keywords:   Keywords{"gansovsky", "gold"},
+		Status:     "downloaded",
+	}
 	if err := db.RecordDownload(retry); err != nil {
 		t.Fatalf("Retry RecordDownload failed: %v", err)
 	}
@@ -184,6 +191,12 @@ func TestRecordDownloadRetryPersistsDerivedCategory(t *testing.T) {
 	}
 	if stored.Category != "42" {
 		t.Fatalf("Expected retry update to persist derived category %q, got %q", "42", stored.Category)
+	}
+	if stored.Artist != "_NonPS" {
+		t.Fatalf("Expected retry update to normalize artist, got %q", stored.Artist)
+	}
+	if len(stored.Keywords) != 2 || stored.Keywords[0] != "gansovsky" || stored.Keywords[1] != "gold" {
+		t.Fatalf("Expected retry update to persist keywords, got %#v", stored.Keywords)
 	}
 }
 
@@ -224,10 +237,34 @@ func TestGalleryCatalogQueryExcludesURLShapedTextColumns(t *testing.T) {
 			t.Fatalf("Expected gallery free-text SQL to avoid %q, got %s", forbidden, sql)
 		}
 	}
-	for _, required := range []string{"title like", "artist like", "file_name like"} {
+	for _, required := range []string{"title like", "artist like", "file_name like", "keywords"} {
 		if !strings.Contains(sql, required) {
 			t.Fatalf("Expected gallery free-text SQL to include %q, got %s", required, sql)
 		}
+	}
+}
+
+func TestSearchPhotosMatchesKeywords(t *testing.T) {
+	db := setupTestDB(t)
+
+	photo := &DownloadedPhoto{
+		URL:      "https://example.com/keyword.jpg",
+		Title:    "No textual match",
+		Artist:   "Keyword Artist",
+		FileName: "keyword.jpg",
+		Keywords: Keywords{"gansovsky", "gold"},
+		Status:   "downloaded",
+	}
+	if err := db.Create(photo).Error; err != nil {
+		t.Fatalf("Failed to create photo: %v", err)
+	}
+
+	results, total, err := db.SearchPhotos("gansovsky", 10, 0)
+	if err != nil {
+		t.Fatalf("SearchPhotos failed: %v", err)
+	}
+	if total != 1 || len(results) != 1 || results[0].ID != photo.ID {
+		t.Fatalf("Expected keyword search to find photo, total=%d results=%#v", total, results)
 	}
 }
 
@@ -253,6 +290,71 @@ func TestBeforeSaveHookPopulatesURLHash(t *testing.T) {
 	}
 	if stored.ID != photo.ID {
 		t.Fatalf("Expected url_hash lookup to return the inserted row")
+	}
+}
+
+func TestBeforeSaveHookNormalizesArtistWhitespace(t *testing.T) {
+	db := setupTestDB(t)
+
+	tests := []struct {
+		name   string
+		artist string
+		want   string
+	}{
+		{name: "bucket handle", artist: "  _NonPS ", want: "_NonPS"},
+		{name: "internal whitespace", artist: "Влад  Троянский", want: "Влад Троянский"},
+		{name: "empty", artist: "", want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			photo := &DownloadedPhoto{
+				URL:      "https://example.com/" + tt.name + ".jpg",
+				Artist:   tt.artist,
+				FileName: tt.name + ".jpg",
+				Status:   "downloaded",
+			}
+			if err := db.Create(photo).Error; err != nil {
+				t.Fatalf("Failed to create photo: %v", err)
+			}
+
+			stored, err := db.GetPhotoByID(photo.ID)
+			if err != nil {
+				t.Fatalf("Failed to fetch photo: %v", err)
+			}
+			if stored.Artist != tt.want {
+				t.Fatalf("Expected artist %q, got %q", tt.want, stored.Artist)
+			}
+		})
+	}
+}
+
+func TestSetPhotoFavoriteDoesNotBlankArtist(t *testing.T) {
+	db := setupTestDB(t)
+
+	photo := &DownloadedPhoto{
+		URL:      "https://example.com/favorite-artist.jpg",
+		Artist:   "  _NonPS ",
+		FileName: "favorite-artist.jpg",
+		Status:   "downloaded",
+	}
+	if err := db.Create(photo).Error; err != nil {
+		t.Fatalf("Failed to create photo: %v", err)
+	}
+
+	if err := db.SetPhotoFavorite(photo.ID, true); err != nil {
+		t.Fatalf("SetPhotoFavorite failed: %v", err)
+	}
+
+	stored, err := db.GetPhotoByID(photo.ID)
+	if err != nil {
+		t.Fatalf("Failed to fetch photo: %v", err)
+	}
+	if stored.Artist != "_NonPS" {
+		t.Fatalf("Expected favorite update to preserve artist, got %q", stored.Artist)
+	}
+	if !stored.Favorite {
+		t.Fatalf("Expected favorite to be true")
 	}
 }
 
@@ -302,7 +404,8 @@ func TestRecordDownloadOrDuplicateRecoversFailedURLHashOwner(t *testing.T) {
 		URL:        sharedURL,
 		SourcePage: "https://example.com/source/retry",
 		Title:      "Recovered",
-		Artist:     "Retry Artist",
+		Artist:     "Влад  Троянский",
+		Keywords:   Keywords{"gansovsky", "gold"},
 		FileName:   "retry-success.jpg",
 		FileSize:   123,
 		Status:     "downloaded",
@@ -327,6 +430,12 @@ func TestRecordDownloadOrDuplicateRecoversFailedURLHashOwner(t *testing.T) {
 	}
 	if stored.Status != "downloaded" || stored.ErrorMessage != "" || stored.Title != retry.Title || stored.FileSize != retry.FileSize {
 		t.Fatalf("Expected failed row to be updated to successful download, got %#v", stored)
+	}
+	if stored.Artist != "Влад Троянский" {
+		t.Fatalf("Expected recovered row to normalize artist, got %q", stored.Artist)
+	}
+	if len(stored.Keywords) != 2 || stored.Keywords[0] != "gansovsky" || stored.Keywords[1] != "gold" {
+		t.Fatalf("Expected recovered row to persist keywords, got %#v", stored.Keywords)
 	}
 	if retry.ID == 0 || retry.ID != stored.ID || retry.DownloadedAt == nil {
 		t.Fatalf("Expected retry photo to be hydrated with persisted row, retry=%#v stored=%#v", retry, stored)

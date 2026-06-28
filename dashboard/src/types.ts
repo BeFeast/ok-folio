@@ -170,6 +170,7 @@ export interface Photo {
   DownloadedAt: string;
   FileSize: number;
   Notes: string;
+  keywords: string[];
   Favorite: boolean;
   Status: string;
 }
@@ -271,6 +272,7 @@ export interface PhotoDetailResponse {
   category: string;
   title: string;
   artist: string;
+  keywords: string[];
   upload_date: string;
   file_path: string;
   file_name: string;

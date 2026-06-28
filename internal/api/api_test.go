@@ -854,6 +854,7 @@ func TestHandleGalleryCatalog(t *testing.T) {
 		SourcePage:   "https://webgallery/gallery/category/1/old",
 		Title:        "Oldest",
 		Artist:       "Artist A",
+		Keywords:     database.Keywords{"gansovsky", "gold"},
 		FilePath:     filepath.Join(server.cfg.Storage.BaseDirectory, "old.jpg"),
 		FileName:     "old.jpg",
 		DownloadedAt: ptrTime(time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC)),
@@ -943,6 +944,9 @@ func TestHandleGalleryCatalog(t *testing.T) {
 	if response.Photos[0].Title != "Newest" {
 		t.Fatalf("Expected newest downloaded photo first, got %q", response.Photos[0].Title)
 	}
+	if response.Photos[0].Keywords == nil || len(response.Photos[0].Keywords) != 0 {
+		t.Fatalf("Expected empty keywords to be exposed as [], got %#v", response.Photos[0].Keywords)
+	}
 	if len(response.Providers) != 1 || response.Providers[0].ID != "webgallery" {
 		t.Fatalf("Expected webgallery provider facet, got %#v", response.Providers)
 	}
@@ -1011,6 +1015,24 @@ func TestHandleGalleryCatalog(t *testing.T) {
 	}
 	if response.Query != "old" {
 		t.Fatalf("Expected search query echo, got %q", response.Query)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/gallery/catalog?q=gansovsky", nil)
+	w = httptest.NewRecorder()
+
+	server.handleGalleryCatalog(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected keyword search-filtered status 200, got %d", w.Code)
+	}
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode keyword search-filtered gallery catalog: %v", err)
+	}
+	if response.Total != 1 || len(response.Photos) != 1 || response.Photos[0].Title != "Oldest" {
+		t.Fatalf("Expected search to match piece keywords, total=%d photos=%#v", response.Total, response.Photos)
+	}
+	if len(response.Photos[0].Keywords) != 2 || response.Photos[0].Keywords[0] != "gansovsky" {
+		t.Fatalf("Expected keyword payload to be exposed, got %#v", response.Photos[0].Keywords)
 	}
 }
 
@@ -1371,6 +1393,7 @@ func TestHandlePhotoDetailIncludesProvenanceAndFavorite(t *testing.T) {
 		SourcePage:   "https://webgallery/gallery/category/7/piece",
 		Title:        "Detail Piece",
 		Artist:       "Detail Artist",
+		Keywords:     database.Keywords{"gansovsky", "gold"},
 		FilePath:     filepath.Join(server.cfg.Storage.BaseDirectory, "piece.jpg"),
 		FileName:     "piece.jpg",
 		UploadDate:   ptrTime(time.Date(2026, 6, 20, 12, 0, 0, 0, time.UTC)),
@@ -1393,13 +1416,14 @@ func TestHandlePhotoDetailIncludesProvenanceAndFavorite(t *testing.T) {
 	}
 
 	var response struct {
-		ID        uint64 `json:"id"`
-		Source    string `json:"source"`
-		Provider  string `json:"provider"`
-		Category  string `json:"category"`
-		Artist    string `json:"artist"`
-		Favorite  bool   `json:"favorite"`
-		SourceURL string `json:"source_page"`
+		ID        uint64   `json:"id"`
+		Source    string   `json:"source"`
+		Provider  string   `json:"provider"`
+		Category  string   `json:"category"`
+		Artist    string   `json:"artist"`
+		Keywords  []string `json:"keywords"`
+		Favorite  bool     `json:"favorite"`
+		SourceURL string   `json:"source_page"`
 	}
 	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
 		t.Fatalf("Failed to decode photo detail: %v", err)
@@ -1407,6 +1431,9 @@ func TestHandlePhotoDetailIncludesProvenanceAndFavorite(t *testing.T) {
 
 	if response.ID != photo.ID || response.Artist != "Detail Artist" || !response.Favorite {
 		t.Fatalf("Expected detail identity and favorite state, got %#v", response)
+	}
+	if len(response.Keywords) != 2 || response.Keywords[0] != "gansovsky" {
+		t.Fatalf("Expected detail keywords, got %#v", response.Keywords)
 	}
 	if response.Provider != "webgallery" || response.Source != "webgallery/gallery/category/7/piece" || response.Category != "Category 7" {
 		t.Fatalf("Expected provenance fields from source page, got %#v", response)
