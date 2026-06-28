@@ -382,6 +382,13 @@ func TestDiscoveredMediaParsesArtworkCaptionFields(t *testing.T) {
 			wantNoTitle: true,
 		},
 		{
+			name:       "skips normalized empty title candidate",
+			caption:    "***\n\nНастоящее название 1978 г.\n\nГовард Чандлер Кристи (США, 1873 - 1952)",
+			wantTitle:  "Настоящее название",
+			wantArtist: "Говард Чандлер Кристи (США, 1873 - 1952)",
+			wantYear:   1978,
+		},
+		{
 			name:        "captionless",
 			caption:     "",
 			wantNoDate:  true,

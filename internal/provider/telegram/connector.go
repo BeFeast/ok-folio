@@ -424,7 +424,11 @@ func parseArtworkCaption(caption string) parsedArtworkCaption {
 		}
 		title, date := parseTitleAndDate(line)
 		if title != "" {
-			parsed.Title = dataquality.NormalizeTitle(title)
+			normalizedTitle := dataquality.NormalizeTitle(title)
+			if normalizedTitle == "" {
+				continue
+			}
+			parsed.Title = normalizedTitle
 			parsed.Date = date
 			return parsed
 		}
