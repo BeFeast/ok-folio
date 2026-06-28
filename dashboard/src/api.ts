@@ -13,6 +13,9 @@ import type {
   TodayPhotosResponse,
   WeekPhotosResponse,
   GalleryCatalogResponse,
+  InboxCountsResponse,
+  InboxItem,
+  InboxResponse,
   PhotoDetailResponse,
   RunPhotosResponse,
   Photo,
@@ -299,6 +302,43 @@ export async function fetchGalleryCatalog(
     throw new Error("Failed to fetch gallery catalog");
   }
   return response.json();
+}
+
+export async function fetchInbox(
+  status: InboxItem["status"] | "" = "",
+  limit: number = 50,
+  offset: number = 0,
+): Promise<InboxResponse> {
+  const params = new URLSearchParams({
+    limit: limit.toString(),
+    offset: offset.toString(),
+  });
+  if (status) {
+    params.set("status", status);
+  }
+  const response = await fetch(`${API_BASE}/inbox?${params}`);
+  if (!response.ok) {
+    throw new Error("Failed to fetch inbox");
+  }
+  return response.json();
+}
+
+export async function fetchInboxCounts(): Promise<InboxCountsResponse> {
+  const response = await fetch(`${API_BASE}/inbox/counts`);
+  if (!response.ok) {
+    throw new Error("Failed to fetch inbox counts");
+  }
+  return response.json();
+}
+
+export async function dismissInboxItem(id: number): Promise<void> {
+  const response = await fetch(`${API_BASE}/inbox/${id}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || "Failed to dismiss inbox item");
+  }
 }
 
 export async function fetchPhotoDetail(

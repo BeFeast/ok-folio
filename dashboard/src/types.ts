@@ -288,3 +288,33 @@ export interface RunPhotosResponse {
   offset: number;
   run_id: number;
 }
+
+export interface InboxItem {
+  id: number;
+  provider_id: string;
+  dedupe_key: string;
+  source_id: string;
+  media_id: string;
+  source_url: string;
+  title: string;
+  artist: string;
+  status: "duplicate" | "ambiguous";
+  reason: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface InboxResponse {
+  items: InboxItem[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface InboxCountsResponse {
+  counts: {
+    duplicate: number;
+    ambiguous: number;
+  };
+  total: number;
+}

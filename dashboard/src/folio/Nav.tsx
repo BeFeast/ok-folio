@@ -11,12 +11,12 @@ interface NavItem {
 export default function Nav() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { query, setQuery, toggleTheme, openAdd } = useFolio();
+  const { query, setQuery, toggleTheme, openAdd, inboxCount } = useFolio();
 
   const items: NavItem[] = [
     { label: "Gallery", path: "/" },
     { label: "Folios", path: "/folios" },
-    { label: "Inbox", path: "/inbox", badge: 0 },
+    { label: "Inbox", path: "/inbox", badge: inboxCount },
     { label: "Streams", path: "/streams" },
     { label: "Settings", path: "/settings" },
   ];

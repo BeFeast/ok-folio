@@ -18,7 +18,9 @@ import { useNavigate } from "react-router-dom";
 import {
   addToFavorites,
   createPiece,
+  dismissInboxItem,
   fetchGalleryCatalog,
+  fetchInboxCounts,
   fetchStats,
   getPhotoImageUrl,
   getPhotoThumbnailUrl,
@@ -177,6 +179,7 @@ interface FolioContextValue {
 
   totalPhotos: number;
   totalSizeBytes: number;
+  inboxCount: number;
 
   selected: PieceVM | null;
   selIndex: number;
@@ -193,6 +196,7 @@ interface FolioContextValue {
   toggleFav: (id: number) => void;
 
   importPiece: (input: CreatePieceInput) => void;
+  dismissInboxAction: (id: number) => void;
   toasts: Toast[];
   dismissToast: (id: number) => void;
 }
@@ -259,6 +263,7 @@ export function FolioProvider({ children }: { children: ReactNode }) {
   });
 
   const stats = useQuery({ queryKey: ["folio-stats"], queryFn: fetchStats });
+  const inboxCounts = useQuery({ queryKey: ["inbox-counts"], queryFn: fetchInboxCounts });
 
   const catalogTotal = catalog.data?.pages[0]?.total;
 
@@ -344,6 +349,36 @@ export function FolioProvider({ children }: { children: ReactNode }) {
     [queryClient],
   );
 
+  const dismissInboxAction = useCallback(
+    (inboxItemId: number) => {
+      const id = ++toastSeq;
+      setToasts((prev) => [...prev, { id, status: "loading", title: "Dismissing inbox item" }]);
+      dismissInboxItem(inboxItemId)
+        .then(() => {
+          setToasts((prev) =>
+            prev.map((t) =>
+              t.id === id ? { ...t, status: "success", title: "Inbox item dismissed" } : t,
+            ),
+          );
+          window.setTimeout(() => {
+            setToasts((prev) => prev.filter((t) => t.id !== id));
+          }, 2800);
+          void queryClient.invalidateQueries({ queryKey: ["inbox"] });
+          void queryClient.invalidateQueries({ queryKey: ["inbox-counts"] });
+        })
+        .catch((err: unknown) => {
+          setToasts((prev) =>
+            prev.map((t) =>
+              t.id === id
+                ? { ...t, status: "error", title: "Couldn’t dismiss inbox item", detail: err instanceof Error ? err.message : undefined }
+                : t,
+            ),
+          );
+        });
+    },
+    [queryClient],
+  );
+
   const openPiece = useCallback((id: number) => setSelectedId(id), []);
   const closePiece = useCallback(() => setSelectedId(null), []);
   const filterByArtist = useCallback(
@@ -404,6 +439,7 @@ export function FolioProvider({ children }: { children: ReactNode }) {
     loadingMore: catalog.isFetchingNextPage,
     totalPhotos: stats.data?.total_photos ?? catalogTotal ?? 0,
     totalSizeBytes: stats.data?.total_size_bytes ?? 0,
+    inboxCount: inboxCounts.data?.total ?? 0,
     selected,
     selIndex,
     selCount: pieces.length,
@@ -416,6 +452,7 @@ export function FolioProvider({ children }: { children: ReactNode }) {
     isFav,
     toggleFav,
     importPiece,
+    dismissInboxAction,
     toasts,
     dismissToast,
   };
