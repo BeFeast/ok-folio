@@ -17,6 +17,7 @@ import (
 	okfcache "ok-folio/internal/cache"
 	"ok-folio/internal/config"
 	"ok-folio/internal/database"
+	"ok-folio/internal/dataquality"
 	"ok-folio/internal/derivatives"
 	"ok-folio/internal/exif"
 	"ok-folio/internal/photoprism"
@@ -282,6 +283,7 @@ func (s *Scraper) DownloadResolvedMediaOrDuplicate(ctx context.Context, resolved
 		fileName = filepath.Base(resolved.Media.URL)
 	}
 	filePath := filepath.Join(artistDir, fileName)
+	title := dataquality.NormalizeTitle(resolved.Title, fileName, filePath)
 
 	// Validate file path
 	if err := validatePath(s.cfg.Storage.BaseDirectory, filePath); err != nil {
@@ -300,7 +302,7 @@ func (s *Scraper) DownloadResolvedMediaOrDuplicate(ctx context.Context, resolved
 	// Set EXIF metadata
 	if s.cfg.EXIF.SetArtist || s.cfg.EXIF.SetDate || s.cfg.EXIF.SetTitle {
 		metadata := exif.Metadata{
-			Title:      resolved.Title,
+			Title:      title,
 			Artist:     resolved.Artist,
 			UploadDate: resolved.PublishedAt,
 		}
@@ -315,7 +317,7 @@ func (s *Scraper) DownloadResolvedMediaOrDuplicate(ctx context.Context, resolved
 	photo := &database.DownloadedPhoto{
 		URL:          dedupeKey,
 		SourcePage:   resolved.Source.URL,
-		Title:        resolved.Title,
+		Title:        title,
 		Artist:       resolved.Artist,
 		UploadDate:   uploadDate,
 		FilePath:     filePath,
@@ -341,7 +343,7 @@ func (s *Scraper) DownloadResolvedMediaOrDuplicate(ctx context.Context, resolved
 		SourceID:   resolved.Source.ExternalID,
 		MediaID:    resolved.Media.ExternalID,
 		SourceURL:  resolved.Source.URL,
-		Title:      resolved.Title,
+		Title:      title,
 		Artist:     resolved.Artist,
 		Status:     "duplicate",
 		Reason:     "exact content hash already kept",
@@ -428,7 +430,7 @@ func (s *Scraper) recordInboxException(item provider.DiscoveredMedia, status str
 		SourceID:   item.Source.ExternalID,
 		MediaID:    item.Media.ExternalID,
 		SourceURL:  item.Source.URL,
-		Title:      item.Title,
+		Title:      dataquality.NormalizeTitle(item.Title, item.Media.FileName),
 		Artist:     item.Artist,
 		Status:     status,
 		Reason:     reason,

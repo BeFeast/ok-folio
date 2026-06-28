@@ -376,6 +376,12 @@ func TestDiscoveredMediaParsesArtworkCaptionFields(t *testing.T) {
 			wantNoTitle: true,
 		},
 		{
+			name:        "punctuation placeholder",
+			caption:     "***",
+			wantNoDate:  true,
+			wantNoTitle: true,
+		},
+		{
 			name:        "captionless",
 			caption:     "",
 			wantNoDate:  true,
@@ -394,7 +400,7 @@ func TestDiscoveredMediaParsesArtworkCaptionFields(t *testing.T) {
 
 			wantTitle := tt.wantTitle
 			if tt.wantNoTitle {
-				wantTitle = "fixture.jpg"
+				wantTitle = ""
 			}
 			if item.Title != wantTitle {
 				t.Fatalf("unexpected title: got %q want %q", item.Title, wantTitle)

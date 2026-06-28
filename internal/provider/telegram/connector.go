@@ -14,6 +14,7 @@ import (
 	"time"
 	"unicode"
 
+	"ok-folio/internal/dataquality"
 	"ok-folio/internal/provider"
 	"ok-folio/pkg/retry"
 
@@ -322,6 +323,7 @@ func discoveredMedia(message Message) (provider.DiscoveredMedia, bool) {
 	if title == "" {
 		title = ref.FileName
 	}
+	title = dataquality.NormalizeTitle(title, ref.FileName)
 	// Source should name the originating channel (e.g. "Нимфы и Музы"), which is
 	// the forwarded-from chat, not the operator's DM. Prefer a real forward URL,
 	// then the channel name, then the provider id as a last resort.
@@ -422,7 +424,7 @@ func parseArtworkCaption(caption string) parsedArtworkCaption {
 		}
 		title, date := parseTitleAndDate(line)
 		if title != "" {
-			parsed.Title = title
+			parsed.Title = dataquality.NormalizeTitle(title)
 			parsed.Date = date
 			return parsed
 		}

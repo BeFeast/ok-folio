@@ -10,6 +10,7 @@ import (
 
 	okfcache "ok-folio/internal/cache"
 	"ok-folio/internal/database"
+	"ok-folio/internal/dataquality"
 	"ok-folio/internal/provider"
 	"ok-folio/internal/scraper"
 
@@ -268,7 +269,7 @@ func (i *Ingestor) recordInboxDuplicate(providerID string, dedupeKey string, ite
 		SourceID:    item.Source.ExternalID,
 		MediaID:     item.Media.ExternalID,
 		SourceURL:   item.Source.URL,
-		Title:       item.Title,
+		Title:       dataquality.NormalizeTitle(item.Title, item.Media.FileName),
 		Artist:      item.Artist,
 		Status:      "duplicate",
 		Reason:      reason,

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"ok-folio/internal/config"
+	"ok-folio/internal/dataquality"
 	"ok-folio/internal/gallery"
 	"ok-folio/internal/testguard"
 
@@ -299,6 +300,8 @@ func normalizeArtist(rawArtist string) string {
 func (p *DownloadedPhoto) BeforeSave(tx *gorm.DB) error {
 	p.URLHash = HashURL(p.URL)
 	p.Artist = normalizeArtist(p.Artist)
+	p.Title = dataquality.NormalizeTitle(p.Title, p.FileName, p.FilePath)
+	p.Keywords = Keywords(dataquality.SanitizeKeywords(p.Artist, p.Keywords))
 	p.Category = resolveCategory(p)
 	if p.Provider == "" {
 		p.Provider = DefaultProvider
@@ -727,10 +730,11 @@ func downloadAssignments(photo *DownloadedPhoto) map[string]interface{} {
 	if provider == "" {
 		provider = DefaultProvider
 	}
+	artist := normalizeArtist(photo.Artist)
 	return map[string]interface{}{
 		"source_page":     photo.SourcePage,
-		"title":           photo.Title,
-		"artist":          normalizeArtist(photo.Artist),
+		"title":           dataquality.NormalizeTitle(photo.Title, photo.FileName, photo.FilePath),
+		"artist":          artist,
 		"category":        resolveCategory(photo),
 		"upload_date":     photo.UploadDate,
 		"file_path":       photo.FilePath,
@@ -746,7 +750,7 @@ func downloadAssignments(photo *DownloadedPhoto) map[string]interface{} {
 		"gps_longitude":   photo.GPSLongitude,
 		"file_size":       photo.FileSize,
 		"notes":           photo.Notes,
-		"keywords":        photo.Keywords,
+		"keywords":        Keywords(dataquality.SanitizeKeywords(artist, photo.Keywords)),
 		"provider":        provider,
 		"content_hash":    photo.ContentHash,
 		"perceptual_hash": photo.PerceptualHash,
