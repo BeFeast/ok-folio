@@ -132,6 +132,72 @@ func TestRecordDownload_Success(t *testing.T) {
 	}
 }
 
+func TestDownloadedPhotoBeforeSaveSanitizesCatalogFields(t *testing.T) {
+	db := setupTestDB(t)
+
+	photo := &DownloadedPhoto{
+		URL:      "https://example.com/junk-title.jpg",
+		Title:    "***",
+		Artist:   "Vlad Gansovsky",
+		FilePath: filepath.Join(t.TempDir(), "junk-title.jpg"),
+		FileName: "junk-title.jpg",
+		Keywords: Keywords{"vlad", "gansovsky", "nonps", "portrait", "favorites", "Portrait"},
+		Status:   "downloaded",
+	}
+	if err := db.Create(photo).Error; err != nil {
+		t.Fatalf("Failed to create photo: %v", err)
+	}
+
+	var stored DownloadedPhoto
+	if err := db.First(&stored, photo.ID).Error; err != nil {
+		t.Fatalf("Failed to load photo: %v", err)
+	}
+	if stored.Title != "" {
+		t.Fatalf("Expected junk title to be stored empty, got %q", stored.Title)
+	}
+	if len(stored.Keywords) != 1 || stored.Keywords[0] != "portrait" {
+		t.Fatalf("Expected sanitized keywords [portrait], got %#v", stored.Keywords)
+	}
+}
+
+func TestRecordDownloadSanitizesUpsertAssignments(t *testing.T) {
+	db := setupTestDB(t)
+	url := "https://example.com/retry.jpg"
+
+	if err := db.Create(&DownloadedPhoto{
+		URL:          url,
+		Title:        "Pending",
+		FileName:     "retry.jpg",
+		Status:       "failed",
+		ErrorMessage: "temporary",
+	}).Error; err != nil {
+		t.Fatalf("Failed to create failed photo: %v", err)
+	}
+
+	retry := &DownloadedPhoto{
+		URL:      url,
+		Title:    "retry",
+		Artist:   "Gene Zachar",
+		FileName: "retry.jpg",
+		Keywords: Keywords{"gene", "zachar", "hidden", "blue"},
+		Status:   "downloaded",
+	}
+	if err := db.RecordDownload(retry); err != nil {
+		t.Fatalf("Failed to record retry download: %v", err)
+	}
+
+	var stored DownloadedPhoto
+	if err := db.Where("url_hash = ?", HashURL(url)).First(&stored).Error; err != nil {
+		t.Fatalf("Failed to load retried photo: %v", err)
+	}
+	if stored.Title != "" {
+		t.Fatalf("Expected filename title to be stored empty, got %q", stored.Title)
+	}
+	if len(stored.Keywords) != 1 || stored.Keywords[0] != "blue" {
+		t.Fatalf("Expected sanitized retry keywords [blue], got %#v", stored.Keywords)
+	}
+}
+
 func TestRecordDownload_DuplicateURL(t *testing.T) {
 	db := setupTestDB(t)
 
@@ -1483,7 +1549,7 @@ func TestGetGalleryCatalogOrdersByBestAvailableTimestamp(t *testing.T) {
 		},
 		{
 			URL:          "https://example.com/undated.jpg",
-			Title:        "Undated",
+			Title:        "Undated Piece",
 			FilePath:     filepath.Join(t.TempDir(), "undated.jpg"),
 			FileName:     "undated.jpg",
 			DownloadedAt: ptrTime(downloaded2026),
@@ -1519,7 +1585,7 @@ func TestGetGalleryCatalogOrdersByBestAvailableTimestamp(t *testing.T) {
 		"Legacy Upload 2024",
 		"Connector 2022",
 		"Legacy Upload 2019",
-		"Undated",
+		"Undated Piece",
 	}
 	if strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Fatalf("Expected best-available timestamp order %v, got %v", want, got)

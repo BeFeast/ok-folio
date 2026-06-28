@@ -8,9 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"time"
 
+	"ok-folio/internal/catalogquality"
 	"ok-folio/internal/config"
 	"ok-folio/internal/gallery"
 	"ok-folio/internal/testguard"
@@ -297,6 +299,7 @@ func normalizeArtist(rawArtist string) string {
 // single hook so every insert/update path is covered. A NULL url_hash would let
 // duplicates slip the unique guard, so this must be the only place it is set.
 func (p *DownloadedPhoto) BeforeSave(tx *gorm.DB) error {
+	p.sanitizeCatalogFields()
 	p.URLHash = HashURL(p.URL)
 	p.Artist = normalizeArtist(p.Artist)
 	p.Category = resolveCategory(p)
@@ -304,6 +307,12 @@ func (p *DownloadedPhoto) BeforeSave(tx *gorm.DB) error {
 		p.Provider = DefaultProvider
 	}
 	return nil
+}
+
+func (p *DownloadedPhoto) sanitizeCatalogFields() {
+	p.Artist = normalizeArtist(p.Artist)
+	p.Title = catalogquality.NormalizeTitle(p.Title, p.FileName, filepath.Base(p.FilePath))
+	p.Keywords = Keywords(catalogquality.SanitizeKeywords(p.Artist, []string(p.Keywords)))
 }
 
 func (p *DownloadedPhoto) AfterFind(tx *gorm.DB) error {
@@ -706,6 +715,7 @@ func (db *DB) RecordDownload(photo *DownloadedPhoto) error {
 	// BeforeSave, so reading photo.Category here would capture the caller's empty
 	// value (the scraper relies on the hook deriving it from SourcePage) and a
 	// retry update would regroup recovered downloads as "unknown".
+	photo.sanitizeCatalogFields()
 	result := db.Clauses(clause.OnConflict{
 		Columns: []clause.Column{{Name: "url_hash"}},
 		Where: clause.Where{Exprs: []clause.Expression{

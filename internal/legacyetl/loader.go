@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"ok-folio/internal/catalogquality"
 	"ok-folio/internal/database"
 
 	"gorm.io/gorm"
@@ -127,12 +128,13 @@ func LoadDump(db *database.DB, rows DumpRows, opts LoadOptions) (LoadResult, err
 
 func upsertDownloadedPhoto(tx *gorm.DB, row LegacyDownloadedPhoto) (time.Time, error) {
 	var loadedAt sql.NullTime
+	title := catalogquality.NormalizeTitle(row.Title, row.FileName, filepath.Base(row.FilePath))
 	err := tx.Raw(downloadedPhotoUpsertSQL,
 		row.ID,
 		row.URL,
 		database.HashURL(row.URL),
 		row.SourcePage,
-		row.Title,
+		title,
 		row.Artist,
 		nullableDatetimePtr(row.UploadDate),
 		row.FilePath,

@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"ok-folio/internal/catalogquality"
 	"ok-folio/internal/config"
 	"ok-folio/internal/database"
 	"ok-folio/internal/derivatives"
@@ -79,7 +80,7 @@ func (s *Server) handleCreatePiece(w http.ResponseWriter, r *http.Request) {
 	photo := database.DownloadedPhoto{
 		URL:            "upload://" + upload.hexHash,
 		SourcePage:     strings.TrimSpace(r.FormValue("source")),
-		Title:          strings.TrimSpace(r.FormValue("title")),
+		Title:          catalogquality.NormalizeTitle(r.FormValue("title"), header.Filename, filepath.Base(relPath)),
 		Artist:         strings.TrimSpace(r.FormValue("artist")),
 		UploadDate:     parsePieceUploadDate(r.FormValue("date")),
 		FilePath:       relPath,

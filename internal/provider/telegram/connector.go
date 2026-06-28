@@ -14,6 +14,7 @@ import (
 	"time"
 	"unicode"
 
+	"ok-folio/internal/catalogquality"
 	"ok-folio/internal/provider"
 	"ok-folio/pkg/retry"
 
@@ -322,6 +323,7 @@ func discoveredMedia(message Message) (provider.DiscoveredMedia, bool) {
 	if title == "" {
 		title = ref.FileName
 	}
+	title = catalogquality.NormalizeTitle(title, ref.FileName)
 	// Source should name the originating channel (e.g. "Нимфы и Музы"), which is
 	// the forwarded-from chat, not the operator's DM. Prefer a real forward URL,
 	// then the channel name, then the provider id as a last resort.
