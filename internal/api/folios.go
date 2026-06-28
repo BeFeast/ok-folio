@@ -21,7 +21,16 @@ type folioRequest struct {
 	CoverPhotoID *uint64 `json:"cover_photo_id"`
 }
 
+type folioPieceRequest struct {
+	PhotoID uint64 `json:"photo_id"`
+}
+
 const maxFolioRequestBytes = 1 << 20
+
+const (
+	defaultFolioPiecesLimit = 100
+	maxFolioPiecesLimit     = 200
+)
 
 func (s *Server) handleListFolios(w http.ResponseWriter, r *http.Request) {
 	folios, err := s.db.ListFolios()
@@ -141,6 +150,115 @@ func (s *Server) handleDeleteFolio(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, map[string]bool{"deleted": true})
 }
 
+func (s *Server) handleAddFolioPiece(w http.ResponseWriter, r *http.Request) {
+	folioID, err := parseFolioID(r)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, "Invalid folio ID")
+		return
+	}
+	input, ok := s.readFolioPieceRequest(w, r)
+	if !ok {
+		return
+	}
+	if input.PhotoID == 0 {
+		s.writeError(w, http.StatusBadRequest, "Folio piece photo_id must be greater than zero")
+		return
+	}
+	if _, err := s.db.GetFolio(folioID); errors.Is(err, gorm.ErrRecordNotFound) {
+		s.writeError(w, http.StatusNotFound, "Folio not found")
+		return
+	} else if err != nil {
+		s.writeError(w, http.StatusInternalServerError, "Failed to fetch folio")
+		return
+	}
+	photo, err := s.db.GetPhotoByID(input.PhotoID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		s.writeError(w, http.StatusNotFound, "Photo not found")
+		return
+	} else if err != nil {
+		s.writeError(w, http.StatusInternalServerError, "Failed to fetch photo")
+		return
+	}
+	if photo.Status != "downloaded" {
+		s.writeError(w, http.StatusNotFound, "Photo not found")
+		return
+	}
+	if err := s.db.AddPieceToFolio(folioID, input.PhotoID); err != nil {
+		s.writeError(w, http.StatusInternalServerError, "Failed to add piece to folio")
+		return
+	}
+	s.writeJSON(w, http.StatusCreated, map[string]bool{"added": true})
+}
+
+func (s *Server) handleRemoveFolioPiece(w http.ResponseWriter, r *http.Request) {
+	folioID, err := parseFolioID(r)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, "Invalid folio ID")
+		return
+	}
+	photoID, err := parseFolioPiecePhotoID(r)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, "Invalid photo ID")
+		return
+	}
+	if _, err := s.db.GetFolio(folioID); errors.Is(err, gorm.ErrRecordNotFound) {
+		s.writeError(w, http.StatusNotFound, "Folio not found")
+		return
+	} else if err != nil {
+		s.writeError(w, http.StatusInternalServerError, "Failed to fetch folio")
+		return
+	}
+	if err := s.db.RemovePieceFromFolio(folioID, photoID); errors.Is(err, gorm.ErrRecordNotFound) {
+		s.writeError(w, http.StatusNotFound, "Piece not in folio")
+		return
+	} else if err != nil {
+		s.writeError(w, http.StatusInternalServerError, "Failed to remove piece from folio")
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]bool{"removed": true})
+}
+
+func (s *Server) handleListFolioPieces(w http.ResponseWriter, r *http.Request) {
+	folioID, err := parseFolioID(r)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, "Invalid folio ID")
+		return
+	}
+	if _, err := s.db.GetFolio(folioID); errors.Is(err, gorm.ErrRecordNotFound) {
+		s.writeError(w, http.StatusNotFound, "Folio not found")
+		return
+	} else if err != nil {
+		s.writeError(w, http.StatusInternalServerError, "Failed to fetch folio")
+		return
+	}
+
+	limit := defaultFolioPiecesLimit
+	if value := r.URL.Query().Get("limit"); value != "" {
+		if parsed, err := strconv.Atoi(value); err == nil && parsed > 0 && parsed <= maxFolioPiecesLimit {
+			limit = parsed
+		}
+	}
+
+	offset := 0
+	if value := r.URL.Query().Get("offset"); value != "" {
+		if parsed, err := strconv.Atoi(value); err == nil && parsed >= 0 {
+			offset = parsed
+		}
+	}
+
+	photos, total, err := s.db.ListFolioPieces(folioID, limit, offset)
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, "Failed to fetch folio pieces")
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]interface{}{
+		"photos": photos,
+		"total":  total,
+		"limit":  limit,
+		"offset": offset,
+	})
+}
+
 func (s *Server) readFolioRequest(w http.ResponseWriter, r *http.Request) (folioRequest, bool) {
 	var input folioRequest
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxFolioRequestBytes))
@@ -148,6 +266,17 @@ func (s *Server) readFolioRequest(w http.ResponseWriter, r *http.Request) (folio
 	if err := decoder.Decode(&input); err != nil {
 		s.writeError(w, http.StatusBadRequest, "Invalid folio JSON")
 		return folioRequest{}, false
+	}
+	return input, true
+}
+
+func (s *Server) readFolioPieceRequest(w http.ResponseWriter, r *http.Request) (folioPieceRequest, bool) {
+	var input folioPieceRequest
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxFolioRequestBytes))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil {
+		s.writeError(w, http.StatusBadRequest, "Invalid folio piece JSON")
+		return folioPieceRequest{}, false
 	}
 	return input, true
 }
@@ -185,6 +314,14 @@ func (s *Server) readFolioPatchRequest(w http.ResponseWriter, r *http.Request) (
 
 func parseFolioID(r *http.Request) (uint64, error) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 64)
+	if err != nil || id == 0 {
+		return 0, strconv.ErrSyntax
+	}
+	return id, nil
+}
+
+func parseFolioPiecePhotoID(r *http.Request) (uint64, error) {
+	id, err := strconv.ParseUint(chi.URLParam(r, "photoId"), 10, 64)
 	if err != nil || id == 0 {
 		return 0, strconv.ErrSyntax
 	}

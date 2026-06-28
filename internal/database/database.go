@@ -165,16 +165,15 @@ func (ConnectorSource) TableName() string {
 	return "connector_sources"
 }
 
-// Folio is a user-curated, named collection of pieces. Membership (a piece
-// may belong to many folios) is owned by Issue B's FolioPiece join; this model
-// holds only the collection identity plus an optional manual cover override.
+// Folio is a user-curated, named collection of pieces. Membership lives in
+// FolioPiece so a piece may belong to many folios.
 type Folio struct {
-	ID   uint64 `gorm:"primarykey" json:"id"`
-	Name string `gorm:"column:name;type:text;not null;uniqueIndex" json:"name"`
+	ID         uint64 `gorm:"primarykey" json:"id"`
+	Name       string `gorm:"column:name;type:text;not null;uniqueIndex" json:"name"`
+	PieceCount int    `gorm:"-" json:"piece_count"`
 	// CoverPhotoID is a nullable logical reference to downloaded_photos(id).
-	// Issue A only sets it as a manual override; Issue B fills it by resolving
-	// the newest member when no override is set. It is a plain indexed column
-	// with no DB-level FK constraint.
+	// A nil value auto-resolves to the newest member on read. A non-nil value is
+	// a manual override. It is a plain indexed column with no DB-level FK.
 	CoverPhotoID *uint64   `gorm:"column:cover_photo_id;index" json:"cover_photo_id"`
 	CreatedAt    time.Time `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt    time.Time `gorm:"autoUpdateTime" json:"updated_at"`
@@ -182,6 +181,16 @@ type Folio struct {
 
 func (Folio) TableName() string {
 	return "folios"
+}
+
+type FolioPiece struct {
+	FolioID   uint64    `gorm:"primaryKey;column:folio_id" json:"folio_id"`
+	PhotoID   uint64    `gorm:"primaryKey;column:photo_id" json:"photo_id"`
+	CreatedAt time.Time `gorm:"autoCreateTime" json:"created_at"`
+}
+
+func (FolioPiece) TableName() string {
+	return "folio_pieces"
 }
 
 // FolioUpdates carries optional fields for a partial folio update.
@@ -391,7 +400,7 @@ func New(cfg *config.DatabaseConfig) (*DB, error) {
 // non-destructive post-migrate steps (identity PK, embedding column). It is the
 // single migration entry point so tests exercise the same path as boot.
 func Migrate(db *gorm.DB) error {
-	if err := db.AutoMigrate(&DownloadedPhoto{}, &ExtractionRun{}, &InboxItem{}, &ConnectorState{}, &ConnectorSource{}, &ETLWatermark{}, &Folio{}); err != nil {
+	if err := db.AutoMigrate(&DownloadedPhoto{}, &ExtractionRun{}, &InboxItem{}, &ConnectorState{}, &ConnectorSource{}, &ETLWatermark{}, &Folio{}, &FolioPiece{}); err != nil {
 		return fmt.Errorf("failed to migrate database: %w", err)
 	}
 	if db.Dialector.Name() == "postgres" {
@@ -1092,6 +1101,11 @@ func (db *DB) ListFolios() ([]Folio, error) {
 	if err := db.Order("name ASC, id ASC").Find(&folios).Error; err != nil {
 		return nil, err
 	}
+	for i := range folios {
+		if err := db.decorateFolio(&folios[i]); err != nil {
+			return nil, err
+		}
+	}
 	return folios, nil
 }
 
@@ -1099,6 +1113,9 @@ func (db *DB) ListFolios() ([]Folio, error) {
 func (db *DB) GetFolio(id uint64) (*Folio, error) {
 	var folio Folio
 	if err := db.Where("id = ?", id).First(&folio).Error; err != nil {
+		return nil, err
+	}
+	if err := db.decorateFolio(&folio); err != nil {
 		return nil, err
 	}
 	return &folio, nil
@@ -1135,6 +1152,9 @@ func (db *DB) UpdateFolio(id uint64, updates FolioUpdates) (*Folio, error) {
 	if err := db.Where("id = ?", id).First(&folio).Error; err != nil {
 		return nil, err
 	}
+	if err := db.decorateFolio(&folio); err != nil {
+		return nil, err
+	}
 	return &folio, nil
 }
 
@@ -1143,7 +1163,63 @@ func (db *DB) DeleteFolio(id uint64) error {
 	if id == 0 {
 		return fmt.Errorf("folio ID is required")
 	}
-	result := db.Delete(&Folio{}, id)
+	return db.Transaction(func(tx *gorm.DB) error {
+		result := tx.Delete(&Folio{}, id)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+		return tx.Where("folio_id = ?", id).Delete(&FolioPiece{}).Error
+	})
+}
+
+func (db *DB) decorateFolio(folio *Folio) error {
+	var count int64
+	if err := db.Model(&FolioPiece{}).Where("folio_id = ?", folio.ID).Count(&count).Error; err != nil {
+		return err
+	}
+	folio.PieceCount = int(count)
+	if folio.CoverPhotoID != nil {
+		return nil
+	}
+
+	var piece FolioPiece
+	err := db.Where("folio_id = ?", folio.ID).
+		Order("created_at DESC, photo_id DESC").
+		First(&piece).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	folio.CoverPhotoID = &piece.PhotoID
+	return nil
+}
+
+func (db *DB) AddPieceToFolio(folioID, photoID uint64) error {
+	if folioID == 0 {
+		return fmt.Errorf("folio ID is required")
+	}
+	if photoID == 0 {
+		return fmt.Errorf("photo ID is required")
+	}
+	return db.Clauses(clause.OnConflict{DoNothing: true}).Create(&FolioPiece{
+		FolioID: folioID,
+		PhotoID: photoID,
+	}).Error
+}
+
+func (db *DB) RemovePieceFromFolio(folioID, photoID uint64) error {
+	if folioID == 0 {
+		return fmt.Errorf("folio ID is required")
+	}
+	if photoID == 0 {
+		return fmt.Errorf("photo ID is required")
+	}
+	result := db.Where("folio_id = ? AND photo_id = ?", folioID, photoID).Delete(&FolioPiece{})
 	if result.Error != nil {
 		return result.Error
 	}
@@ -1151,6 +1227,28 @@ func (db *DB) DeleteFolio(id uint64) error {
 		return gorm.ErrRecordNotFound
 	}
 	return nil
+}
+
+func (db *DB) ListFolioPieces(folioID uint64, limit, offset int) ([]DownloadedPhoto, int64, error) {
+	var total int64
+	countQuery := db.Model(&FolioPiece{}).Where("folio_id = ?", folioID)
+	if err := countQuery.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	var photos []DownloadedPhoto
+	err := db.Model(&DownloadedPhoto{}).
+		Joins("JOIN folio_pieces ON folio_pieces.photo_id = downloaded_photos.id").
+		Where("folio_pieces.folio_id = ?", folioID).
+		Order("folio_pieces.created_at DESC, downloaded_photos.id DESC").
+		Limit(limit).
+		Offset(offset).
+		Find(&photos).Error
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return photos, total, nil
 }
 
 // GetDownloadStats returns download statistics using a single optimized query

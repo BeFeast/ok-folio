@@ -23,7 +23,7 @@ func setupTestDB(t *testing.T) *DB {
 	}
 
 	// Auto-migrate schemas
-	if err := gormDB.AutoMigrate(&DownloadedPhoto{}, &ExtractionRun{}, &InboxItem{}, &ConnectorState{}, &ConnectorSource{}, &Folio{}); err != nil {
+	if err := gormDB.AutoMigrate(&DownloadedPhoto{}, &ExtractionRun{}, &InboxItem{}, &ConnectorState{}, &ConnectorSource{}, &Folio{}, &FolioPiece{}); err != nil {
 		t.Fatalf("Failed to migrate test database: %v", err)
 	}
 
@@ -1448,7 +1448,7 @@ func TestGalleryFavoriteColumnPrefersCanonicalFavorite(t *testing.T) {
 	`).Error; err != nil {
 		t.Fatalf("Failed to create legacy photos table: %v", err)
 	}
-	if err := gormDB.AutoMigrate(&DownloadedPhoto{}, &ExtractionRun{}, &ConnectorState{}, &ConnectorSource{}, &Folio{}); err != nil {
+	if err := gormDB.AutoMigrate(&DownloadedPhoto{}, &ExtractionRun{}, &ConnectorState{}, &ConnectorSource{}, &Folio{}, &FolioPiece{}); err != nil {
 		t.Fatalf("Failed to migrate test database: %v", err)
 	}
 
