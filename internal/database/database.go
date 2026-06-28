@@ -91,21 +91,21 @@ type DownloadedPhoto struct {
 
 // InboxItem is an ingestion exception that needs an operator decision.
 type InboxItem struct {
-	ID         uint64 `gorm:"primarykey"`
-	ProviderID string `gorm:"type:text;index;not null"`
-	DedupeKey  string `gorm:"type:text;index"`
-	SourceID   string `gorm:"type:text;index"`
-	MediaID    string `gorm:"type:text;index"`
-	SourceURL  string `gorm:"type:text"`
-	Title      string `gorm:"type:text"`
-	Artist     string `gorm:"type:text"`
-	Status     string `gorm:"type:text;index;not null"` // duplicate, ambiguous
-	Reason     string `gorm:"type:text"`
+	ID         uint64 `gorm:"primarykey" json:"id"`
+	ProviderID string `gorm:"type:text;index;not null" json:"provider_id"`
+	DedupeKey  string `gorm:"type:text;index" json:"dedupe_key"`
+	SourceID   string `gorm:"type:text;index" json:"source_id"`
+	MediaID    string `gorm:"type:text;index" json:"media_id"`
+	SourceURL  string `gorm:"type:text" json:"source_url"`
+	Title      string `gorm:"type:text" json:"title"`
+	Artist     string `gorm:"type:text" json:"artist"`
+	Status     string `gorm:"type:text;index;not null" json:"status"` // duplicate, ambiguous
+	Reason     string `gorm:"type:text" json:"reason"`
 	// Fingerprint is a stable identity used as the ON CONFLICT target so inbox
 	// exceptions upsert atomically. It is populated by the BeforeSave hook.
-	Fingerprint string    `gorm:"type:text;uniqueIndex"`
-	CreatedAt   time.Time `gorm:"autoCreateTime"`
-	UpdatedAt   time.Time `gorm:"autoUpdateTime"`
+	Fingerprint string    `gorm:"type:text;uniqueIndex" json:"-"`
+	CreatedAt   time.Time `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt   time.Time `gorm:"autoUpdateTime" json:"updated_at"`
 }
 
 // ExtractionRun tracks extraction job runs
@@ -739,12 +739,16 @@ func (db *DB) RecordInboxException(item *InboxItem) error {
 	}).Create(item).Error
 }
 
-// GetInboxExceptions returns only Inbox exception items.
-func (db *DB) GetInboxExceptions(limit int, offset int) ([]InboxItem, int64, error) {
+// GetInboxExceptionsFiltered lists exceptions, optionally narrowed to a single
+// status. An empty status returns all exception statuses.
+func (db *DB) GetInboxExceptionsFiltered(status string, limit int, offset int) ([]InboxItem, int64, error) {
 	var items []InboxItem
 	var total int64
 
 	query := db.DB.Model(&InboxItem{}).Where("status IN ?", []string{"duplicate", "ambiguous"})
+	if status != "" {
+		query = query.Where("status = ?", status)
+	}
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
@@ -754,6 +758,64 @@ func (db *DB) GetInboxExceptions(limit int, offset int) ([]InboxItem, int64, err
 	}
 
 	return items, total, nil
+}
+
+// GetInboxExceptions returns only Inbox exception items.
+func (db *DB) GetInboxExceptions(limit int, offset int) ([]InboxItem, int64, error) {
+	return db.GetInboxExceptionsFiltered("", limit, offset)
+}
+
+// GetInboxItem returns a single Inbox exception by ID. Non-exception or
+// missing rows return gorm.ErrRecordNotFound.
+func (db *DB) GetInboxItem(id uint64) (*InboxItem, error) {
+	var item InboxItem
+	err := db.DB.
+		Where("id = ? AND status IN ?", id, []string{"duplicate", "ambiguous"}).
+		First(&item).Error
+	if err != nil {
+		return nil, err
+	}
+	return &item, nil
+}
+
+// DeleteInboxItem hard-deletes a single Inbox exception row (the V1 dismiss
+// action). Missing rows return gorm.ErrRecordNotFound.
+func (db *DB) DeleteInboxItem(id uint64) error {
+	if id == 0 {
+		return fmt.Errorf("inbox item ID is required")
+	}
+	result := db.DB.
+		Where("id = ? AND status IN ?", id, []string{"duplicate", "ambiguous"}).
+		Delete(&InboxItem{})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
+// CountInboxByStatus returns the number of parked exceptions per status.
+func (db *DB) CountInboxByStatus() (map[string]int64, error) {
+	type row struct {
+		Status string
+		Count  int64
+	}
+	var rows []row
+	err := db.DB.Model(&InboxItem{}).
+		Select("status, COUNT(*) AS count").
+		Where("status IN ?", []string{"duplicate", "ambiguous"}).
+		Group("status").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	counts := map[string]int64{"duplicate": 0, "ambiguous": 0}
+	for _, r := range rows {
+		counts[r.Status] = r.Count
+	}
+	return counts, nil
 }
 
 // StartExtractionRun creates a new extraction run record.

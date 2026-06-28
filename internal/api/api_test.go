@@ -1773,6 +1773,219 @@ func TestHandleInboxReturnsOnlyExceptions(t *testing.T) {
 	}
 }
 
+func TestHandleInboxItemReturnsSnakeCaseJSON(t *testing.T) {
+	server, db := setupTestServer(t)
+	defer safeShutdown(server)
+
+	item := database.InboxItem{
+		ProviderID: "telegram",
+		DedupeKey:  "telegram:source-1:media-1",
+		SourceID:   "source-1",
+		MediaID:    "media-1",
+		SourceURL:  "https://example.test/source/1",
+		Title:      "Parked title",
+		Artist:     "Parked artist",
+		Status:     "duplicate",
+		Reason:     "dedupe key already kept",
+	}
+	if err := db.Create(&item).Error; err != nil {
+		t.Fatalf("Failed to create inbox item: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/inbox/"+strconv.FormatUint(item.ID, 10), nil)
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d body=%s", w.Code, w.Body.String())
+	}
+
+	var shape map[string]json.RawMessage
+	if err := json.NewDecoder(w.Body).Decode(&shape); err != nil {
+		t.Fatalf("Failed to decode inbox item response: %v", err)
+	}
+	for _, key := range []string{"id", "provider_id", "dedupe_key", "source_id", "media_id", "source_url", "title", "artist", "status", "reason", "created_at", "updated_at"} {
+		if _, ok := shape[key]; !ok {
+			t.Fatalf("Expected JSON key %q in response shape %#v", key, shape)
+		}
+	}
+	for _, key := range []string{"ProviderID", "Fingerprint", "fingerprint"} {
+		if _, ok := shape[key]; ok {
+			t.Fatalf("Did not expect JSON key %q in response shape %#v", key, shape)
+		}
+	}
+}
+
+func TestHandleInboxItemNotFoundAndInvalidID(t *testing.T) {
+	server, _ := setupTestServer(t)
+	defer safeShutdown(server)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/inbox/999", nil)
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("Expected missing inbox item status 404, got %d", w.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/inbox/not-a-number", nil)
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("Expected invalid inbox item status 400, got %d", w.Code)
+	}
+}
+
+func TestHandleDismissInboxItemDeletesRow(t *testing.T) {
+	server, db := setupTestServer(t)
+	defer safeShutdown(server)
+
+	item := database.InboxItem{
+		ProviderID: "telegram",
+		DedupeKey:  "telegram:source-1:media-1",
+		Status:     "duplicate",
+	}
+	if err := db.Create(&item).Error; err != nil {
+		t.Fatalf("Failed to create inbox item: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/inbox/"+strconv.FormatUint(item.ID, 10), nil)
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected dismiss status 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	var response map[string]bool
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode dismiss response: %v", err)
+	}
+	if !response["dismissed"] {
+		t.Fatalf("Expected dismissed response, got %#v", response)
+	}
+
+	_, total, err := db.GetInboxExceptions(10, 0)
+	if err != nil {
+		t.Fatalf("Failed to fetch inbox exceptions after dismiss: %v", err)
+	}
+	if total != 0 {
+		t.Fatalf("Expected dismissed row to be gone from inbox list, got total=%d", total)
+	}
+	counts, err := db.CountInboxByStatus()
+	if err != nil {
+		t.Fatalf("Failed to count inbox after dismiss: %v", err)
+	}
+	if counts["duplicate"] != 0 || counts["ambiguous"] != 0 {
+		t.Fatalf("Expected dismissed row to be gone from counts, got %#v", counts)
+	}
+
+	req = httptest.NewRequest(http.MethodDelete, "/api/v1/inbox/"+strconv.FormatUint(item.ID, 10), nil)
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("Expected second dismiss status 404, got %d", w.Code)
+	}
+}
+
+func TestHandleDismissInboxItemDoesNotDeleteNonException(t *testing.T) {
+	server, db := setupTestServer(t)
+	defer safeShutdown(server)
+
+	item := database.InboxItem{
+		ProviderID: "telegram",
+		DedupeKey:  "telegram:source-1:media-1",
+		Status:     "dismissed",
+	}
+	if err := db.Create(&item).Error; err != nil {
+		t.Fatalf("Failed to create inbox item: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/inbox/"+strconv.FormatUint(item.ID, 10), nil)
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("Expected dismiss status 404 for non-exception row, got %d body=%s", w.Code, w.Body.String())
+	}
+
+	var count int64
+	if err := db.Model(&database.InboxItem{}).Where("id = ?", item.ID).Count(&count).Error; err != nil {
+		t.Fatalf("Failed to count inbox items: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("Expected non-exception inbox item to remain, found %d rows", count)
+	}
+}
+
+func TestHandleInboxStatusFilter(t *testing.T) {
+	server, db := setupTestServer(t)
+	defer safeShutdown(server)
+
+	items := []database.InboxItem{
+		{ProviderID: "telegram", DedupeKey: "telegram:source-1:media-1", Status: "duplicate"},
+		{ProviderID: "webgallery", SourceID: "source-2", SourceURL: "https://example.test/2", Status: "ambiguous"},
+	}
+	for _, item := range items {
+		if err := db.Create(&item).Error; err != nil {
+			t.Fatalf("Failed to create inbox item: %v", err)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/inbox?status=duplicate", nil)
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	var response struct {
+		Items []database.InboxItem `json:"items"`
+		Total int64                `json:"total"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode filtered inbox response: %v", err)
+	}
+	if response.Total != 1 || len(response.Items) != 1 || response.Items[0].Status != "duplicate" {
+		t.Fatalf("Expected duplicate-only inbox response, got %#v", response)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/inbox?status=bogus", nil)
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("Expected invalid status 400, got %d", w.Code)
+	}
+}
+
+func TestHandleInboxCounts(t *testing.T) {
+	server, db := setupTestServer(t)
+	defer safeShutdown(server)
+
+	items := []database.InboxItem{
+		{ProviderID: "telegram", DedupeKey: "telegram:source-1:media-1", Status: "duplicate"},
+		{ProviderID: "telegram", DedupeKey: "telegram:source-2:media-2", Status: "duplicate"},
+		{ProviderID: "webgallery", SourceID: "source-3", SourceURL: "https://example.test/3", Status: "ambiguous"},
+	}
+	for _, item := range items {
+		if err := db.Create(&item).Error; err != nil {
+			t.Fatalf("Failed to create inbox item: %v", err)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/inbox/counts", nil)
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	var response struct {
+		Counts map[string]int64 `json:"counts"`
+		Total  int64            `json:"total"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode inbox counts response: %v", err)
+	}
+	if response.Counts["duplicate"] != 2 || response.Counts["ambiguous"] != 1 || response.Total != 3 {
+		t.Fatalf("Unexpected inbox counts response: %#v", response)
+	}
+}
+
 func TestHandleGetRuns_Empty(t *testing.T) {
 	server, _ := setupTestServer(t)
 	defer safeShutdown(server)
