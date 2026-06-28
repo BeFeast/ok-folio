@@ -784,7 +784,9 @@ func (db *DB) DeleteInboxItem(id uint64) error {
 	if id == 0 {
 		return fmt.Errorf("inbox item ID is required")
 	}
-	result := db.Delete(&InboxItem{}, id)
+	result := db.DB.
+		Where("id = ? AND status IN ?", id, []string{"duplicate", "ambiguous"}).
+		Delete(&InboxItem{})
 	if result.Error != nil {
 		return result.Error
 	}

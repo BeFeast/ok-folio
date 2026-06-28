@@ -461,6 +461,30 @@ func TestDeleteInboxItemHardDeletes(t *testing.T) {
 	}
 }
 
+func TestDeleteInboxItemIgnoresNonExceptionStatus(t *testing.T) {
+	db := setupTestDB(t)
+
+	item := InboxItem{
+		ProviderID: "telegram",
+		DedupeKey:  "telegram:source-1:media-1",
+		Status:     "dismissed",
+	}
+	if err := db.Create(&item).Error; err != nil {
+		t.Fatalf("Failed to create inbox item: %v", err)
+	}
+
+	if err := db.DeleteInboxItem(item.ID); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("Expected non-exception delete to return gorm.ErrRecordNotFound, got %v", err)
+	}
+	var count int64
+	if err := db.Model(&InboxItem{}).Where("id = ?", item.ID).Count(&count).Error; err != nil {
+		t.Fatalf("Failed to count inbox items: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("Expected non-exception inbox item to remain, found %d rows", count)
+	}
+}
+
 func TestCountInboxByStatus(t *testing.T) {
 	db := setupTestDB(t)
 

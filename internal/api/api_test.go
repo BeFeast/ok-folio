@@ -1885,6 +1885,35 @@ func TestHandleDismissInboxItemDeletesRow(t *testing.T) {
 	}
 }
 
+func TestHandleDismissInboxItemDoesNotDeleteNonException(t *testing.T) {
+	server, db := setupTestServer(t)
+	defer safeShutdown(server)
+
+	item := database.InboxItem{
+		ProviderID: "telegram",
+		DedupeKey:  "telegram:source-1:media-1",
+		Status:     "dismissed",
+	}
+	if err := db.Create(&item).Error; err != nil {
+		t.Fatalf("Failed to create inbox item: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/inbox/"+strconv.FormatUint(item.ID, 10), nil)
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("Expected dismiss status 404 for non-exception row, got %d body=%s", w.Code, w.Body.String())
+	}
+
+	var count int64
+	if err := db.Model(&database.InboxItem{}).Where("id = ?", item.ID).Count(&count).Error; err != nil {
+		t.Fatalf("Failed to count inbox items: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("Expected non-exception inbox item to remain, found %d rows", count)
+	}
+}
+
 func TestHandleInboxStatusFilter(t *testing.T) {
 	server, db := setupTestServer(t)
 	defer safeShutdown(server)
