@@ -44,6 +44,42 @@ const KEYWORD_CHIP: CSSProperties = {
   fontSize: 12,
   color: "rgba(251,246,238,0.78)",
 };
+const EDIT_INPUT: CSSProperties = {
+  width: "100%",
+  minHeight: 44,
+  boxSizing: "border-box",
+  borderRadius: 8,
+  border: "1px solid rgba(251,246,238,0.18)",
+  background: "rgba(251,246,238,0.08)",
+  color: "#FBF6EE",
+  outline: "none",
+  padding: "0 12px",
+  fontFamily: "var(--sans)",
+  fontSize: 14,
+};
+const EDIT_LABEL: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: 10,
+  marginBottom: 6,
+  fontFamily: "var(--sans)",
+  fontSize: 11,
+  color: "rgba(251,246,238,0.56)",
+};
+const EDITED_MARK: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  minHeight: 22,
+  borderRadius: 99,
+  border: "1px solid rgba(220,138,112,0.34)",
+  background: "rgba(220,138,112,0.12)",
+  color: "#DC8A70",
+  padding: "0 8px",
+  fontFamily: "var(--sans)",
+  fontSize: 10.5,
+  fontWeight: 800,
+};
 const META_KEY: CSSProperties = { fontFamily: "var(--sans)", fontSize: 11, color: "rgba(251,246,238,0.52)" };
 const META_VAL: CSSProperties = { fontFamily: "var(--sans)", fontSize: 13, color: "rgba(251,246,238,0.78)", marginTop: 2 };
 const MOBILE_CHROME: CSSProperties = {
@@ -107,8 +143,19 @@ function ShareIcon() {
   );
 }
 
+interface EditDraft {
+  title: string;
+  artist: string;
+  date: string;
+  keywords: string[];
+}
+
+function editedMarker(fields: string[], field: string) {
+  return fields.includes(field) ? <span style={EDITED_MARK}>Edited</span> : null;
+}
+
 export default function PieceViewer() {
-  const { selected, closePiece, stepPiece, isFav, toggleFav, selIndex, selCount, filterByArtist, addPieceToFolioAction } = useFolio();
+  const { selected, closePiece, stepPiece, isFav, toggleFav, selIndex, selCount, filterByArtist, addPieceToFolioAction, editPieceMetadata } = useFolio();
   const { isMobile } = useViewport();
   const reducedMotion = useReducedMotion();
 
@@ -130,6 +177,10 @@ export default function PieceViewer() {
   const [chromeVisible, setChromeVisible] = useState(true);
   const [drag, setDrag] = useState({ x: 0, y: 0, active: false });
   const [folioPickerOpen, setFolioPickerOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [keywordDraft, setKeywordDraft] = useState("");
+  const [editDraft, setEditDraft] = useState<EditDraft>({ title: "", artist: "", date: "", keywords: [] });
   const touchStartRef = useRef<{ x: number; y: number; target: "art" | "sheet" } | null>(null);
   const lastTouchDeltaRef = useRef({ x: 0, y: 0 });
   const suppressClickRef = useRef(false);
@@ -149,9 +200,17 @@ export default function PieceViewer() {
   useEffect(() => {
     setPanelOpen(false);
     setFolioPickerOpen(false);
+    setEditing(false);
+    setSavingEdit(false);
+    setKeywordDraft("");
     setChromeVisible(true);
     setDrag({ x: 0, y: 0, active: false });
   }, [pieceId]);
+
+  useEffect(() => {
+    if (!selected || editing) return;
+    setEditDraft({ title: selected.t, artist: selected.a === "Unknown" ? "" : selected.a, date: selected.editDate, keywords: selected.keywords });
+  }, [editing, selected]);
 
   useEffect(() => {
     if (!panelOpen) setFolioPickerOpen(false);
@@ -180,6 +239,37 @@ export default function PieceViewer() {
     addPieceToFolioAction(folioId, photoId);
     setFolioPickerOpen(false);
   }, [addPieceToFolioAction]);
+
+  const startEditing = useCallback(() => {
+    if (!selected) return;
+    setEditDraft({ title: selected.t, artist: selected.a === "Unknown" ? "" : selected.a, date: selected.editDate, keywords: selected.keywords });
+    setKeywordDraft("");
+    setEditing(true);
+  }, [selected]);
+
+  const addKeyword = useCallback(() => {
+    const value = keywordDraft.trim();
+    if (!value) return;
+    setEditDraft((draft) => {
+      if (draft.keywords.some((keyword) => keyword.toLowerCase() === value.toLowerCase())) return draft;
+      return { ...draft, keywords: [...draft.keywords, value] };
+    });
+    setKeywordDraft("");
+  }, [keywordDraft]);
+
+  const saveEdit = useCallback(() => {
+    if (!selected || savingEdit) return;
+    setSavingEdit(true);
+    void editPieceMetadata(selected.id, {
+      title: editDraft.title,
+      artist: editDraft.artist,
+      date: editDraft.date || null,
+      keywords: editDraft.keywords,
+    }).then((ok) => {
+      setSavingEdit(false);
+      if (ok) setEditing(false);
+    });
+  }, [editDraft, editPieceMetadata, savingEdit, selected]);
 
   const onArtworkTouchStart = useCallback((e: React.TouchEvent) => {
     const touch = e.touches[0];
@@ -265,6 +355,119 @@ export default function PieceViewer() {
     ? "none"
     : `translate3d(${drag.x}px, ${drag.y}px, 0) scale(${drag.y > 0 ? Math.max(0.92, 1 - drag.y / 900) : 1})`;
   const artworkOpacity = reducedMotion && drag.active ? 0.72 : 1;
+  const editedFields = p.editedFields;
+  const renderReadTitle = () => (
+    <>
+      <h2 style={{ margin: 0, fontFamily: "var(--serif)", fontWeight: 400, fontSize: isMobile ? 30 : 31, lineHeight: 1.02, color: "#ECE6DA" }}>{p.t || "Untitled"}</h2>
+      <button
+        type="button"
+        disabled={!canFilterArtist}
+        onClick={() => filterByArtist(p.a)}
+        style={{
+          appearance: "none",
+          border: 0,
+          background: "transparent",
+          padding: "9px 0 0",
+          color: "#C75D49",
+          fontFamily: "var(--sans)",
+          fontSize: 15,
+          fontWeight: 600,
+          textAlign: "left",
+          cursor: canFilterArtist ? "pointer" : "default",
+        }}
+      >
+        {p.a}
+      </button>
+    </>
+  );
+  const renderEditForm = () => (
+    <div style={{ display: "grid", gap: 13, marginTop: 4 }}>
+      {[
+        ["Title", "title", "title"],
+        ["Artist", "artist", "artist"],
+        ["Date", "date", "date"],
+      ].map(([label, key, type]) => (
+        <label key={key} style={{ display: "grid" }}>
+          <span style={EDIT_LABEL}>
+            {label}
+            {editedMarker(editedFields, key)}
+          </span>
+          <input
+            type={type}
+            value={key === "title" ? editDraft.title : key === "artist" ? editDraft.artist : editDraft.date}
+            onChange={(event) => {
+              const value = event.target.value;
+              setEditDraft((draft) => ({ ...draft, [key]: value }));
+            }}
+            style={EDIT_INPUT}
+          />
+        </label>
+      ))}
+      <div>
+        <div style={EDIT_LABEL}>
+          Keywords
+          {editedMarker(editedFields, "keywords")}
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
+          {editDraft.keywords.map((keyword) => (
+            <button
+              key={keyword}
+              type="button"
+              onClick={() => setEditDraft((draft) => ({ ...draft, keywords: draft.keywords.filter((item) => item !== keyword) }))}
+              style={{ ...KEYWORD_CHIP, minHeight: 32, cursor: "pointer", color: "#FBF6EE" }}
+              aria-label={`Remove ${keyword}`}
+            >
+              {keyword}
+              <span aria-hidden="true" style={{ marginLeft: 7, fontSize: 15 }}>×</span>
+            </button>
+          ))}
+        </div>
+        <input
+          value={keywordDraft}
+          onChange={(event) => setKeywordDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              addKeyword();
+            }
+          }}
+          onBlur={addKeyword}
+          placeholder="Type keyword and press Enter"
+          style={EDIT_INPUT}
+        />
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 4 }}>
+        <button
+          type="button"
+          onClick={() => {
+            setEditing(false);
+            setKeywordDraft("");
+          }}
+          disabled={savingEdit}
+          style={{ minHeight: 46, borderRadius: 12, border: "1px solid rgba(251,246,238,0.18)", background: "transparent", color: "#FBF6EE", fontFamily: "var(--sans)", fontSize: 14, fontWeight: 800, cursor: savingEdit ? "wait" : "pointer" }}
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={saveEdit}
+          disabled={savingEdit}
+          style={{ minHeight: 46, borderRadius: 12, border: 0, background: "#C75D49", color: "#16130E", fontFamily: "var(--sans)", fontSize: 14, fontWeight: 800, cursor: savingEdit ? "wait" : "pointer", opacity: savingEdit ? 0.7 : 1 }}
+        >
+          {savingEdit ? "Saving..." : "Save"}
+        </button>
+      </div>
+    </div>
+  );
+  const renderEditButton = () => (
+    <button
+      type="button"
+      onClick={startEditing}
+      style={{ minHeight: 38, borderRadius: 99, border: "1px solid rgba(251,246,238,0.18)", background: "rgba(251,246,238,0.07)", color: "#FBF6EE", padding: "0 14px", fontFamily: "var(--sans)", fontSize: 13, fontWeight: 800, cursor: "pointer" }}
+    >
+      Edit
+    </button>
+  );
 
   if (isMobile) {
     return (
@@ -468,26 +671,10 @@ export default function PieceViewer() {
         >
           <div style={{ flex: 1, overflowY: "auto", padding: "10px 22px 112px" }}>
             <div style={{ width: 46, height: 5, borderRadius: 99, background: "rgba(236,230,218,.28)", margin: "0 auto 20px" }} />
-            <h2 style={{ margin: 0, fontFamily: "var(--serif)", fontWeight: 400, fontSize: 30, lineHeight: 1.02, color: "#ECE6DA" }}>{p.t}</h2>
-            <button
-              type="button"
-              disabled={!canFilterArtist}
-              onClick={() => filterByArtist(p.a)}
-              style={{
-                appearance: "none",
-                border: 0,
-                background: "transparent",
-                padding: "9px 0 0",
-                color: "#C75D49",
-                fontFamily: "var(--sans)",
-                fontSize: 15,
-                fontWeight: 600,
-                textAlign: "left",
-                cursor: canFilterArtist ? "pointer" : "default",
-              }}
-            >
-              {p.a}
-            </button>
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 14 }}>
+              <div style={{ minWidth: 0, flex: 1 }}>{editing ? renderEditForm() : renderReadTitle()}</div>
+              {!editing ? renderEditButton() : null}
+            </div>
 
             <div style={{ marginTop: 20 }}>
               {[
@@ -506,7 +693,7 @@ export default function PieceViewer() {
               ))}
             </div>
 
-            {p.keywords.length ? (
+            {!editing && p.keywords.length ? (
               <div style={{ marginTop: 22 }}>
                 <div style={{ ...LABEL, marginBottom: 10, color: "rgba(236,230,218,.46)" }}>Keywords</div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
@@ -839,31 +1026,43 @@ export default function PieceViewer() {
           <div style={{ fontFamily: "var(--sans)", fontSize: 11, letterSpacing: "0.18em", textTransform: "uppercase", color: "#DC8A70", paddingTop: 6 }}>
             {eyebrow}
           </div>
-          <button
-            onClick={() => toggleFav(p.id)}
-            aria-label="Favorite"
-            style={{
-              flex: "none",
-              appearance: "none",
-              cursor: "pointer",
-              width: 40,
-              height: 40,
-              borderRadius: 99,
-              border: "1px solid rgba(251,246,238,0.22)",
-              background: "rgba(251,246,238,0.06)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              color: "#FBF6EE",
-            }}
-          >
-            <HeartIcon size={19} fill={fav ? "#DC8A70" : "transparent"} stroke={fav ? "#DC8A70" : "#FBF6EE"} strokeWidth={1.6} />
-          </button>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flex: "none" }}>
+            {!editing ? renderEditButton() : null}
+            <button
+              onClick={() => toggleFav(p.id)}
+              aria-label="Favorite"
+              style={{
+                flex: "none",
+                appearance: "none",
+                cursor: "pointer",
+                width: 40,
+                height: 40,
+                borderRadius: 99,
+                border: "1px solid rgba(251,246,238,0.22)",
+                background: "rgba(251,246,238,0.06)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: "#FBF6EE",
+              }}
+            >
+              <HeartIcon size={19} fill={fav ? "#DC8A70" : "transparent"} stroke={fav ? "#DC8A70" : "#FBF6EE"} strokeWidth={1.6} />
+            </button>
+          </div>
         </div>
-        <h2 style={{ fontFamily: "var(--serif)", fontWeight: 300, fontSize: 31, lineHeight: 1.08, margin: "12px 0 0", color: "#FBF6EE", letterSpacing: "-0.01em" }}>
-          {p.t}
-        </h2>
-        <div style={{ fontFamily: "var(--sans)", fontSize: 14.5, color: "rgba(251,246,238,0.74)", marginTop: 8 }}>{p.a}</div>
+        {editing ? (
+          <div style={{ marginTop: 18 }}>{renderEditForm()}</div>
+        ) : (
+          <>
+            <h2 style={{ fontFamily: "var(--serif)", fontWeight: 300, fontSize: 31, lineHeight: 1.08, margin: "12px 0 0", color: "#FBF6EE", letterSpacing: "-0.01em" }}>
+              {p.t || "Untitled"}
+            </h2>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, fontFamily: "var(--sans)", fontSize: 14.5, color: "rgba(251,246,238,0.74)", marginTop: 8 }}>
+              {p.a}
+              {editedMarker(editedFields, "artist")}
+            </div>
+          </>
+        )}
         {p.note ? (
           <div style={{ fontFamily: "var(--serif)", fontStyle: "italic", fontSize: 17, lineHeight: 1.5, color: "rgba(251,246,238,0.8)", margin: "18px 0 0" }}>
             {p.note}
@@ -872,7 +1071,7 @@ export default function PieceViewer() {
 
         <div style={{ height: 1, background: "rgba(251,246,238,0.12)", margin: "24px 0 18px" }} />
         <div style={{ ...LABEL, marginBottom: 6 }}>Museum label</div>
-        {p.keywords.length ? (
+        {!editing && p.keywords.length ? (
           <div style={{ display: "flex", flexWrap: "wrap", gap: 7, margin: "0 0 10px" }}>
             {p.keywords.map((keyword) => (
               <span key={keyword} style={KEYWORD_CHIP}>
@@ -907,6 +1106,12 @@ export default function PieceViewer() {
           >
             {p.a}
           </button>
+        </div>
+        <div style={ROW}>
+          <div style={ROW_KEY}>Date</div>
+          <div style={ROW_VAL}>
+            {p.editDate || "—"} {editedMarker(editedFields, "date")}
+          </div>
         </div>
         <div style={ROW}>
           <div style={ROW_KEY}>Medium</div>

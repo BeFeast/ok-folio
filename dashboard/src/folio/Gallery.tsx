@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEv
 import { useQuery } from "@tanstack/react-query";
 import { fetchArtists, fetchGalleryCatalog, getPhotoThumbnailUrl } from "../api";
 import type { GalleryFacet } from "../types";
+import BulkEditBar from "./BulkEditBar";
 import { useFolio, type GalleryMode, type PieceVM } from "./context";
 import { BrandMark, CloseIcon, HeartIcon, Hov, OkfImage, PageHeader, SearchIcon } from "./ui";
 import { useViewport } from "./useViewport";
@@ -1128,6 +1129,94 @@ function LibraryTile({ piece }: { piece: PieceVM }) {
   );
 }
 
+function CheckBadge({ selected }: { selected: boolean }) {
+  return (
+    <span
+      aria-hidden="true"
+      style={{
+        position: "absolute",
+        top: 8,
+        right: 8,
+        zIndex: 4,
+        width: 25,
+        height: 25,
+        borderRadius: 99,
+        border: selected ? 0 : "2px solid rgba(255,255,255,.9)",
+        background: selected ? "var(--accent)" : "rgba(20,14,10,.22)",
+        color: "var(--on-accent)",
+        display: "grid",
+        placeItems: "center",
+        boxShadow: "0 1px 5px rgba(0,0,0,.25)",
+      }}
+    >
+      {selected ? (
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+          <path d="M3.2 8.4l3 3 6.6-7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      ) : null}
+    </span>
+  );
+}
+
+function SelectableTile({ piece, selected, onToggle }: { piece: PieceVM; selected: boolean; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      aria-pressed={selected}
+      onClick={onToggle}
+      style={{
+        position: "relative",
+        aspectRatio: "1 / 1",
+        border: 0,
+        borderRadius: 3,
+        padding: 0,
+        overflow: "hidden",
+        background: "var(--surface)",
+        cursor: "pointer",
+        boxShadow: selected ? "0 0 0 3px var(--accent)" : "0 1px 8px var(--shadow)",
+      }}
+    >
+      <OkfImage
+        src={piece.thumb}
+        alt={piece.t}
+        title={piece.t}
+        artist={piece.a}
+        imgStyle={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", zIndex: 1 }}
+        matteStyle={{
+          position: "absolute",
+          inset: 0,
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 5,
+          padding: 16,
+          textAlign: "center",
+          background: "linear-gradient(155deg, var(--surface-2), var(--surface))",
+        }}
+        matteTitleStyle={{ fontFamily: "var(--serif)", fontStyle: "italic", fontSize: 14, lineHeight: 1.2, color: "var(--ink)" }}
+        matteArtistStyle={{ fontFamily: "var(--sans)", fontSize: 9.5, letterSpacing: "0.12em", textTransform: "uppercase", color: "var(--muted)" }}
+      />
+      {selected ? <span style={{ position: "absolute", inset: 0, zIndex: 2, background: "rgba(124,36,32,.18)" }} /> : null}
+      <CheckBadge selected={selected} />
+      <span style={{ position: "absolute", left: 10, right: 10, bottom: 9, zIndex: 3, textAlign: "left", pointerEvents: "none" }}>
+        <span style={{ display: "block", fontFamily: "var(--serif)", fontSize: 13.5, lineHeight: 1.15, color: "#FBF6EE", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{piece.t || "Untitled"}</span>
+        <span style={{ display: "block", marginTop: 2, fontFamily: "var(--sans)", fontSize: 10.5, color: "rgba(251,246,238,.78)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{piece.a}</span>
+      </span>
+      <span style={{ position: "absolute", inset: "35% 0 0", zIndex: 2, background: "linear-gradient(to top, rgba(12,10,7,.74), rgba(12,10,7,0))" }} />
+    </button>
+  );
+}
+
+function SelectionGrid({ pieces, selectedIds, onToggle }: { pieces: PieceVM[]; selectedIds: Set<number>; onToggle: (id: number) => void }) {
+  return (
+    <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(132px, 1fr))", gap: 10, paddingBottom: 120 }}>
+      {pieces.map((piece) => (
+        <SelectableTile key={piece.id} piece={piece} selected={selectedIds.has(piece.id)} onToggle={() => onToggle(piece.id)} />
+      ))}
+    </section>
+  );
+}
+
 function MobileLibraryTile({ piece }: { piece: PieceVM }) {
   const { openPiece } = useFolio();
   const label = [piece.a, piece.y].filter(Boolean).join(" · ");
@@ -1416,18 +1505,54 @@ function MobileFilteredEmptyState() {
 export default function Gallery() {
   const { pieces, total, totalPhotos, mode, isLoading, isError, query, favoriteOnly, artist, category } = useFolio();
   const { isMobile } = useViewport();
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(() => new Set());
   const hasActiveFilters = !!query.trim() || favoriteOnly || !!artist || !!category;
+  const selectedList = useMemo(() => Array.from(selectedIds), [selectedIds]);
 
   const subcopy = isLoading
     ? "Gathering your pieces…"
     : `${total.toLocaleString()} pieces, kept with intention.`;
+  const toggleSelected = (id: number) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+  const clearSelection = () => {
+    setSelectedIds(new Set());
+    setSelectionMode(false);
+  };
+  const selectButton = (
+    <button
+      type="button"
+      onClick={() => {
+        setSelectionMode((enabled) => !enabled);
+        setSelectedIds(new Set());
+      }}
+      style={{ minHeight: 44, borderRadius: 99, border: "1px solid var(--line)", background: selectionMode ? "var(--accent)" : "var(--surface)", color: selectionMode ? "var(--on-accent)" : "var(--ink)", padding: "0 16px", fontFamily: "var(--sans)", fontSize: 13.5, fontWeight: 800, cursor: "pointer" }}
+    >
+      {selectionMode ? "Done" : "Select"}
+    </button>
+  );
 
   return (
     <div>
       {isMobile ? (
-        <MobileGalleryHeader />
+        <>
+          <MobileGalleryHeader />
+          <div style={{ display: "flex", justifyContent: "flex-end", padding: "0 0 14px" }}>{selectButton}</div>
+        </>
       ) : (
-        <PageHeader eyebrow="Gallery" title="Your gathered pieces" subcopy={subcopy} action={<ModeTabs />} pad="54px 0 26px" />
+        <PageHeader
+          eyebrow="Gallery"
+          title="Your gathered pieces"
+          subcopy={subcopy}
+          action={<div style={{ display: "flex", alignItems: "center", gap: 10 }}><ModeTabs />{selectButton}</div>}
+          pad="54px 0 26px"
+        />
       )}
       {isMobile ? null : <GalleryFilterBar />}
       {isError ? (
@@ -1447,7 +1572,9 @@ export default function Gallery() {
         )
       ) : (
         <>
-          {mode === "magazine" ? (
+          {selectionMode ? (
+            <SelectionGrid pieces={pieces} selectedIds={selectedIds} onToggle={toggleSelected} />
+          ) : mode === "magazine" ? (
             <MagazineView pieces={pieces} />
           ) : mode === "wall" ? (
             <WallView pieces={pieces} />
@@ -1457,6 +1584,7 @@ export default function Gallery() {
           {mode !== "wall" || isMobile ? <LoadMoreSentinel /> : null}
         </>
       )}
+      {selectionMode ? <BulkEditBar selectedIds={selectedList} onClear={clearSelection} /> : null}
     </div>
   );
 }

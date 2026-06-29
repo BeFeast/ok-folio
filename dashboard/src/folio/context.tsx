@@ -18,6 +18,7 @@ import { useNavigate } from "react-router-dom";
 import {
   addPieceToFolio,
   addToFavorites,
+  bulkEditCatalog,
   createFolio,
   createPiece,
   deleteFolio,
@@ -32,10 +33,13 @@ import {
   removeFromFavorites,
   removePieceFromFolio,
   skipInboxItem,
+  updatePieceMetadata,
   updateFolio,
+  type BulkMetadataEdit,
   type CreatePieceInput,
+  type PieceMetadataPatch,
 } from "../api";
-import type { Photo } from "../types";
+import type { FolioPiecesResponse, GalleryCatalogResponse, Photo } from "../types";
 import {
   applyTheme,
   readStoredTheme,
@@ -50,6 +54,7 @@ export interface PieceVM {
   t: string; // title
   a: string; // artist
   y: string; // date label (empty when unknown)
+  editDate: string; // YYYY-MM-DD date value for metadata editing
   src: string; // source label
   med: string; // medium (empty when unknown)
   kind: string; // eyebrow kind label
@@ -67,6 +72,7 @@ export interface PieceVM {
   lens: string;
   added: string;
   addedExact: string; // absolute date-time for the "Added" tooltip ("" when unknown)
+  editedFields: string[];
 }
 
 const PAGE_SIZE = 120;
@@ -140,6 +146,13 @@ function formatMetadataDate(value: string | null): string {
   });
 }
 
+function editorDateValue(value: string | null): string {
+  if (!value) return "";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toISOString().slice(0, 10);
+}
+
 function cameraLabel(make: string, model: string): string {
   const cleanMake = (make || "").trim();
   const cleanModel = (model || "").trim();
@@ -157,6 +170,7 @@ export function mapPhoto(p: Photo): PieceVM {
     t: title,
     a: artist || "Unknown",
     y: "",
+    editDate: editorDateValue(p.UploadDate || null),
     src: hostFrom(p.SourcePage) || p.SourcePage || "—",
     med: "",
     kind: "",
@@ -174,7 +188,25 @@ export function mapPhoto(p: Photo): PieceVM {
     lens: (p.LensModel || "").trim(),
     added: relativeAdded(p.DownloadedAt),
     addedExact: absoluteAdded(p.DownloadedAt),
+    editedFields: Array.isArray(p.manual_fields) ? p.manual_fields.map((field) => field.trim()).filter(Boolean) : [],
   };
+}
+
+function normalizeKeywords(keywords: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of keywords) {
+    const value = raw.trim();
+    const key = value.toLowerCase();
+    if (!value || seen.has(key)) continue;
+    seen.add(key);
+    out.push(value);
+  }
+  return out;
+}
+
+function mergeEditedFields(existing: string[], fields: string[]): string[] {
+  return normalizeKeywords([...existing, ...fields]);
 }
 
 /* ---- context ---- */
@@ -249,6 +281,8 @@ interface FolioContextValue {
   deleteFolioAction: (id: number) => Promise<boolean>;
   addPieceToFolioAction: (folioId: number, photoId: number) => void;
   removePieceFromFolioAction: (folioId: number, photoId: number) => void;
+  editPieceMetadata: (id: number, input: PieceMetadataPatch) => Promise<boolean>;
+  bulkEditPieces: (input: BulkMetadataEdit) => Promise<boolean>;
   setViewerPieces: (pieces: PieceVM[]) => void;
   toasts: Toast[];
   dismissToast: (id: number) => void;
@@ -276,6 +310,7 @@ export function FolioProvider({ children }: { children: ReactNode }) {
   const [addOpen, setAddOpen] = useState(false);
   const [viewOpen, setViewOpen] = useState(false);
   const [favOverride, setFavOverride] = useState<Record<number, boolean>>({});
+  const [metadataOverrides, setMetadataOverrides] = useState<Record<number, Partial<PieceVM>>>({});
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [viewerPieces, setViewerPiecesState] = useState<PieceVM[]>([]);
 
@@ -335,14 +370,20 @@ export function FolioProvider({ children }: { children: ReactNode }) {
 
   const catalogTotal = catalog.data?.pages[0]?.total;
 
+  const overlayPiece = useCallback(
+    (piece: PieceVM): PieceVM => {
+      const override = metadataOverrides[piece.id];
+      const withMetadata = override ? { ...piece, ...override } : piece;
+      const fav = favOverride[withMetadata.id];
+      return fav === undefined ? withMetadata : { ...withMetadata, fav };
+    },
+    [favOverride, metadataOverrides],
+  );
+
   const pieces = useMemo<PieceVM[]>(() => {
     const photos = catalog.data?.pages.flatMap((pg) => pg.photos) ?? [];
-    return photos.map((p) => {
-      const vm = mapPhoto(p);
-      const override = favOverride[vm.id];
-      return override === undefined ? vm : { ...vm, fav: override };
-    });
-  }, [catalog.data, favOverride]);
+    return photos.map((p) => overlayPiece(mapPhoto(p)));
+  }, [catalog.data, overlayPiece]);
 
   const isFav = useCallback(
     (id: number) => {
@@ -681,6 +722,177 @@ export function FolioProvider({ children }: { children: ReactNode }) {
     [queryClient],
   );
 
+  const updatePhotoInCaches = useCallback(
+    (photo: Photo) => {
+      queryClient.setQueriesData<{ pages: GalleryCatalogResponse[] }>({ queryKey: ["folio-catalog"] }, (data) =>
+        data
+          ? {
+              ...data,
+              pages: data.pages.map((page) => ({
+                ...page,
+                photos: page.photos.map((item) => (item.ID === photo.ID ? photo : item)),
+              })),
+            }
+          : data,
+      );
+      queryClient.setQueriesData<{ pages: FolioPiecesResponse[] }>({ queryKey: ["folio-pieces"] }, (data) =>
+        data
+          ? {
+              ...data,
+              pages: data.pages.map((page) => ({
+                ...page,
+                photos: page.photos.map((item) => (item.ID === photo.ID ? photo : item)),
+              })),
+            }
+          : data,
+      );
+      setMetadataOverrides((prev) => ({ ...prev, [photo.ID]: mapPhoto(photo) }));
+    },
+    [queryClient],
+  );
+
+  const updatePhotosInInfiniteCaches = useCallback(
+    (photos: Photo[]) => {
+      if (photos.length === 0) return;
+      const byId = new Map(photos.map((photo) => [photo.ID, photo]));
+      queryClient.setQueriesData<{ pages: GalleryCatalogResponse[] }>({ queryKey: ["folio-catalog"] }, (data) =>
+        data
+          ? {
+              ...data,
+              pages: data.pages.map((page) => ({
+                ...page,
+                photos: page.photos.map((photo) => byId.get(photo.ID) ?? photo),
+              })),
+            }
+          : data,
+      );
+      queryClient.setQueriesData<{ pages: FolioPiecesResponse[] }>({ queryKey: ["folio-pieces"] }, (data) =>
+        data
+          ? {
+              ...data,
+              pages: data.pages.map((page) => ({
+                ...page,
+                photos: page.photos.map((photo) => byId.get(photo.ID) ?? photo),
+              })),
+            }
+          : data,
+      );
+      setMetadataOverrides((prev) => {
+        const next = { ...prev };
+        for (const photo of photos) next[photo.ID] = mapPhoto(photo);
+        return next;
+      });
+    },
+    [queryClient],
+  );
+
+  const editPieceMetadata = useCallback(
+    (id: number, input: PieceMetadataPatch) => {
+      const toastId = ++toastSeq;
+      const fields = [
+        input.title !== undefined ? "title" : "",
+        input.artist !== undefined ? "artist" : "",
+        input.date !== undefined ? "date" : "",
+        input.keywords !== undefined ? "keywords" : "",
+      ].filter(Boolean);
+      setToasts((prev) => [...prev, { id: toastId, status: "loading", title: "Saving edits" }]);
+      setMetadataOverrides((prev) => {
+        const current = prev[id] ?? pieces.find((piece) => piece.id === id) ?? viewerPieces.find((piece) => piece.id === id);
+        if (!current) return prev;
+        const next: Partial<PieceVM> = { ...current };
+        if (input.title !== undefined) next.t = input.title.trim();
+        if (input.artist !== undefined) next.a = input.artist.trim() || "Unknown";
+        if (input.date !== undefined) next.editDate = input.date ?? "";
+        if (input.keywords !== undefined) next.keywords = normalizeKeywords(input.keywords);
+        next.editedFields = mergeEditedFields(current.editedFields ?? [], fields);
+        return { ...prev, [id]: next };
+      });
+      return updatePieceMetadata(id, input)
+        .then((photo) => {
+          updatePhotoInCaches(photo);
+          setToasts((prev) => prev.map((toast) => (toast.id === toastId ? { ...toast, status: "success", title: "Piece edited" } : toast)));
+          window.setTimeout(() => setToasts((prev) => prev.filter((toast) => toast.id !== toastId)), 2600);
+          void queryClient.invalidateQueries({ queryKey: ["folio-catalog"] });
+          void queryClient.invalidateQueries({ queryKey: ["gallery-catalog"] });
+          void queryClient.invalidateQueries({ queryKey: ["folio-pieces"] });
+          return true;
+        })
+        .catch((err: unknown) => {
+          setToasts((prev) =>
+            prev.map((toast) =>
+              toast.id === toastId
+                ? { ...toast, status: "error", title: "Couldn’t save edits", detail: err instanceof Error ? err.message : undefined }
+                : toast,
+            ),
+          );
+          void queryClient.invalidateQueries({ queryKey: ["folio-catalog"] });
+          return false;
+        });
+    },
+    [pieces, queryClient, updatePhotoInCaches, viewerPieces],
+  );
+
+  const bulkEditPieces = useCallback(
+    (input: BulkMetadataEdit) => {
+      const ids = input.ids.filter((id, index) => input.ids.indexOf(id) === index);
+      if (ids.length === 0) return Promise.resolve(false);
+      const toastId = ++toastSeq;
+      const fields = [
+        input.set_artist !== undefined ? "artist" : "",
+        input.set_date !== undefined ? "date" : "",
+        input.add_keywords !== undefined || input.remove_keywords !== undefined ? "keywords" : "",
+      ].filter(Boolean);
+      setToasts((prev) => [...prev, { id: toastId, status: "loading", title: `Updating ${ids.length} pieces` }]);
+      setMetadataOverrides((prev) => {
+        const known = new Map([...pieces, ...viewerPieces].map((piece) => [piece.id, piece]));
+        const next = { ...prev };
+        for (const id of ids) {
+          const current = next[id] ?? known.get(id);
+          if (!current) continue;
+          const patch: Partial<PieceVM> = { ...current };
+          if (input.set_artist !== undefined) patch.a = input.set_artist.trim() || "Unknown";
+          if (input.set_date !== undefined) patch.editDate = input.set_date.trim();
+          if (input.add_keywords !== undefined || input.remove_keywords !== undefined) {
+            const remove = new Set((input.remove_keywords ?? []).map((keyword) => keyword.trim().toLowerCase()).filter(Boolean));
+            patch.keywords = normalizeKeywords([...(current.keywords ?? []).filter((keyword) => !remove.has(keyword.toLowerCase())), ...(input.add_keywords ?? [])]);
+          }
+          patch.editedFields = mergeEditedFields(current.editedFields ?? [], fields);
+          next[id] = patch;
+        }
+        return next;
+      });
+      return bulkEditCatalog({ ...input, ids })
+        .then((result) => {
+          updatePhotosInInfiniteCaches(result.photos);
+          setToasts((prev) =>
+            prev.map((toast) =>
+              toast.id === toastId
+                ? { ...toast, status: "success", title: `Updated ${result.updated} ${result.updated === 1 ? "piece" : "pieces"}` }
+                : toast,
+            ),
+          );
+          window.setTimeout(() => setToasts((prev) => prev.filter((toast) => toast.id !== toastId)), 3000);
+          void queryClient.invalidateQueries({ queryKey: ["folio-catalog"] });
+          void queryClient.invalidateQueries({ queryKey: ["gallery-catalog"] });
+          void queryClient.invalidateQueries({ queryKey: ["folio-pieces"] });
+          return true;
+        })
+        .catch((err: unknown) => {
+          setToasts((prev) =>
+            prev.map((toast) =>
+              toast.id === toastId
+                ? { ...toast, status: "error", title: "Couldn’t update selected pieces", detail: err instanceof Error ? err.message : undefined }
+                : toast,
+            ),
+          );
+          void queryClient.invalidateQueries({ queryKey: ["folio-catalog"] });
+          void queryClient.invalidateQueries({ queryKey: ["folio-pieces"] });
+          return false;
+        });
+    },
+    [pieces, queryClient, updatePhotosInInfiniteCaches, viewerPieces],
+  );
+
   const openPiece = useCallback((id: number) => setSelectedId(id), []);
   const closePiece = useCallback(() => setSelectedId(null), []);
   const filterByArtist = useCallback(
@@ -711,7 +923,7 @@ export function FolioProvider({ children }: { children: ReactNode }) {
     setViewerPiecesState(nextPieces);
   }, []);
 
-  const activeViewerPieces = viewerPieces.length > 0 ? viewerPieces : pieces;
+  const activeViewerPieces = viewerPieces.length > 0 ? viewerPieces.map(overlayPiece) : pieces;
 
   const selected = useMemo(
     () => (selectedId == null ? null : activeViewerPieces.find((p) => p.id === selectedId) ?? null),
@@ -776,6 +988,8 @@ export function FolioProvider({ children }: { children: ReactNode }) {
     deleteFolioAction,
     addPieceToFolioAction,
     removePieceFromFolioAction,
+    editPieceMetadata,
+    bulkEditPieces,
     setViewerPieces,
     toasts,
     dismissToast,
