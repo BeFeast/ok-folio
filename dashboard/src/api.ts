@@ -23,6 +23,7 @@ import type {
   FolioPiecesResponse,
   Photo,
   ConnectorSourceInput,
+  ConnectorSourceBackfillResult,
   ConnectorSourcePreviewInput,
   ConnectorSourcePreviewResponse,
   ConnectorSourceSetting,
@@ -183,6 +184,19 @@ export async function deleteConnectorSource(id: number): Promise<void> {
     throw new Error(data.error || "Failed to delete connector source");
   }
   await clearOfflineCaches();
+}
+
+export async function backfillConnectorSource(id: number): Promise<ConnectorSourceBackfillResult> {
+  const response = await fetch(`${API_BASE}/settings/connector-sources/${id}/backfill`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || "Failed to backfill connector source");
+  }
+  const result = await response.json();
+  await clearOfflineCaches();
+  return result;
 }
 
 export async function fetchFolios(): Promise<FoliosResponse> {

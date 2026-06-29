@@ -75,6 +75,8 @@ export interface ConnectorSourceSetting {
   label: string;
   config?: WebGalleryConfig | null;
   enabled: boolean;
+  target_folio_id?: number | null;
+  show_in_library: boolean;
   last_error?: string;
   last_seen_at?: string | null;
   created_at: string;
@@ -91,6 +93,16 @@ export interface ConnectorSourceInput {
   label?: string;
   config?: WebGalleryConfig;
   enabled?: boolean;
+  target_folio_id?: number | null;
+  show_in_library?: boolean;
+}
+
+export interface ConnectorSourceBackfillResult {
+  matched: number;
+  updated: number;
+  added_to_folio: number;
+  target_folio_id?: number | null;
+  show_in_library: boolean;
 }
 
 export interface WebGalleryConfig {
