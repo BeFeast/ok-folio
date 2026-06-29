@@ -50,8 +50,30 @@ const buttonStyle: CSSProperties = {
   cursor: "pointer",
 };
 
+const BACKFILL_BATCH_SIZE = 1000;
+
 function backfillSummary(result: ConnectorSourceBackfillResult): string {
   return `Added ${result.added_to_folio.toLocaleString()} existing pieces`;
+}
+
+function emptyBackfillResult(): ConnectorSourceBackfillResult {
+  return {
+    matched: 0,
+    updated: 0,
+    added_to_folio: 0,
+    target_folio_id: null,
+    show_in_library: true,
+  };
+}
+
+function mergeBackfillResult(total: ConnectorSourceBackfillResult, next: ConnectorSourceBackfillResult): ConnectorSourceBackfillResult {
+  return {
+    matched: total.matched + next.matched,
+    updated: total.updated + next.updated,
+    added_to_folio: total.added_to_folio + next.added_to_folio,
+    target_folio_id: next.target_folio_id ?? total.target_folio_id,
+    show_in_library: next.show_in_library,
+  };
 }
 
 export function destinationGateMessage(targetFolioId: number | null, showInLibrary: boolean): string {
@@ -107,10 +129,17 @@ export default function DestinationControls({
     setBackfillStatus("Backfilling...");
     setBackfilling(true);
     try {
-      const result = await backfillConnectorSource(sourceId);
+      let result = emptyBackfillResult();
+      let batch: ConnectorSourceBackfillResult;
+      do {
+        batch = await backfillConnectorSource(sourceId);
+        result = mergeBackfillResult(result, batch);
+      } while (batch.matched >= BACKFILL_BATCH_SIZE);
       setBackfillStatus(backfillSummary(result));
       await queryClient.invalidateQueries({ queryKey: ["folios"] });
       await queryClient.invalidateQueries({ queryKey: ["connector-sources"] });
+      await queryClient.invalidateQueries({ queryKey: ["folio-catalog"] });
+      await queryClient.invalidateQueries({ queryKey: ["folio-pieces"] });
     } catch (err) {
       setBackfillStatus(err instanceof Error ? err.message : "Backfill failed");
     } finally {
