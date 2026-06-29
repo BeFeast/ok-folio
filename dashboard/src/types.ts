@@ -73,6 +73,7 @@ export interface ConnectorSourceSetting {
   type: string;
   chat_id: string;
   label: string;
+  config?: WebGalleryConfig | null;
   enabled: boolean;
   last_error?: string;
   last_seen_at?: string | null;
@@ -86,9 +87,63 @@ export interface ConnectorSourcesResponse {
 
 export interface ConnectorSourceInput {
   type: string;
-  chat_id: string;
-  label: string;
+  chat_id?: string;
+  label?: string;
+  config?: WebGalleryConfig;
   enabled?: boolean;
+}
+
+export interface WebGalleryConfig {
+  list_url: string;
+  pagination: WebGalleryPaginationConfig;
+  selectors: WebGallerySelectorConfig;
+  item_link_filter: string[];
+  schedule?: string;
+}
+
+export interface WebGalleryPaginationConfig {
+  strategy: "page_param" | "next_link" | "none";
+  param_name?: string;
+  start_index?: number;
+  next_link_selector?: string;
+}
+
+export interface WebGallerySelectorConfig {
+  item_link: string;
+  image: WebGalleryFieldSelector;
+  artist?: WebGalleryFieldSelector;
+  title?: WebGalleryFieldSelector;
+  date?: WebGalleryFieldSelector;
+}
+
+export interface WebGalleryFieldSelector {
+  selector: string;
+  attr?: string;
+}
+
+export interface ConnectorSourcePreviewInput {
+  config: WebGalleryConfig;
+  page?: number;
+  limit?: number;
+  cursor?: string;
+}
+
+export interface ConnectorSourcePreviewResponse {
+  provider: string;
+  page: number;
+  items_found: number;
+  has_next: boolean;
+  next_page?: number;
+  next_cursor?: string;
+  sample: ConnectorSourcePreviewSample[];
+}
+
+export interface ConnectorSourcePreviewSample {
+  source_url: string;
+  image_url: string;
+  title?: string;
+  artist?: string;
+  date?: string;
 }
 
 export interface ConnectorRunStatus {
