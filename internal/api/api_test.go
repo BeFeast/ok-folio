@@ -221,6 +221,90 @@ func TestHandleGalleryDecision(t *testing.T) {
 	}
 }
 
+func TestPatchPieceMetadataPersistsManualFields(t *testing.T) {
+	server, db := setupTestServer(t)
+	defer safeShutdown(server)
+
+	photo := &database.DownloadedPhoto{
+		URL:      "https://example.com/edit.jpg",
+		Title:    "Original",
+		Artist:   "Original Artist",
+		Keywords: database.Keywords{"old"},
+		FileName: "edit.jpg",
+		Status:   "downloaded",
+	}
+	if err := db.Create(photo).Error; err != nil {
+		t.Fatalf("Failed to seed photo: %v", err)
+	}
+
+	body := strings.NewReader(`{"title":" Manual Title ","artist":"  Manual Artist  ","date":"2024-05-06","keywords":[" Favorite ","favorite","Portrait","nonps"]}`)
+	req := httptest.NewRequest(http.MethodPatch, fmt.Sprintf("/api/v1/photos/%d", photo.ID), body)
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	var updated database.DownloadedPhoto
+	if err := json.NewDecoder(w.Body).Decode(&updated); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+	if updated.Title != "Manual Title" || updated.Artist != "Manual Artist" {
+		t.Fatalf("Expected trimmed manual metadata, got %#v", updated)
+	}
+	if got := strings.Join(updated.Keywords, ","); got != "favorite,portrait,nonps" {
+		t.Fatalf("Expected normalized manual keywords without blocklist strip, got %q", got)
+	}
+	for _, field := range []string{"title", "artist", "date", "keywords"} {
+		if !updated.HasManualField(field) {
+			t.Fatalf("Expected manual field %q in %#v", field, updated.ManualFields)
+		}
+	}
+}
+
+func TestBulkEditCatalogAppliesOperationsAndLocks(t *testing.T) {
+	server, db := setupTestServer(t)
+	defer safeShutdown(server)
+
+	first := &database.DownloadedPhoto{URL: "https://example.com/bulk-1.jpg", Artist: "Old", Keywords: database.Keywords{"old", "keep"}, FileName: "bulk-1.jpg", Status: "downloaded"}
+	second := &database.DownloadedPhoto{URL: "https://example.com/bulk-2.jpg", Artist: "Old", Keywords: database.Keywords{"old"}, FileName: "bulk-2.jpg", Status: "downloaded"}
+	if err := db.Create(first).Error; err != nil {
+		t.Fatalf("Failed to seed first photo: %v", err)
+	}
+	if err := db.Create(second).Error; err != nil {
+		t.Fatalf("Failed to seed second photo: %v", err)
+	}
+
+	body := strings.NewReader(fmt.Sprintf(`{"ids":[%d,%d,999999],"set_artist":" New Artist ","set_date":"2022","add_keywords":[" Favorite ","new"],"remove_keywords":["old"]}`, first.ID, second.ID))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/catalog/bulk-edit", body)
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	var response bulkEditResponse
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+	if response.Updated != 2 || response.Skipped != 1 || len(response.Photos) != 2 {
+		t.Fatalf("Unexpected bulk edit response: %#v", response)
+	}
+	for _, photo := range response.Photos {
+		if photo.Artist != "New Artist" {
+			t.Fatalf("Expected artist set, got %#v", photo)
+		}
+		if got := strings.Join(photo.Keywords, ","); got != "keep,favorite,new" && got != "favorite,new" {
+			t.Fatalf("Expected keywords edited and normalized, got %q", got)
+		}
+		for _, field := range []string{"artist", "date", "keywords"} {
+			if !photo.HasManualField(field) {
+				t.Fatalf("Expected manual field %q in %#v", field, photo.ManualFields)
+			}
+		}
+	}
+}
+
 func TestConnectorSourceSettingsCRUD(t *testing.T) {
 	server, _ := setupTestServer(t)
 	defer safeShutdown(server)
