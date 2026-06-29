@@ -1673,6 +1673,17 @@ func (db *DB) BackfillConnectorSourceRouting(sourceID uint64, limit int) (Connec
 				source.Type,
 				source.ChatID,
 			)
+		hidden := false
+		if source.TargetFolioID != nil {
+			hidden = !source.ShowInLibrary
+			sourceQuery = sourceQuery.Where(
+				"connector_source_id IS NULL OR hidden_from_gallery <> ? OR NOT EXISTS (SELECT 1 FROM folio_pieces WHERE folio_pieces.folio_id = ? AND folio_pieces.photo_id = downloaded_photos.id)",
+				hidden,
+				*source.TargetFolioID,
+			)
+		} else {
+			sourceQuery = sourceQuery.Where("connector_source_id IS NULL OR hidden_from_gallery <> ?", hidden)
+		}
 		if err := sourceQuery.
 			Order("id ASC").
 			Limit(limit).
@@ -1686,10 +1697,6 @@ func (db *DB) BackfillConnectorSourceRouting(sourceID uint64, limit int) (Connec
 		ids := make([]uint64, 0, len(photos))
 		for _, photo := range photos {
 			ids = append(ids, photo.ID)
-		}
-		hidden := false
-		if source.TargetFolioID != nil {
-			hidden = !source.ShowInLibrary
 		}
 		update := tx.Model(&DownloadedPhoto{}).Where("id IN ?", ids).Updates(map[string]interface{}{
 			"hidden_from_gallery": hidden,
@@ -2195,7 +2202,8 @@ func (db *DB) GetPhotosToday(limit int, offset int) ([]DownloadedPhoto, int64, e
 
 	// Get total count
 	countQuery := db.DB.Model(&DownloadedPhoto{}).
-		Where("status = ? AND downloaded_at >= ?", "downloaded", startOfDay)
+		Where(galleryVisiblePredicate).
+		Where("downloaded_at >= ?", startOfDay)
 
 	if err := countQuery.Count(&total).Error; err != nil {
 		return nil, 0, err
@@ -2225,7 +2233,8 @@ func (db *DB) GetPhotosLastWeek(limit int, offset int) ([]DownloadedPhoto, int64
 
 	// Get total count
 	countQuery := db.DB.Model(&DownloadedPhoto{}).
-		Where("status = ? AND downloaded_at >= ?", "downloaded", weekAgo)
+		Where(galleryVisiblePredicate).
+		Where("downloaded_at >= ?", weekAgo)
 
 	if err := countQuery.Count(&total).Error; err != nil {
 		return nil, 0, err

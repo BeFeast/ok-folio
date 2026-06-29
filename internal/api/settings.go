@@ -215,10 +215,6 @@ func (s *Server) handleUpdateConnectorSource(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	if err := s.validateConnectorSource(input, false); err != nil {
-		s.writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
 	existing, err := s.db.GetConnectorSource(id)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		s.writeError(w, http.StatusNotFound, "Connector source not found")
@@ -226,6 +222,14 @@ func (s *Server) handleUpdateConnectorSource(w http.ResponseWriter, r *http.Requ
 	}
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, "Failed to fetch connector source")
+		return
+	}
+	validationInput := input
+	if validationInput.Type == "" && (validationInput.ChatID != "" || validationInput.Config != nil) {
+		validationInput.Type = existing.Type
+	}
+	if err := s.validateConnectorSource(validationInput, false); err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	finalTarget := existing.TargetFolioID

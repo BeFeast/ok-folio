@@ -411,6 +411,50 @@ func TestConnectorSourceSettingsCRUD(t *testing.T) {
 	}
 }
 
+func TestConnectorSourcePatchValidatesTypedFieldsWithExistingType(t *testing.T) {
+	server, _ := setupTestServer(t)
+	defer safeShutdown(server)
+
+	validConfig := `{"list_url":"https://example.com/gallery","pagination":{"strategy":"none"},"selectors":{"item_link":"a.item","image":{"selector":"img","attr":"src"}}}`
+	createBody := bytes.NewBufferString(`{"type":"webgallery","config":` + validConfig + `}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/connector-sources", createBody)
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create webgallery status=%d body=%q", w.Code, w.Body.String())
+	}
+	var webSource database.ConnectorSource
+	if err := json.NewDecoder(w.Body).Decode(&webSource); err != nil {
+		t.Fatalf("decode webgallery source: %v", err)
+	}
+
+	req = httptest.NewRequest(http.MethodPatch, "/api/v1/settings/connector-sources/"+strconv.FormatUint(webSource.ID, 10), bytes.NewBufferString(`{"config":{"list_url":"not absolute"}}`))
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected invalid webgallery patch rejection, status=%d body=%q", w.Code, w.Body.String())
+	}
+
+	createBody = bytes.NewBufferString(`{"type":"telegram","chat_id":"-1001234567890"}`)
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/settings/connector-sources", createBody)
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create telegram status=%d body=%q", w.Code, w.Body.String())
+	}
+	var telegramSource database.ConnectorSource
+	if err := json.NewDecoder(w.Body).Decode(&telegramSource); err != nil {
+		t.Fatalf("decode telegram source: %v", err)
+	}
+
+	req = httptest.NewRequest(http.MethodPatch, "/api/v1/settings/connector-sources/"+strconv.FormatUint(telegramSource.ID, 10), bytes.NewBufferString(`{"chat_id":"not numeric"}`))
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected invalid telegram patch rejection, status=%d body=%q", w.Code, w.Body.String())
+	}
+}
+
 func TestConnectorSourceDestinationValidationAndBackfillAPI(t *testing.T) {
 	server, db := setupTestServer(t)
 	defer safeShutdown(server)
