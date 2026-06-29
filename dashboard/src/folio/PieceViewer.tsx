@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { fetchFolios } from "../api";
+import { fetchFolios, type PieceMetadataPatch } from "../api";
 import { useFolio } from "./context";
 import { ChevronIcon, CloseIcon, HeartIcon, OkfImage } from "./ui";
 import { useViewport } from "./useViewport";
@@ -150,6 +150,24 @@ interface EditDraft {
   keywords: string[];
 }
 
+function normalizeDraftKeywords(keywords: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of keywords) {
+    const value = raw.trim();
+    const key = value.toLowerCase();
+    if (!value || seen.has(key)) continue;
+    seen.add(key);
+    out.push(value);
+  }
+  return out;
+}
+
+function sameKeywords(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((keyword, index) => keyword === b[index]);
+}
+
 function editedMarker(fields: string[], field: string) {
   return fields.includes(field) ? <span style={EDITED_MARK}>Edited</span> : null;
 }
@@ -259,13 +277,23 @@ export default function PieceViewer() {
 
   const saveEdit = useCallback(() => {
     if (!selected || savingEdit) return;
+    const nextTitle = editDraft.title.trim();
+    const nextArtist = editDraft.artist.trim();
+    const currentArtist = selected.a === "Unknown" ? "" : selected.a.trim();
+    const nextDate = editDraft.date.trim();
+    const nextKeywords = normalizeDraftKeywords(editDraft.keywords);
+    const currentKeywords = normalizeDraftKeywords(selected.keywords);
+    const patch: PieceMetadataPatch = {};
+    if (nextTitle !== selected.t.trim()) patch.title = nextTitle;
+    if (nextArtist !== currentArtist) patch.artist = nextArtist;
+    if (nextDate !== selected.editDate) patch.date = nextDate || null;
+    if (!sameKeywords(nextKeywords, currentKeywords)) patch.keywords = nextKeywords;
+    if (Object.keys(patch).length === 0) {
+      setEditing(false);
+      return;
+    }
     setSavingEdit(true);
-    void editPieceMetadata(selected.id, {
-      title: editDraft.title,
-      artist: editDraft.artist,
-      date: editDraft.date || null,
-      keywords: editDraft.keywords,
-    }).then((ok) => {
+    void editPieceMetadata(selected.id, patch).then((ok) => {
       setSavingEdit(false);
       if (ok) setEditing(false);
     });

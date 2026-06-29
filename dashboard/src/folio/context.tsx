@@ -795,6 +795,9 @@ export function FolioProvider({ children }: { children: ReactNode }) {
         input.date !== undefined ? "date" : "",
         input.keywords !== undefined ? "keywords" : "",
       ].filter(Boolean);
+      if (fields.length === 0) return Promise.resolve(true);
+      const hadPreviousOverride = Object.prototype.hasOwnProperty.call(metadataOverrides, id);
+      const previousOverride = metadataOverrides[id];
       setToasts((prev) => [...prev, { id: toastId, status: "loading", title: "Saving edits" }]);
       setMetadataOverrides((prev) => {
         const current = prev[id] ?? pieces.find((piece) => piece.id === id) ?? viewerPieces.find((piece) => piece.id === id);
@@ -825,11 +828,17 @@ export function FolioProvider({ children }: { children: ReactNode }) {
                 : toast,
             ),
           );
+          setMetadataOverrides((prev) => {
+            const next = { ...prev };
+            if (hadPreviousOverride && previousOverride) next[id] = previousOverride;
+            else delete next[id];
+            return next;
+          });
           void queryClient.invalidateQueries({ queryKey: ["folio-catalog"] });
           return false;
         });
     },
-    [pieces, queryClient, updatePhotoInCaches, viewerPieces],
+    [metadataOverrides, pieces, queryClient, updatePhotoInCaches, viewerPieces],
   );
 
   const bulkEditPieces = useCallback(
@@ -842,6 +851,13 @@ export function FolioProvider({ children }: { children: ReactNode }) {
         input.set_date !== undefined ? "date" : "",
         input.add_keywords !== undefined || input.remove_keywords !== undefined ? "keywords" : "",
       ].filter(Boolean);
+      if (fields.length === 0) return Promise.resolve(true);
+      const previousOverrides = new Map<number, Partial<PieceVM> | undefined>();
+      for (const id of ids) {
+        if (Object.prototype.hasOwnProperty.call(metadataOverrides, id)) {
+          previousOverrides.set(id, metadataOverrides[id]);
+        }
+      }
       setToasts((prev) => [...prev, { id: toastId, status: "loading", title: `Updating ${ids.length} pieces` }]);
       setMetadataOverrides((prev) => {
         const known = new Map([...pieces, ...viewerPieces].map((piece) => [piece.id, piece]));
@@ -885,12 +901,21 @@ export function FolioProvider({ children }: { children: ReactNode }) {
                 : toast,
             ),
           );
+          setMetadataOverrides((prev) => {
+            const next = { ...prev };
+            for (const id of ids) {
+              const previousOverride = previousOverrides.get(id);
+              if (previousOverride) next[id] = previousOverride;
+              else delete next[id];
+            }
+            return next;
+          });
           void queryClient.invalidateQueries({ queryKey: ["folio-catalog"] });
           void queryClient.invalidateQueries({ queryKey: ["folio-pieces"] });
           return false;
         });
     },
-    [pieces, queryClient, updatePhotosInInfiniteCaches, viewerPieces],
+    [metadataOverrides, pieces, queryClient, updatePhotosInInfiniteCaches, viewerPieces],
   );
 
   const openPiece = useCallback((id: number) => setSelectedId(id), []);
