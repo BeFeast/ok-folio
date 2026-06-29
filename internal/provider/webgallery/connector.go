@@ -3,6 +3,7 @@ package webgallery
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -151,7 +152,7 @@ func (c *Connector) DiscoverPage(ctx context.Context, req provider.PageRequest) 
 		}
 		defer resp.Body.Close()
 
-		if err := c.checkStatus(resp); err != nil {
+		if err := c.checkStatus(ctx, resp); err != nil {
 			return discoveryResult{}, err
 		}
 
@@ -227,7 +228,7 @@ func (c *Connector) ResolveMedia(ctx context.Context, item provider.DiscoveredMe
 		}
 		defer resp.Body.Close()
 
-		if err := c.checkStatus(resp); err != nil {
+		if err := c.checkStatus(ctx, resp); err != nil {
 			return nil, err
 		}
 
@@ -270,7 +271,7 @@ func (c *Connector) ResolveMedia(ctx context.Context, item provider.DiscoveredMe
 			return nil, &provider.ProviderError{
 				ProviderID: ProviderID,
 				Kind:       provider.ErrorKindParse,
-				Err:        fmt.Errorf("image URL not found"),
+				Err:        fmt.Errorf("image selector %q matched nothing on item page", c.cfg.Gallery.Selectors.Image.Selector),
 			}
 		}
 
@@ -330,22 +331,39 @@ func (c *Connector) skipItemLink(href string) bool {
 func (c *Connector) get(ctx context.Context, target string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
-		return nil, err
+		return nil, &provider.ProviderError{ProviderID: ProviderID, Kind: provider.ErrorKindParse, Err: err}
 	}
 	if c.cfg.UserAgent != "" {
 		req.Header.Set("User-Agent", c.cfg.UserAgent)
 	}
-	return c.client.Do(req)
+	resp, err := c.client.Do(req)
+	if err != nil {
+		var providerErr *provider.ProviderError
+		if errors.As(err, &providerErr) {
+			return nil, providerErr
+		}
+		return nil, &provider.ProviderError{ProviderID: ProviderID, Kind: provider.ErrorKindTemporary, Err: err}
+	}
+	return resp, nil
 }
 
-func (c *Connector) checkStatus(resp *http.Response) error {
+func (c *Connector) checkStatus(ctx context.Context, resp *http.Response) error {
 	if resp.StatusCode == statusTooManyRequests {
 		retryAfter := c.cfg.RateLimitBackoff
 		if retryAfter == 0 {
 			retryAfter = defaultRateLimitDelay
 		}
 		c.logger.Warn().Dur("retry_after", retryAfter).Msg("Rate limited by webgallery")
-		time.Sleep(retryAfter)
+		select {
+		case <-ctx.Done():
+			return &provider.ProviderError{
+				ProviderID: ProviderID,
+				Kind:       provider.ErrorKindRateLimit,
+				RetryAfter: retryAfter,
+				Err:        fmt.Errorf("rate limited, retry after %v", retryAfter),
+			}
+		case <-time.After(retryAfter):
+		}
 		return &provider.ProviderError{
 			ProviderID: ProviderID,
 			Kind:       provider.ErrorKindRateLimit,

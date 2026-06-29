@@ -196,6 +196,7 @@ func (s *Server) setupRoutes() {
 		r.Delete("/inbox/{id}", s.handleDismissInboxItem)
 		r.Get("/streams/connectors/status", s.handleConnectorStatus)
 		r.Get("/settings/connector-sources", s.handleListConnectorSources)
+		r.Post("/settings/connector-sources/preview", s.handlePreviewConnectorSource)
 		r.Post("/settings/connector-sources", s.handleCreateConnectorSource)
 		r.Patch("/settings/connector-sources/{id}", s.handleUpdateConnectorSource)
 		r.Delete("/settings/connector-sources/{id}", s.handleDeleteConnectorSource)

@@ -88,6 +88,15 @@ func ptrTime(t time.Time) *time.Time {
 	return &t
 }
 
+func allowPrivatePreviewHosts(t *testing.T) {
+	t.Helper()
+	previous := connectorSourcePreviewAllowPrivateHosts
+	connectorSourcePreviewAllowPrivateHosts = true
+	t.Cleanup(func() {
+		connectorSourcePreviewAllowPrivateHosts = previous
+	})
+}
+
 // safeShutdown shuts down server and waits for workers to stop
 func safeShutdown(server *Server) {
 	server.Shutdown()
@@ -733,6 +742,221 @@ func TestConnectorSourceSettingsRejectsMalformedWebGalleryConfig(t *testing.T) {
 				t.Fatalf("expected malformed webgallery config to return 400, got %d body=%q", w.Code, w.Body.String())
 			}
 		})
+	}
+}
+
+func TestConnectorSourcePreviewWebGalleryConfig(t *testing.T) {
+	allowPrivatePreviewHosts(t)
+	server, db := setupTestServer(t)
+	defer safeShutdown(server)
+
+	requests := make([]string, 0, 4)
+	fixture := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("User-Agent") != "OKFolioPreviewTest/1.0" {
+			t.Fatalf("expected configured user-agent, got %q", r.Header.Get("User-Agent"))
+		}
+		requests = append(requests, r.URL.Path)
+		switch r.URL.Path {
+		case "/archive":
+			_, _ = w.Write([]byte(`
+				<a class="card" href="/work/one">One</a>
+				<a class="card" href="/work/two">Two</a>
+				<a class="card" href="/users/profile">Filtered</a>
+			`))
+		case "/work/one":
+			_, _ = w.Write([]byte(`
+				<article>
+					<h1>Fixture One</h1>
+					<a class="artist" data-name="Fixture Artist"></a>
+					<time datetime="2026-01-02"></time>
+					<img class="full" src="/media/one.jpg">
+				</article>
+			`))
+		case "/work/two":
+			_, _ = w.Write([]byte(`
+				<article>
+					<h1>Fixture Two</h1>
+					<img class="full" src="/media/two.jpg">
+				</article>
+			`))
+		case "/media/one.jpg", "/media/two.jpg":
+			t.Fatalf("preview must not download original media: %s", r.URL.Path)
+		default:
+			t.Fatalf("unexpected preview fixture path: %s", r.URL.Path)
+		}
+	}))
+	defer fixture.Close()
+
+	body := bytes.NewBufferString(fmt.Sprintf(`{
+		"list_url":%q,
+		"pagination":{"strategy":"none"},
+		"selectors":{
+			"item_link":"a.card",
+			"image":{"selector":"img.full","attr":"src"},
+			"title":{"selector":"h1"},
+			"artist":{"selector":".artist","attr":"data-name"},
+			"date":{"selector":"time","attr":"datetime"}
+		},
+		"item_link_filter":["/users/"],
+		"user_agent":"OKFolioPreviewTest/1.0",
+		"limit":2
+	}`, fixture.URL+"/archive"))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/connector-sources/preview", body)
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("preview status=%d body=%q", w.Code, w.Body.String())
+	}
+
+	var preview connectorSourcePreviewResponse
+	if err := json.NewDecoder(w.Body).Decode(&preview); err != nil {
+		t.Fatalf("decode preview response: %v", err)
+	}
+	if preview.Provider != "webgallery" || preview.ItemsFound != 2 || len(preview.Sample) != 2 {
+		t.Fatalf("unexpected preview response: %#v", preview)
+	}
+	if preview.Sample[0].SourceURL != fixture.URL+"/work/one" || preview.Sample[0].ImageURL != fixture.URL+"/media/one.jpg" {
+		t.Fatalf("unexpected first sample URLs: %#v", preview.Sample[0])
+	}
+	if preview.Sample[0].Title != "Fixture One" || preview.Sample[0].Artist != "Fixture Artist" || !strings.HasPrefix(preview.Sample[0].Date, "2026-01-02") {
+		t.Fatalf("unexpected first sample metadata: %#v", preview.Sample[0])
+	}
+	if strings.Join(requests, ",") != "/archive,/work/one,/work/two" {
+		t.Fatalf("unexpected preview requests: %#v", requests)
+	}
+
+	var sourceCount int64
+	if err := db.Model(&database.ConnectorSource{}).Count(&sourceCount).Error; err != nil {
+		t.Fatalf("count connector sources: %v", err)
+	}
+	var photoCount int64
+	if err := db.Model(&database.DownloadedPhoto{}).Count(&photoCount).Error; err != nil {
+		t.Fatalf("count downloaded photos: %v", err)
+	}
+	if sourceCount != 0 || photoCount != 0 {
+		t.Fatalf("preview should not persist rows, connector_sources=%d downloaded_photos=%d", sourceCount, photoCount)
+	}
+}
+
+func TestConnectorSourcePreviewWebGallerySelectorErrors(t *testing.T) {
+	allowPrivatePreviewHosts(t)
+	server, _ := setupTestServer(t)
+	defer safeShutdown(server)
+
+	fixture := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/archive":
+			_, _ = w.Write([]byte(`<a class="card" href="/work/one">One</a>`))
+		case "/work/one":
+			_, _ = w.Write([]byte(`<article><h1>No image here</h1></article>`))
+		default:
+			t.Fatalf("unexpected preview fixture path: %s", r.URL.Path)
+		}
+	}))
+	defer fixture.Close()
+
+	t.Run("list selector", func(t *testing.T) {
+		body := bytes.NewBufferString(fmt.Sprintf(`{
+			"list_url":%q,
+			"pagination":{"strategy":"none"},
+			"selectors":{"item_link":"a.missing","image":{"selector":"img.full"}}
+		}`, fixture.URL+"/archive"))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/connector-sources/preview", body)
+		w := httptest.NewRecorder()
+		server.router.ServeHTTP(w, req)
+		if w.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("expected selector preview 422, got %d body=%q", w.Code, w.Body.String())
+		}
+		if !strings.Contains(w.Body.String(), `"kind":"parse"`) || !strings.Contains(w.Body.String(), `item_link selector`) {
+			t.Fatalf("expected structured list selector error, got %q", w.Body.String())
+		}
+	})
+
+	t.Run("image selector", func(t *testing.T) {
+		body := bytes.NewBufferString(fmt.Sprintf(`{
+			"list_url":%q,
+			"pagination":{"strategy":"none"},
+			"selectors":{"item_link":"a.card","image":{"selector":"img.full"}}
+		}`, fixture.URL+"/archive"))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/connector-sources/preview", body)
+		w := httptest.NewRecorder()
+		server.router.ServeHTTP(w, req)
+		if w.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("expected image selector preview 422, got %d body=%q", w.Code, w.Body.String())
+		}
+		if !strings.Contains(w.Body.String(), `"kind":"parse"`) || !strings.Contains(w.Body.String(), `image selector`) {
+			t.Fatalf("expected structured image selector error, got %q", w.Body.String())
+		}
+	})
+}
+
+func TestConnectorSourcePreviewRejectsMalformedWebGalleryConfig(t *testing.T) {
+	server, _ := setupTestServer(t)
+	defer safeShutdown(server)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/connector-sources/preview", bytes.NewBufferString(`{
+		"list_url":"https://gallery.example.test",
+		"pagination":{"strategy":"cursor_magic"},
+		"selectors":{"item_link":"a","image":{"selector":"img"}}
+	}`))
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected malformed preview config 400, got %d body=%q", w.Code, w.Body.String())
+	}
+}
+
+func TestConnectorSourcePreviewAppliesRuntimeWebGalleryDefaults(t *testing.T) {
+	allowPrivatePreviewHosts(t)
+	server, _ := setupTestServer(t)
+	defer safeShutdown(server)
+	server.cfg.Download.UserAgent = "OKFolioRuntimePreviewTest/1.0"
+	server.cfg.Download.RateLimitBackoff = time.Millisecond
+
+	fixture := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("User-Agent") != "OKFolioRuntimePreviewTest/1.0" {
+			t.Fatalf("expected runtime user-agent, got %q", r.Header.Get("User-Agent"))
+		}
+		switch r.URL.Path {
+		case "/archive":
+			_, _ = w.Write([]byte(`<a class="card" href="/work/one">One</a>`))
+		case "/work/one":
+			_, _ = w.Write([]byte(`<img class="full" src="/media/one.jpg">`))
+		default:
+			t.Fatalf("unexpected preview fixture path: %s", r.URL.Path)
+		}
+	}))
+	defer fixture.Close()
+
+	body := bytes.NewBufferString(fmt.Sprintf(`{
+		"list_url":%q,
+		"pagination":{"strategy":"none"},
+		"selectors":{"item_link":"a.card","image":{"selector":"img.full","attr":"src"}}
+	}`, fixture.URL+"/archive"))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/connector-sources/preview", body)
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("preview status=%d body=%q", w.Code, w.Body.String())
+	}
+}
+
+func TestConnectorSourcePreviewRejectsPrivateHosts(t *testing.T) {
+	server, _ := setupTestServer(t)
+	defer safeShutdown(server)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/connector-sources/preview", bytes.NewBufferString(`{
+		"list_url":"http://127.0.0.1/archive",
+		"pagination":{"strategy":"none"},
+		"selectors":{"item_link":"a.card","image":{"selector":"img.full"}}
+	}`))
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected private preview host 403, got %d body=%q", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"kind":"permission"`) || !strings.Contains(w.Body.String(), `preview URL host is not allowed`) {
+		t.Fatalf("expected structured private host error, got %q", w.Body.String())
 	}
 }
 
