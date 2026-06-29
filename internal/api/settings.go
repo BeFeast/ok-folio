@@ -35,11 +35,14 @@ type connectorSourcesResponse struct {
 }
 
 type connectorSourceRequest struct {
-	Type    string           `json:"type"`
-	ChatID  string           `json:"chat_id"`
-	Label   *string          `json:"label"`
-	Config  *json.RawMessage `json:"config"`
-	Enabled *bool            `json:"enabled"`
+	Type                string           `json:"type"`
+	ChatID              string           `json:"chat_id"`
+	Label               *string          `json:"label"`
+	Config              *json.RawMessage `json:"config"`
+	Enabled             *bool            `json:"enabled"`
+	TargetFolioID       *uint64          `json:"target_folio_id"`
+	TargetFolioProvided bool             `json:"-"`
+	ShowInLibrary       *bool            `json:"show_in_library"`
 }
 
 type connectorSourcePreviewRequest struct {
@@ -182,12 +185,18 @@ func (s *Server) handleCreateConnectorSource(w http.ResponseWriter, r *http.Requ
 	if input.Enabled != nil {
 		enabled = *input.Enabled
 	}
+	showInLibrary := true
+	if input.ShowInLibrary != nil {
+		showInLibrary = *input.ShowInLibrary
+	}
 	source, err := s.db.CreateConnectorSource(database.ConnectorSource{
-		Type:    input.Type,
-		ChatID:  connectorSourceKey(input),
-		Label:   connectorSourceLabel(input),
-		Config:  connectorSourceConfig(input),
-		Enabled: enabled,
+		Type:          input.Type,
+		ChatID:        connectorSourceKey(input),
+		Label:         connectorSourceLabel(input),
+		Config:        connectorSourceConfig(input),
+		Enabled:       enabled,
+		TargetFolioID: input.TargetFolioID,
+		ShowInLibrary: showInLibrary,
 	})
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, "Failed to create connector source")
@@ -206,15 +215,43 @@ func (s *Server) handleUpdateConnectorSource(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	if err := s.validateConnectorSource(input, false); err != nil {
+	existing, err := s.db.GetConnectorSource(id)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		s.writeError(w, http.StatusNotFound, "Connector source not found")
+		return
+	}
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, "Failed to fetch connector source")
+		return
+	}
+	validationInput := input
+	if validationInput.Type == "" && (validationInput.ChatID != "" || validationInput.Config != nil) {
+		validationInput.Type = existing.Type
+	}
+	if err := s.validateConnectorSource(validationInput, false); err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	finalTarget := existing.TargetFolioID
+	if input.TargetFolioProvided {
+		finalTarget = input.TargetFolioID
+	}
+	finalShowInLibrary := existing.ShowInLibrary
+	if input.ShowInLibrary != nil {
+		finalShowInLibrary = *input.ShowInLibrary
+	}
+	if err := s.validateConnectorSourceDestination(finalTarget, finalShowInLibrary); err != nil {
 		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	source, err := s.db.UpdateConnectorSource(id, database.ConnectorSourceUpdates{
-		ChatID:  optionalNonEmptyString(input.ChatID),
-		Label:   input.Label,
-		Config:  optionalConnectorSourceConfig(input.Config),
-		Enabled: input.Enabled,
+		ChatID:              optionalNonEmptyString(input.ChatID),
+		Label:               input.Label,
+		Config:              optionalConnectorSourceConfig(input.Config),
+		Enabled:             input.Enabled,
+		TargetFolioProvided: input.TargetFolioProvided,
+		TargetFolioID:       input.TargetFolioID,
+		ShowInLibrary:       input.ShowInLibrary,
 	})
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		s.writeError(w, http.StatusNotFound, "Connector source not found")
@@ -245,12 +282,41 @@ func (s *Server) handleDeleteConnectorSource(w http.ResponseWriter, r *http.Requ
 	s.writeJSON(w, http.StatusOK, map[string]bool{"deleted": true})
 }
 
+func (s *Server) handleBackfillConnectorSource(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 64)
+	if err != nil || id == 0 {
+		s.writeError(w, http.StatusBadRequest, "Invalid connector source ID")
+		return
+	}
+	result, err := s.db.BackfillConnectorSourceRouting(id, 1000)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		s.writeError(w, http.StatusNotFound, "Connector source not found")
+		return
+	}
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, "Failed to backfill connector source")
+		return
+	}
+	s.writeJSON(w, http.StatusOK, result)
+}
+
 func (s *Server) readConnectorSourceRequest(w http.ResponseWriter, r *http.Request) (connectorSourceRequest, bool) {
-	var input connectorSourceRequest
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+	var raw map[string]json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
 		s.writeError(w, http.StatusBadRequest, "Invalid connector source JSON")
 		return connectorSourceRequest{}, false
 	}
+	data, err := json.Marshal(raw)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, "Invalid connector source JSON")
+		return connectorSourceRequest{}, false
+	}
+	var input connectorSourceRequest
+	if err := json.Unmarshal(data, &input); err != nil {
+		s.writeError(w, http.StatusBadRequest, "Invalid connector source JSON")
+		return connectorSourceRequest{}, false
+	}
+	_, input.TargetFolioProvided = raw["target_folio_id"]
 	input.Type = strings.TrimSpace(input.Type)
 	input.ChatID = strings.TrimSpace(input.ChatID)
 	if input.Label != nil {
@@ -264,10 +330,13 @@ func (s *Server) validateConnectorSource(input connectorSourceRequest, requireSo
 	if input.Type != "" && input.Type != telegram.ProviderID && input.Type != webgallery.ProviderID {
 		return fmt.Errorf("unsupported connector source type")
 	}
-	if input.Type == "" && input.ChatID == "" && input.Config == nil {
+	if input.Type == "" && input.ChatID == "" && input.Config == nil && input.Enabled == nil && input.Label == nil && !input.TargetFolioProvided && input.ShowInLibrary == nil {
 		if requireSource {
 			return fmt.Errorf("connector source type is required")
 		}
+		return nil
+	}
+	if input.Type == "" && !requireSource {
 		return nil
 	}
 	if input.Type == "" {
@@ -291,6 +360,27 @@ func (s *Server) validateConnectorSource(input connectorSourceRequest, requireSo
 		if _, err := webgallery.ParseConfig(*input.Config); err != nil {
 			return err
 		}
+	}
+	showInLibrary := true
+	if input.ShowInLibrary != nil {
+		showInLibrary = *input.ShowInLibrary
+	}
+	return s.validateConnectorSourceDestination(input.TargetFolioID, showInLibrary)
+}
+
+func (s *Server) validateConnectorSourceDestination(targetFolioID *uint64, showInLibrary bool) error {
+	if targetFolioID != nil {
+		if *targetFolioID == 0 {
+			return fmt.Errorf("target folio ID must be greater than zero")
+		}
+		if _, err := s.db.GetFolio(*targetFolioID); errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("target folio not found")
+		} else if err != nil {
+			return fmt.Errorf("failed to validate target folio")
+		}
+	}
+	if !showInLibrary && targetFolioID == nil {
+		return fmt.Errorf("target folio is required when show in library is disabled")
 	}
 	return nil
 }

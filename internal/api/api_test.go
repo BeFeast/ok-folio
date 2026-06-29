@@ -411,6 +411,114 @@ func TestConnectorSourceSettingsCRUD(t *testing.T) {
 	}
 }
 
+func TestConnectorSourcePatchValidatesTypedFieldsWithExistingType(t *testing.T) {
+	server, _ := setupTestServer(t)
+	defer safeShutdown(server)
+
+	validConfig := `{"list_url":"https://example.com/gallery","pagination":{"strategy":"none"},"selectors":{"item_link":"a.item","image":{"selector":"img","attr":"src"}}}`
+	createBody := bytes.NewBufferString(`{"type":"webgallery","config":` + validConfig + `}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/connector-sources", createBody)
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create webgallery status=%d body=%q", w.Code, w.Body.String())
+	}
+	var webSource database.ConnectorSource
+	if err := json.NewDecoder(w.Body).Decode(&webSource); err != nil {
+		t.Fatalf("decode webgallery source: %v", err)
+	}
+
+	req = httptest.NewRequest(http.MethodPatch, "/api/v1/settings/connector-sources/"+strconv.FormatUint(webSource.ID, 10), bytes.NewBufferString(`{"config":{"list_url":"not absolute"}}`))
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected invalid webgallery patch rejection, status=%d body=%q", w.Code, w.Body.String())
+	}
+
+	createBody = bytes.NewBufferString(`{"type":"telegram","chat_id":"-1001234567890"}`)
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/settings/connector-sources", createBody)
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create telegram status=%d body=%q", w.Code, w.Body.String())
+	}
+	var telegramSource database.ConnectorSource
+	if err := json.NewDecoder(w.Body).Decode(&telegramSource); err != nil {
+		t.Fatalf("decode telegram source: %v", err)
+	}
+
+	req = httptest.NewRequest(http.MethodPatch, "/api/v1/settings/connector-sources/"+strconv.FormatUint(telegramSource.ID, 10), bytes.NewBufferString(`{"chat_id":"not numeric"}`))
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected invalid telegram patch rejection, status=%d body=%q", w.Code, w.Body.String())
+	}
+}
+
+func TestConnectorSourceDestinationValidationAndBackfillAPI(t *testing.T) {
+	server, db := setupTestServer(t)
+	defer safeShutdown(server)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/connector-sources", bytes.NewBufferString(`{"type":"telegram","chat_id":"-1001234567890","show_in_library":false}`))
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected missing target rejection, status=%d body=%q", w.Code, w.Body.String())
+	}
+
+	folio, err := db.CreateFolio(database.Folio{Name: "Stream target"})
+	if err != nil {
+		t.Fatalf("CreateFolio failed: %v", err)
+	}
+	body := `{"type":"telegram","chat_id":"-1001234567890","target_folio_id":` + strconv.FormatUint(folio.ID, 10) + `,"show_in_library":false}`
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/settings/connector-sources", bytes.NewBufferString(body))
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create status=%d body=%q", w.Code, w.Body.String())
+	}
+	var source database.ConnectorSource
+	if err := json.NewDecoder(w.Body).Decode(&source); err != nil {
+		t.Fatalf("decode source failed: %v", err)
+	}
+	if source.TargetFolioID == nil || *source.TargetFolioID != folio.ID || source.ShowInLibrary {
+		t.Fatalf("unexpected source destination: %#v", source)
+	}
+
+	photo := database.DownloadedPhoto{
+		URL:               "https://example.com/api-backfill.jpg",
+		Title:             "API Backfill",
+		FileName:          "api-backfill.jpg",
+		Status:            "downloaded",
+		Provider:          "telegram",
+		ConnectorSourceID: &source.ID,
+	}
+	if err := db.Create(&photo).Error; err != nil {
+		t.Fatalf("Create photo failed: %v", err)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/settings/connector-sources/"+strconv.FormatUint(source.ID, 10)+"/backfill", nil)
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("backfill status=%d body=%q", w.Code, w.Body.String())
+	}
+	var response database.ConnectorSourceBackfillResult
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("decode backfill response failed: %v", err)
+	}
+	if response.Matched != 1 || response.AddedToFolio != 1 || response.ShowInLibrary {
+		t.Fatalf("unexpected backfill response: %#v", response)
+	}
+	var stored database.DownloadedPhoto
+	if err := db.First(&stored, photo.ID).Error; err != nil {
+		t.Fatalf("fetch photo failed: %v", err)
+	}
+	if !stored.HiddenFromGallery {
+		t.Fatalf("expected backfill to hide photo: %#v", stored)
+	}
+}
+
 func TestFolioAPICRUD(t *testing.T) {
 	server, _ := setupTestServer(t)
 	defer safeShutdown(server)

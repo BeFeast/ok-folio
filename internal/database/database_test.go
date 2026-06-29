@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1277,6 +1278,195 @@ func TestConnectorSourcesCRUDAndScopes(t *testing.T) {
 	}
 	if managed || len(scopes) != 0 {
 		t.Fatalf("expected unmanaged after deleting all rows, got managed=%v scopes=%v", managed, scopes)
+	}
+}
+
+func TestConnectorSourceBackfillRoutesPiecesAndIsIdempotent(t *testing.T) {
+	db := setupTestDB(t)
+
+	folio, err := db.CreateFolio(Folio{Name: "Private stream"})
+	if err != nil {
+		t.Fatalf("CreateFolio failed: %v", err)
+	}
+	source, err := db.CreateConnectorSource(ConnectorSource{
+		Type:          "webgallery",
+		ChatID:        "fixture",
+		Label:         "Fixture",
+		Enabled:       true,
+		TargetFolioID: &folio.ID,
+		ShowInLibrary: false,
+	})
+	if err != nil {
+		t.Fatalf("CreateConnectorSource failed: %v", err)
+	}
+
+	routed := DownloadedPhoto{
+		URL:      "https://example.com/routed.jpg",
+		Title:    "Hidden Routed",
+		FileName: "routed.jpg",
+		Status:   "downloaded",
+		Provider: "webgallery:" + strconv.FormatUint(source.ID, 10),
+	}
+	other := DownloadedPhoto{
+		URL:      "https://example.com/other-visible.jpg",
+		Title:    "Other Visible",
+		FileName: "other-visible.jpg",
+		Status:   "downloaded",
+		Provider: "webgallery:999999",
+	}
+	for _, photo := range []*DownloadedPhoto{&routed, &other} {
+		if err := db.Create(photo).Error; err != nil {
+			t.Fatalf("Create photo failed: %v", err)
+		}
+	}
+	if err := db.SetPhotoFavorite(routed.ID, true); err != nil {
+		t.Fatalf("SetPhotoFavorite failed: %v", err)
+	}
+
+	result, err := db.BackfillConnectorSourceRouting(source.ID, 100)
+	if err != nil {
+		t.Fatalf("BackfillConnectorSourceRouting failed: %v", err)
+	}
+	if result.Matched != 1 || result.AddedToFolio != 1 || result.ShowInLibrary {
+		t.Fatalf("unexpected first backfill result: %#v", result)
+	}
+	result, err = db.BackfillConnectorSourceRouting(source.ID, 100)
+	if err != nil {
+		t.Fatalf("second BackfillConnectorSourceRouting failed: %v", err)
+	}
+	if result.Matched != 0 || result.AddedToFolio != 0 {
+		t.Fatalf("expected idempotent second backfill, got %#v", result)
+	}
+
+	var stored DownloadedPhoto
+	if err := db.First(&stored, routed.ID).Error; err != nil {
+		t.Fatalf("fetch routed photo failed: %v", err)
+	}
+	if !stored.HiddenFromGallery || stored.ConnectorSourceID == nil || *stored.ConnectorSourceID != source.ID {
+		t.Fatalf("expected routed photo to be hidden and source-linked, got %#v", stored)
+	}
+	folioPieces, total, err := db.ListFolioPieces(folio.ID, 10, 0)
+	if err != nil {
+		t.Fatalf("ListFolioPieces failed: %v", err)
+	}
+	if total != 1 || len(folioPieces) != 1 || folioPieces[0].ID != routed.ID {
+		t.Fatalf("expected hidden routed piece in folio, total=%d pieces=%#v", total, folioPieces)
+	}
+
+	catalog, total, err := db.GetGalleryCatalog(10, 0, GalleryCatalogFilters{})
+	if err != nil {
+		t.Fatalf("GetGalleryCatalog failed: %v", err)
+	}
+	if total != 1 || len(catalog) != 1 || catalog[0].ID != other.ID {
+		t.Fatalf("expected hidden piece excluded from gallery, total=%d rows=%#v", total, catalog)
+	}
+	search, total, err := db.SearchPhotos("Hidden", 10, 0)
+	if err != nil {
+		t.Fatalf("SearchPhotos failed: %v", err)
+	}
+	if total != 0 || len(search) != 0 {
+		t.Fatalf("expected hidden piece excluded from search, total=%d rows=%#v", total, search)
+	}
+	favorites, err := db.GetGalleryFavoriteStats()
+	if err != nil {
+		t.Fatalf("GetGalleryFavoriteStats failed: %v", err)
+	}
+	if favorites[0].Count != 0 || favorites[1].Count != 1 {
+		t.Fatalf("expected hidden favorite excluded from favorite facets, got %#v", favorites)
+	}
+}
+
+func TestConnectorSourceBackfillLimitedBatchesAdvancePastRoutedRows(t *testing.T) {
+	db := setupTestDB(t)
+
+	folio, err := db.CreateFolio(Folio{Name: "Batch target"})
+	if err != nil {
+		t.Fatalf("CreateFolio failed: %v", err)
+	}
+	source, err := db.CreateConnectorSource(ConnectorSource{
+		Type:          "webgallery",
+		ChatID:        "batch",
+		Enabled:       true,
+		TargetFolioID: &folio.ID,
+		ShowInLibrary: false,
+	})
+	if err != nil {
+		t.Fatalf("CreateConnectorSource failed: %v", err)
+	}
+	for i := 0; i < 3; i++ {
+		photo := DownloadedPhoto{
+			URL:      "https://example.com/batch-" + strconv.Itoa(i) + ".jpg",
+			Title:    "Batch Routed",
+			FileName: "batch-" + strconv.Itoa(i) + ".jpg",
+			Status:   "downloaded",
+			Provider: "webgallery:" + strconv.FormatUint(source.ID, 10),
+		}
+		if err := db.Create(&photo).Error; err != nil {
+			t.Fatalf("Create photo failed: %v", err)
+		}
+	}
+
+	result, err := db.BackfillConnectorSourceRouting(source.ID, 2)
+	if err != nil {
+		t.Fatalf("first BackfillConnectorSourceRouting failed: %v", err)
+	}
+	if result.Matched != 2 || result.AddedToFolio != 2 {
+		t.Fatalf("expected first limited batch to route 2 rows, got %#v", result)
+	}
+	result, err = db.BackfillConnectorSourceRouting(source.ID, 2)
+	if err != nil {
+		t.Fatalf("second BackfillConnectorSourceRouting failed: %v", err)
+	}
+	if result.Matched != 1 || result.AddedToFolio != 1 {
+		t.Fatalf("expected second limited batch to advance to remaining row, got %#v", result)
+	}
+	result, err = db.BackfillConnectorSourceRouting(source.ID, 2)
+	if err != nil {
+		t.Fatalf("third BackfillConnectorSourceRouting failed: %v", err)
+	}
+	if result.Matched != 0 || result.AddedToFolio != 0 {
+		t.Fatalf("expected completed backfill to be idempotent, got %#v", result)
+	}
+}
+
+func TestRecentPhotoQueriesExcludeHiddenFromGallery(t *testing.T) {
+	db := setupTestDB(t)
+	now := time.Now()
+	visible := DownloadedPhoto{
+		URL:          "https://example.com/recent-visible.jpg",
+		Title:        "Recent Visible",
+		FileName:     "recent-visible.jpg",
+		Status:       "downloaded",
+		DownloadedAt: &now,
+	}
+	hidden := DownloadedPhoto{
+		URL:               "https://example.com/recent-hidden.jpg",
+		Title:             "Recent Hidden",
+		FileName:          "recent-hidden.jpg",
+		Status:            "downloaded",
+		DownloadedAt:      &now,
+		HiddenFromGallery: true,
+	}
+	for _, photo := range []*DownloadedPhoto{&visible, &hidden} {
+		if err := db.Create(photo).Error; err != nil {
+			t.Fatalf("Create photo failed: %v", err)
+		}
+	}
+
+	today, total, err := db.GetPhotosToday(10, 0)
+	if err != nil {
+		t.Fatalf("GetPhotosToday failed: %v", err)
+	}
+	if total != 1 || len(today) != 1 || today[0].ID != visible.ID {
+		t.Fatalf("expected today query to exclude hidden row, total=%d rows=%#v", total, today)
+	}
+
+	week, total, err := db.GetPhotosLastWeek(10, 0)
+	if err != nil {
+		t.Fatalf("GetPhotosLastWeek failed: %v", err)
+	}
+	if total != 1 || len(week) != 1 || week[0].ID != visible.ID {
+		t.Fatalf("expected week query to exclude hidden row, total=%d rows=%#v", total, week)
 	}
 }
 

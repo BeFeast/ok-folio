@@ -244,14 +244,23 @@ func (s *Scraper) downloadPhoto(ctx context.Context, item provider.DiscoveredMed
 // DownloadResolvedMedia persists a provider-resolved media item while preserving
 // the legacy scraper's storage, EXIF, and daily symlink behavior.
 func (s *Scraper) DownloadResolvedMedia(ctx context.Context, resolved provider.DiscoveredMedia, providerID string) (*database.DownloadedPhoto, error) {
-	photo, _, err := s.DownloadResolvedMediaOrDuplicate(ctx, resolved, providerID)
+	photo, _, err := s.DownloadResolvedMediaOrDuplicate(ctx, resolved, providerID, IngestRouting{})
 	return photo, err
+}
+
+type IngestRouting struct {
+	ConnectorSourceID *uint64
+	HiddenFromGallery bool
 }
 
 // DownloadResolvedMediaOrDuplicate persists a provider-resolved media item and
 // reports whether it won the catalog insert. Exact duplicate losers are routed
 // to Inbox and are not returned as errors.
-func (s *Scraper) DownloadResolvedMediaOrDuplicate(ctx context.Context, resolved provider.DiscoveredMedia, providerID string) (*database.DownloadedPhoto, bool, error) {
+func (s *Scraper) DownloadResolvedMediaOrDuplicate(ctx context.Context, resolved provider.DiscoveredMedia, providerID string, routingOpts ...IngestRouting) (*database.DownloadedPhoto, bool, error) {
+	routing := IngestRouting{}
+	if len(routingOpts) > 0 {
+		routing = routingOpts[0]
+	}
 	dedupeKey := StableDedupeKey(resolved)
 	if dedupeKey == "" {
 		return nil, false, fmt.Errorf("missing connector dedupe key")
@@ -315,26 +324,28 @@ func (s *Scraper) DownloadResolvedMediaOrDuplicate(ctx context.Context, resolved
 	// Record in database
 	uploadDate := publishedAtPtr(resolved.PublishedAt)
 	photo := &database.DownloadedPhoto{
-		URL:          dedupeKey,
-		SourcePage:   resolved.Source.URL,
-		Title:        title,
-		Artist:       resolved.Artist,
-		UploadDate:   uploadDate,
-		FilePath:     filePath,
-		FileName:     fileName,
-		ImageWidth:   embedded.Width,
-		ImageHeight:  embedded.Height,
-		CapturedAt:   embedded.CapturedAt,
-		CameraMake:   embedded.CameraMake,
-		CameraModel:  embedded.CameraModel,
-		LensModel:    embedded.LensModel,
-		Orientation:  embedded.Orientation,
-		GPSLatitude:  embedded.GPSLatitude,
-		GPSLongitude: embedded.GPSLongitude,
-		FileSize:     fileSize,
-		Status:       "downloaded",
-		Provider:     providerID,
-		ContentHash:  contentHash,
+		URL:               dedupeKey,
+		SourcePage:        resolved.Source.URL,
+		Title:             title,
+		Artist:            resolved.Artist,
+		UploadDate:        uploadDate,
+		FilePath:          filePath,
+		FileName:          fileName,
+		ImageWidth:        embedded.Width,
+		ImageHeight:       embedded.Height,
+		CapturedAt:        embedded.CapturedAt,
+		CameraMake:        embedded.CameraMake,
+		CameraModel:       embedded.CameraModel,
+		LensModel:         embedded.LensModel,
+		Orientation:       embedded.Orientation,
+		GPSLatitude:       embedded.GPSLatitude,
+		GPSLongitude:      embedded.GPSLongitude,
+		FileSize:          fileSize,
+		Status:            "downloaded",
+		Provider:          providerID,
+		ConnectorSourceID: routing.ConnectorSourceID,
+		HiddenFromGallery: routing.HiddenFromGallery,
+		ContentHash:       contentHash,
 	}
 
 	duplicate := &database.InboxItem{
