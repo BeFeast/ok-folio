@@ -378,7 +378,7 @@ export default function PieceViewer() {
       setPanelOpen(true);
       showChrome();
     }
-  }, [closePiece, showChrome, stepPiece]);
+  }, [closePiece, setPanelOpen, showChrome, stepPiece]);
 
   const onArtworkClick = useCallback((e: React.MouseEvent) => {
     stop(e);
@@ -405,7 +405,7 @@ export default function PieceViewer() {
     touchStartRef.current = null;
     if (!start || start.target !== "sheet" || !touch) return;
     if (touch.clientY - start.y > 58) setPanelOpen(false);
-  }, []);
+  }, [setPanelOpen]);
 
   if (!selected) return null;
   const p = selected;
