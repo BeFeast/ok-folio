@@ -132,6 +132,66 @@ func TestRecordDownload_Success(t *testing.T) {
 	}
 }
 
+func TestRecordDownloadSanitizesTitleAndKeywords(t *testing.T) {
+	db := setupTestDB(t)
+
+	photo := &DownloadedPhoto{
+		URL:      "https://example.com/junk-title.jpg",
+		Title:    "***",
+		Artist:   "Vlad Gansovsky",
+		Keywords: Keywords{"vlad", "gansovsky", "nonps", "portrait", "favorites"},
+		FileName: "junk-title.jpg",
+		Status:   "downloaded",
+	}
+
+	if err := db.RecordDownload(photo); err != nil {
+		t.Fatalf("Failed to record download: %v", err)
+	}
+
+	var stored DownloadedPhoto
+	if err := db.Where("url = ?", photo.URL).First(&stored).Error; err != nil {
+		t.Fatalf("Failed to load stored photo: %v", err)
+	}
+	if stored.Title != "" {
+		t.Fatalf("Expected junk title to be empty, got %q", stored.Title)
+	}
+	if len(stored.Keywords) != 1 || stored.Keywords[0] != "portrait" {
+		t.Fatalf("Expected sanitized keywords, got %#v", stored.Keywords)
+	}
+}
+
+func TestRecordDownloadSanitizesRetryUpdate(t *testing.T) {
+	db := setupTestDB(t)
+
+	const sharedURL = "https://example.com/retry-junk-title.jpg"
+	if err := db.RecordFailedDownload(sharedURL, "temporary timeout"); err != nil {
+		t.Fatalf("Failed to seed failed download: %v", err)
+	}
+
+	retry := &DownloadedPhoto{
+		URL:      sharedURL,
+		Title:    "retry-junk-title.jpg",
+		Artist:   "Vlad Gansovsky",
+		Keywords: Keywords{"vlad", "portrait", "hidden"},
+		FileName: "retry-junk-title.jpg",
+		Status:   "downloaded",
+	}
+	if err := db.RecordDownload(retry); err != nil {
+		t.Fatalf("Retry RecordDownload failed: %v", err)
+	}
+
+	var stored DownloadedPhoto
+	if err := db.Where("url_hash = ?", HashURL(sharedURL)).First(&stored).Error; err != nil {
+		t.Fatalf("Failed to load retried row: %v", err)
+	}
+	if stored.Title != "" {
+		t.Fatalf("Expected filename title to be empty, got %q", stored.Title)
+	}
+	if len(stored.Keywords) != 1 || stored.Keywords[0] != "portrait" {
+		t.Fatalf("Expected sanitized retry keywords, got %#v", stored.Keywords)
+	}
+}
+
 func TestRecordDownload_DuplicateURL(t *testing.T) {
 	db := setupTestDB(t)
 

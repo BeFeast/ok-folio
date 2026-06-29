@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"ok-folio/internal/catalogquality"
 	"ok-folio/internal/database"
 
 	"gorm.io/gorm"
@@ -132,7 +133,7 @@ func upsertDownloadedPhoto(tx *gorm.DB, row LegacyDownloadedPhoto) (time.Time, e
 		row.URL,
 		database.HashURL(row.URL),
 		row.SourcePage,
-		row.Title,
+		catalogquality.NormalizeTitle(row.Title, row.FileName),
 		row.Artist,
 		nullableDatetimePtr(row.UploadDate),
 		row.FilePath,
