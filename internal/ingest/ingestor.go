@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	okfcache "ok-folio/internal/cache"
@@ -14,6 +16,7 @@ import (
 	"ok-folio/internal/scraper"
 
 	"github.com/rs/zerolog"
+	"gorm.io/gorm"
 )
 
 type Ingestor struct {
@@ -197,7 +200,18 @@ func (i *Ingestor) ingestPages(ctx context.Context, connector provider.Connector
 				}
 			}
 
-			photo, kept, err := i.scraper.DownloadResolvedMediaOrDuplicate(ctx, *resolved, providerID)
+			source, sourceErr := i.connectorSourceForResolved(providerID, *resolved)
+			if sourceErr != nil {
+				return result, sourceErr
+			}
+			routing := scraper.IngestRouting{}
+			if source != nil {
+				routing.ConnectorSourceID = &source.ID
+				if source.TargetFolioID != nil {
+					routing.HiddenFromGallery = !source.ShowInLibrary
+				}
+			}
+			photo, kept, err := i.scraper.DownloadResolvedMediaOrDuplicate(ctx, *resolved, providerID, routing)
 			if err != nil {
 				if dbErr := i.db.RecordFailedDownload(dedupeKey, safeErrorMessage(err)); dbErr != nil {
 					i.logger.Warn().Err(dbErr).Str("dedupe_key", dedupeKey).Msg("Failed to record failed download")
@@ -212,6 +226,18 @@ func (i *Ingestor) ingestPages(ctx context.Context, connector provider.Connector
 			if !kept {
 				result.PhotosSkipped++
 				continue
+			}
+			if source != nil {
+				previousTarget := source.TargetFolioID
+				if err := i.db.ApplyConnectorSourceRouting(*source, photo.ID); err != nil {
+					return result, err
+				}
+				if previousTarget != nil && source.TargetFolioID == nil {
+					i.logger.Warn().
+						Uint64("source_id", source.ID).
+						Uint64("missing_folio_id", *previousTarget).
+						Msg("Connector source target folio missing; routed piece to library")
+				}
 			}
 			if err := i.cache.MarkDedupeHash(ctx, photo.ContentHash, dedupeKey); err != nil {
 				return result, err
@@ -362,6 +388,59 @@ func (opts RunOptions) nextAllowedAfter(page int) (int, bool) {
 func isRetryableProviderError(err error) bool {
 	var providerErr *provider.ProviderError
 	return errors.As(err, &providerErr) && providerErr.Retryable()
+}
+
+func (i *Ingestor) connectorSourceForResolved(providerID string, resolved provider.DiscoveredMedia) (*database.ConnectorSource, error) {
+	if i.db == nil {
+		return nil, nil
+	}
+	if base, suffix, ok := strings.Cut(providerID, ":"); ok && base != "" && suffix != "" {
+		id, err := strconv.ParseUint(suffix, 10, 64)
+		if err == nil && id > 0 {
+			source, err := i.db.GetConnectorSource(id)
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil, nil
+			}
+			if isMissingConnectorSourcesTable(err) {
+				return nil, nil
+			}
+			return source, err
+		}
+	}
+	sourceType := providerID
+	if base, _, ok := strings.Cut(providerID, ":"); ok {
+		sourceType = base
+	}
+	chatID := strings.TrimSpace(resolved.Source.CollectionID)
+	if chatID == "" {
+		chatID = sourceIDPrefix(resolved.Source.ExternalID)
+	}
+	if chatID == "" {
+		return nil, nil
+	}
+	source, err := i.db.FindConnectorSourceByTypeAndChatID(sourceType, chatID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if isMissingConnectorSourcesTable(err) {
+		return nil, nil
+	}
+	return source, err
+}
+
+func isMissingConnectorSourcesTable(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "connector_sources")
+}
+
+func sourceIDPrefix(externalID string) string {
+	externalID = strings.TrimSpace(externalID)
+	if externalID == "" {
+		return ""
+	}
+	if before, _, ok := strings.Cut(externalID, ":"); ok {
+		return before
+	}
+	return externalID
 }
 
 var telegramTokenInURLPattern = regexp.MustCompile(`(https?://[^\s"'<>]+/(?:file/)?bot)[^/\s"'<>]+`)
