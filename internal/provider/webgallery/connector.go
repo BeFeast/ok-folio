@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"ok-folio/internal/catalogquality"
 	"ok-folio/internal/provider"
 	"ok-folio/pkg/retry"
 
@@ -155,7 +156,7 @@ func (c *Connector) ResolveMedia(ctx context.Context, item provider.DiscoveredMe
 		}
 
 		doc.Find("h1[itemprop='name']").Each(func(_ int, s *goquery.Selection) {
-			out.Title = strings.TrimSpace(s.Text())
+			out.Title = catalogquality.NormalizeTitle(s.Text())
 		})
 
 		doc.Find("meta[itemprop='datePublished']").Each(func(_ int, s *goquery.Selection) {

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"ok-folio/internal/catalogquality"
 	"ok-folio/internal/config"
 	"ok-folio/internal/gallery"
 	"ok-folio/internal/testguard"
@@ -299,6 +300,8 @@ func normalizeArtist(rawArtist string) string {
 func (p *DownloadedPhoto) BeforeSave(tx *gorm.DB) error {
 	p.URLHash = HashURL(p.URL)
 	p.Artist = normalizeArtist(p.Artist)
+	p.Title = catalogquality.NormalizeTitle(p.Title, p.FileName)
+	p.Keywords = Keywords(catalogquality.SanitizeKeywords(p.Artist, []string(p.Keywords)))
 	p.Category = resolveCategory(p)
 	if p.Provider == "" {
 		p.Provider = DefaultProvider
@@ -329,6 +332,8 @@ func resolveCategory(p *DownloadedPhoto) string {
 // upsert atomically via ON CONFLICT.
 func (i *InboxItem) BeforeSave(tx *gorm.DB) error {
 	i.Fingerprint = inboxFingerprint(i)
+	i.Artist = normalizeArtist(i.Artist)
+	i.Title = catalogquality.NormalizeTitle(i.Title)
 	return nil
 }
 
@@ -727,10 +732,11 @@ func downloadAssignments(photo *DownloadedPhoto) map[string]interface{} {
 	if provider == "" {
 		provider = DefaultProvider
 	}
+	artist := normalizeArtist(photo.Artist)
 	return map[string]interface{}{
 		"source_page":     photo.SourcePage,
-		"title":           photo.Title,
-		"artist":          normalizeArtist(photo.Artist),
+		"title":           catalogquality.NormalizeTitle(photo.Title, photo.FileName),
+		"artist":          artist,
 		"category":        resolveCategory(photo),
 		"upload_date":     photo.UploadDate,
 		"file_path":       photo.FilePath,
@@ -746,7 +752,7 @@ func downloadAssignments(photo *DownloadedPhoto) map[string]interface{} {
 		"gps_longitude":   photo.GPSLongitude,
 		"file_size":       photo.FileSize,
 		"notes":           photo.Notes,
-		"keywords":        photo.Keywords,
+		"keywords":        Keywords(catalogquality.SanitizeKeywords(artist, []string(photo.Keywords))),
 		"provider":        provider,
 		"content_hash":    photo.ContentHash,
 		"perceptual_hash": photo.PerceptualHash,
@@ -849,13 +855,14 @@ func (db *DB) RecordInboxException(item *InboxItem) error {
 	if item.ProviderID == "" {
 		return fmt.Errorf("provider ID is required")
 	}
+	artist := normalizeArtist(item.Artist)
 
 	updates := map[string]interface{}{
 		"source_id":  item.SourceID,
 		"media_id":   item.MediaID,
 		"source_url": item.SourceURL,
-		"title":      item.Title,
-		"artist":     item.Artist,
+		"title":      catalogquality.NormalizeTitle(item.Title),
+		"artist":     artist,
 		"reason":     item.Reason,
 	}
 	if len(item.ContentHash) > 0 {
