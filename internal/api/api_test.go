@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -673,6 +674,31 @@ func TestConnectorSourceSettingsAcceptsWebGalleryConfig(t *testing.T) {
 	}
 	if created.Type != "webgallery" || created.ChatID == "" || len(created.Config) == 0 || !created.Enabled {
 		t.Fatalf("unexpected created webgallery source: %#v", created)
+	}
+}
+
+func TestConnectorSourceSettingsWebGalleryKeyPreservesQuery(t *testing.T) {
+	server, _ := setupTestServer(t)
+	defer safeShutdown(server)
+
+	for _, listURL := range []string{"https://gallery.example.test/archive?cat=1", "https://gallery.example.test/archive?cat=2"} {
+		body := bytes.NewBufferString(fmt.Sprintf(`{
+			"type":"webgallery",
+			"config":{
+				"list_url":%q,
+				"pagination":{"strategy":"none"},
+				"selectors":{
+					"item_link":"a.card",
+					"image":{"selector":"img.full"}
+				}
+			}
+		}`, listURL))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/connector-sources", body)
+		w := httptest.NewRecorder()
+		server.router.ServeHTTP(w, req)
+		if w.Code != http.StatusCreated {
+			t.Fatalf("create webgallery source for %s status=%d body=%q", listURL, w.Code, w.Body.String())
+		}
 	}
 }
 

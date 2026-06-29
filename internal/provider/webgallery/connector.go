@@ -49,7 +49,7 @@ type WebGalleryConfig struct {
 type PaginationConfig struct {
 	Strategy         string `json:"strategy"`
 	ParamName        string `json:"param_name,omitempty"`
-	StartIndex       int    `json:"start_index,omitempty"`
+	StartIndex       *int   `json:"start_index,omitempty"`
 	NextLinkSelector string `json:"next_link_selector,omitempty"`
 }
 
@@ -296,7 +296,7 @@ func (c *Connector) pageURL(req provider.PageRequest) (string, error) {
 	}
 	page := req.Page
 	if page == 0 {
-		page = c.cfg.Gallery.Pagination.StartIndex
+		page = startIndexValue(c.cfg.Gallery.Pagination)
 	}
 	q := base.Query()
 	q.Set(c.cfg.Gallery.Pagination.ParamName, fmt.Sprintf("%d", page))
@@ -306,7 +306,7 @@ func (c *Connector) pageURL(req provider.PageRequest) (string, error) {
 
 func (c *Connector) pagination(page int, items []provider.DiscoveredMedia, nextCursor string) provider.Pagination {
 	if page == 0 {
-		page = c.cfg.Gallery.Pagination.StartIndex
+		page = startIndexValue(c.cfg.Gallery.Pagination)
 	}
 	switch c.cfg.Gallery.Pagination.Strategy {
 	case "none":
@@ -395,12 +395,13 @@ func externalID(sourceURL string) string {
 }
 
 func DefaultConfig(listURL string) WebGalleryConfig {
+	startIndex := 1
 	return WebGalleryConfig{
 		ListURL: strings.TrimSpace(listURL),
 		Pagination: PaginationConfig{
 			Strategy:   "page_param",
 			ParamName:  "pager",
-			StartIndex: 1,
+			StartIndex: &startIndex,
 		},
 		Selectors: SelectorConfig{
 			ItemLink: "div.photo-item a",
@@ -463,8 +464,9 @@ func withDefaults(cfg WebGalleryConfig, fallbackListURL string) WebGalleryConfig
 	if cfg.Pagination.ParamName == "" && cfg.Pagination.Strategy == "page_param" {
 		cfg.Pagination.ParamName = "pager"
 	}
-	if cfg.Pagination.StartIndex == 0 {
-		cfg.Pagination.StartIndex = 1
+	if cfg.Pagination.StartIndex == nil {
+		startIndex := 1
+		cfg.Pagination.StartIndex = &startIndex
 	}
 	if cfg.Selectors.ItemLink == "" && fallbackListURL != "" {
 		defaults := DefaultConfig(fallbackListURL)
@@ -472,6 +474,13 @@ func withDefaults(cfg WebGalleryConfig, fallbackListURL string) WebGalleryConfig
 		cfg.ItemLinkFilter = defaults.ItemLinkFilter
 	}
 	return cfg
+}
+
+func startIndexValue(cfg PaginationConfig) int {
+	if cfg.StartIndex == nil {
+		return 1
+	}
+	return *cfg.StartIndex
 }
 
 func applyRetryConfig(dst *retry.Config, src SourceRetryConfig) {

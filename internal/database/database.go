@@ -452,6 +452,7 @@ type GalleryFavoriteStats struct {
 
 // ConnectorSourceStats summarizes media state for a connector source.
 type ConnectorSourceStats struct {
+	Provider     string     `gorm:"column:provider" json:"provider"`
 	SourcePage   string     `gorm:"column:source_page" json:"source_page"`
 	URL          string     `gorm:"column:url" json:"url"`
 	Status       string     `gorm:"column:status" json:"status"`
@@ -462,6 +463,7 @@ type ConnectorSourceStats struct {
 // ConnectorError captures recent persisted connector failures.
 type ConnectorError struct {
 	ID           uint64    `gorm:"column:id" json:"id"`
+	Provider     string    `gorm:"column:provider" json:"provider"`
 	SourcePage   string    `gorm:"column:source_page" json:"source_page"`
 	URL          string    `gorm:"column:url" json:"url"`
 	Title        string    `gorm:"column:title" json:"title"`
@@ -1811,9 +1813,9 @@ func (db *DB) GetGallerySourceStatsForFilters(filters GalleryCatalogFilters) ([]
 // *time.Time, replacing the old CAST(... AS CHAR) + multi-layout parsing.
 func (db *DB) GetConnectorSourceStats() ([]ConnectorSourceStats, error) {
 	query := db.DB.Model(&DownloadedPhoto{}).
-		Select("source_page, url, status, COUNT(*) as count, MAX(downloaded_at) as last_activity").
-		Group("source_page, url, status").
-		Order("source_page ASC, url ASC, status ASC")
+		Select("provider, source_page, url, status, COUNT(*) as count, MAX(downloaded_at) as last_activity").
+		Group("provider, source_page, url, status").
+		Order("provider ASC, source_page ASC, url ASC, status ASC")
 
 	if db.Dialector.Name() != "postgres" {
 		// The sqlite unit-test driver returns the aggregated time as a string
@@ -1832,6 +1834,7 @@ func (db *DB) GetConnectorSourceStats() ([]ConnectorSourceStats, error) {
 
 func scanConnectorSourceStatsSQLite(query *gorm.DB) ([]ConnectorSourceStats, error) {
 	var rows []struct {
+		Provider     string  `gorm:"column:provider"`
 		SourcePage   string  `gorm:"column:source_page"`
 		URL          string  `gorm:"column:url"`
 		Status       string  `gorm:"column:status"`
@@ -1845,6 +1848,7 @@ func scanConnectorSourceStatsSQLite(query *gorm.DB) ([]ConnectorSourceStats, err
 	sources := make([]ConnectorSourceStats, 0, len(rows))
 	for _, row := range rows {
 		stat := ConnectorSourceStats{
+			Provider:   row.Provider,
 			SourcePage: row.SourcePage,
 			URL:        row.URL,
 			Status:     row.Status,
@@ -1867,7 +1871,7 @@ func (db *DB) GetRecentConnectorErrors(limit int) ([]ConnectorError, error) {
 	var errors []ConnectorError
 
 	err := db.DB.Model(&DownloadedPhoto{}).
-		Select("id, source_page, url, title, error_message, downloaded_at as occurred_at").
+		Select("id, provider, source_page, url, title, error_message, downloaded_at as occurred_at").
 		Where("status = ?", "failed").
 		Order("downloaded_at DESC, id DESC").
 		Limit(limit).

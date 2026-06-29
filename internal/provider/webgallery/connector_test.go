@@ -146,7 +146,7 @@ func TestConfigDrivenConnectorSupportsDifferentSiteStructure(t *testing.T) {
 			Pagination: PaginationConfig{
 				Strategy:   "page_param",
 				ParamName:  "p",
-				StartIndex: 1,
+				StartIndex: intPtr(1),
 			},
 			Selectors: SelectorConfig{
 				ItemLink: "a.card",
@@ -183,6 +183,32 @@ func TestConfigDrivenConnectorSupportsDifferentSiteStructure(t *testing.T) {
 	}
 	if resolved.PublishedAt.Format("2006-01-02") != "2025-03-04" {
 		t.Fatalf("unexpected published date: %s", resolved.PublishedAt)
+	}
+}
+
+func TestPageParamAllowsZeroStartIndex(t *testing.T) {
+	connector := New(Config{
+		Gallery: WebGalleryConfig{
+			ListURL: "https://gallery.example.test/archive",
+			Pagination: PaginationConfig{
+				Strategy:   "page_param",
+				ParamName:  "offset",
+				StartIndex: intPtr(0),
+			},
+			Selectors: SelectorConfig{
+				ItemLink: "a.item",
+				Image:    FieldSelector{Selector: "img.full"},
+			},
+		},
+		Retry: retry.Config{MaxAttempts: 1},
+	}, nil, zerolog.Nop())
+
+	pageURL, err := connector.pageURL(provider.PageRequest{})
+	if err != nil {
+		t.Fatalf("pageURL returned error: %v", err)
+	}
+	if pageURL != "https://gallery.example.test/archive?offset=0" {
+		t.Fatalf("expected zero-based first page, got %q", pageURL)
 	}
 }
 
@@ -266,4 +292,8 @@ func newTestConnector(baseURL string) *Connector {
 		BaseURL: baseURL,
 		Retry:   retry.Config{MaxAttempts: 1},
 	}, http.DefaultClient, zerolog.New(os.Stdout))
+}
+
+func intPtr(value int) *int {
+	return &value
 }

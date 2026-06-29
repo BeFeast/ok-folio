@@ -157,8 +157,9 @@ func buildConnectors(cfg *config.Config, db *database.DB, logger zerolog.Logger)
 		Multiplier:   cfg.Retry.Multiplier,
 	}
 	connectors := []provider.Connector{}
-	connectors = append(connectors, buildWebGalleryConnectors(cfg, db, client, retryConfig, logger)...)
-	if len(connectors) == 0 {
+	webGalleryConnectors, hasManagedWebGallerySources := buildWebGalleryConnectors(cfg, db, client, retryConfig, logger)
+	connectors = append(connectors, webGalleryConnectors...)
+	if len(webGalleryConnectors) == 0 && !hasManagedWebGallerySources {
 		connectors = append(connectors, webgallery.New(webgallery.Config{
 			BaseURL:          cfg.Source.BaseURL,
 			Schedule:         cfg.Source.Schedule,
@@ -192,16 +193,17 @@ func buildConnectors(cfg *config.Config, db *database.DB, logger zerolog.Logger)
 	return connectors
 }
 
-func buildWebGalleryConnectors(cfg *config.Config, db *database.DB, client *http.Client, retryConfig retry.Config, logger zerolog.Logger) []provider.Connector {
+func buildWebGalleryConnectors(cfg *config.Config, db *database.DB, client *http.Client, retryConfig retry.Config, logger zerolog.Logger) ([]provider.Connector, bool) {
 	if db == nil {
-		return legacyWebGalleryConnectors(cfg, client, retryConfig, logger)
+		return legacyWebGalleryConnectors(cfg, client, retryConfig, logger), false
 	}
 
 	sources, err := db.ListConnectorSources(webgallery.ProviderID)
 	if err != nil {
 		logger.Error().Err(err).Msg("Failed to list webgallery connector sources")
-		return legacyWebGalleryConnectors(cfg, client, retryConfig, logger)
+		return legacyWebGalleryConnectors(cfg, client, retryConfig, logger), false
 	}
+	hasManagedSources := len(sources) > 0
 	if len(sources) == 0 && strings.TrimSpace(cfg.Source.BaseURL) != "" {
 		seed, err := json.Marshal(webgallery.DefaultConfig(cfg.Source.BaseURL))
 		if err != nil {
@@ -216,6 +218,7 @@ func buildWebGalleryConnectors(cfg *config.Config, db *database.DB, client *http
 			logger.Error().Err(err).Msg("Failed to seed default webgallery connector source")
 		} else {
 			sources = append(sources, *created)
+			hasManagedSources = true
 		}
 	}
 
@@ -255,7 +258,7 @@ func buildWebGalleryConnectors(cfg *config.Config, db *database.DB, client *http
 			Gallery:          galleryConfig,
 		}, client, logger.With().Str("provider", webgallery.ProviderID).Uint64("source_id", source.ID).Logger()))
 	}
-	return connectors
+	return connectors, hasManagedSources
 }
 
 func legacyWebGalleryConnectors(cfg *config.Config, client *http.Client, retryConfig retry.Config, logger zerolog.Logger) []provider.Connector {

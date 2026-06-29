@@ -109,6 +109,37 @@ func TestBuildConnectorsAddsEveryEnabledWebGallerySource(t *testing.T) {
 	}
 }
 
+func TestBuildConnectorsDoesNotFallbackWhenManagedWebGallerySourcesAreDisabled(t *testing.T) {
+	gormDB, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := gormDB.AutoMigrate(&database.ConnectorSource{}); err != nil {
+		t.Fatalf("migrate connector sources: %v", err)
+	}
+	db := &database.DB{DB: gormDB}
+
+	sourceConfig := mustJSONConfig(t, webgallery.DefaultConfig("https://paused.example.test/gallery"))
+	if _, err := db.CreateConnectorSource(database.ConnectorSource{
+		Type:    webgallery.ProviderID,
+		ChatID:  "paused",
+		Label:   "Paused",
+		Config:  sourceConfig,
+		Enabled: false,
+	}); err != nil {
+		t.Fatalf("create disabled source: %v", err)
+	}
+
+	cfg := &config.Config{}
+	cfg.Source.BaseURL = "https://legacy.example.test/gallery"
+	connectors := buildConnectors(cfg, db, zerolog.Nop())
+	for _, connector := range connectors {
+		if strings.HasPrefix(connector.Provider().ID, webgallery.ProviderID) {
+			t.Fatalf("expected no webgallery connectors when all managed sources are disabled, got %q", connector.Provider().ID)
+		}
+	}
+}
+
 func mustJSONConfig(t *testing.T, cfg webgallery.WebGalleryConfig) database.JSONConfig {
 	t.Helper()
 	data, err := json.Marshal(cfg)

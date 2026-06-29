@@ -128,9 +128,12 @@ func buildConnectorStatuses(sourceStats []database.ConnectorSourceStats, runs []
 	sourceIndex := make(map[string]connectorSourceRef)
 
 	for _, stat := range sourceStats {
-		providerID := connectorProviderIDFromSource(stat.SourcePage, stat.URL)
+		providerID := connectorProviderIDFromStored(stat.Provider)
 		if providerID == "unknown" {
-			providerID = "webgallery"
+			providerID = connectorProviderIDFromSource(stat.SourcePage, stat.URL)
+			if providerID == "unknown" {
+				providerID = "webgallery"
+			}
 		}
 		connector := ensureConnectorStatus(byConnector, providerID)
 		sourceID := connectorSourceID(stat.SourcePage, stat.URL, providerID)
@@ -193,9 +196,12 @@ func buildConnectorStatuses(sourceStats []database.ConnectorSourceStats, runs []
 	}
 
 	for _, connectorError := range recentErrors {
-		providerID := connectorProviderIDFromSource(connectorError.SourcePage, connectorError.URL)
+		providerID := connectorProviderIDFromStored(connectorError.Provider)
 		if providerID == "unknown" {
-			providerID = "webgallery"
+			providerID = connectorProviderIDFromSource(connectorError.SourcePage, connectorError.URL)
+			if providerID == "unknown" {
+				providerID = "webgallery"
+			}
 		}
 		connector := ensureConnectorStatus(byConnector, providerID)
 		sourceID := connectorSourceID(connectorError.SourcePage, connectorError.URL, providerID)
@@ -381,6 +387,16 @@ func connectorProviderIDFromSource(sourcePage string, storedURL string) string {
 		return providerID
 	}
 	return "unknown"
+}
+
+func connectorProviderIDFromStored(providerID string) string {
+	providerID = strings.TrimSpace(providerID)
+	switch providerID {
+	case "", "sight.photo":
+		return "unknown"
+	default:
+		return providerID
+	}
 }
 
 func connectorProviderIDFromSourcePage(sourcePage string) string {

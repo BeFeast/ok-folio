@@ -199,7 +199,11 @@ func connectorSourceKey(input connectorSourceRequest) string {
 	if err != nil {
 		return input.ChatID
 	}
-	key := strings.Trim(parsed.Host+parsed.EscapedPath(), "/")
+	keySource := parsed.Host + parsed.EscapedPath()
+	if parsed.RawQuery != "" {
+		keySource += "?" + parsed.RawQuery
+	}
+	key := strings.Trim(keySource, "/")
 	key = strings.NewReplacer("/", "-", ":", "-", "?", "-", "&", "-", "=", "-").Replace(key)
 	if key == "" {
 		return webgallery.ProviderID
