@@ -1,7 +1,7 @@
 import { useState, type CSSProperties } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { backfillConnectorSource, createFolio, fetchFolios } from "../api";
-import type { ConnectorSourceBackfillResult } from "../types";
+import type { ConnectorSourceBackfillResult, FoliosResponse } from "../types";
 
 type Props = {
   targetFolioId: number | null;
@@ -113,6 +113,11 @@ export default function DestinationControls({
     setCreating(true);
     try {
       const folio = await createFolio({ name });
+      queryClient.setQueryData<FoliosResponse>(["folios"], (current) => {
+        if (!current) return { folios: [folio] };
+        if (current.folios.some((existing) => existing.id === folio.id)) return current;
+        return { ...current, folios: [...current.folios, folio] };
+      });
       onTargetFolioIdChange(folio.id);
       setNewFolioName("");
       await queryClient.invalidateQueries({ queryKey: ["folios"] });
