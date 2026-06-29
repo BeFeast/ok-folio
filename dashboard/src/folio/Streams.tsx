@@ -17,6 +17,7 @@ import type {
   WebGalleryFieldSelector,
   WebGalleryPaginationConfig,
 } from "../types";
+import DestinationControls, { destinationGateMessage } from "./DestinationControls";
 import { DotsIcon, OutlineButton, PageHeader, PlusIcon } from "./ui";
 import { useViewport } from "./useViewport";
 
@@ -41,6 +42,8 @@ type WebGalleryForm = {
   dateSelector: string;
   dateAttr: string;
   itemLinkFilter: string;
+  targetFolioId: number | null;
+  showInLibrary: boolean;
 };
 
 const fieldBase: CSSProperties = {
@@ -156,6 +159,8 @@ function initialForm(source?: ConnectorSourceSetting): WebGalleryForm {
     dateSelector: cfg.selectors.date?.selector ?? "",
     dateAttr: cfg.selectors.date?.attr ?? "",
     itemLinkFilter: cfg.item_link_filter.join("\n"),
+    targetFolioId: source?.target_folio_id ?? null,
+    showInLibrary: source?.show_in_library ?? true,
   };
 }
 
@@ -612,7 +617,7 @@ function WebGalleryEditor({
 
   const setValue = <K extends keyof WebGalleryForm>(key: K, value: WebGalleryForm[K]) => {
     setForm((current) => ({ ...current, [key]: value }));
-    if (key !== "label" && key !== "enabled") {
+    if (key !== "label" && key !== "enabled" && key !== "targetFolioId" && key !== "showInLibrary") {
       setPreview(null);
       setPreviewError("");
       setPreviewKey("");
@@ -642,6 +647,11 @@ function WebGalleryEditor({
       setSaveError("Run a successful test before enabling this web gallery.");
       return;
     }
+    const destinationError = destinationGateMessage(form.targetFolioId, form.showInLibrary);
+    if (destinationError) {
+      setSaveError(destinationError);
+      return;
+    }
     setLocalBusy(true);
     try {
       if (mode.kind === "edit") {
@@ -650,6 +660,8 @@ function WebGalleryEditor({
           label: form.label,
           config: { ...mode.source.config, ...config },
           enabled: form.enabled,
+          target_folio_id: form.targetFolioId,
+          show_in_library: form.showInLibrary,
         });
       } else {
         await createConnectorSource({
@@ -657,6 +669,8 @@ function WebGalleryEditor({
           label: form.label,
           config,
           enabled: form.enabled,
+          target_folio_id: form.targetFolioId,
+          show_in_library: form.showInLibrary,
         });
       }
       onSaved();
@@ -666,6 +680,12 @@ function WebGalleryEditor({
       setLocalBusy(false);
     }
   };
+  const destinationError = destinationGateMessage(form.targetFolioId, form.showInLibrary);
+  const canBackfill =
+    mode.kind === "edit" &&
+    form.targetFolioId != null &&
+    form.targetFolioId === (mode.source.target_folio_id ?? null) &&
+    form.showInLibrary === (mode.source.show_in_library ?? true);
 
   const shellStyle: CSSProperties = isMobile
     ? {
@@ -758,16 +778,26 @@ function WebGalleryEditor({
           ) : null}
 
           <PreviewPanel preview={preview} error={previewError} />
-          {!canSaveEnabled || saveError ? (
+          <DestinationControls
+            targetFolioId={form.targetFolioId}
+            showInLibrary={form.showInLibrary}
+            onTargetFolioIdChange={(value) => setValue("targetFolioId", value)}
+            onShowInLibraryChange={(value) => setValue("showInLibrary", value)}
+            disabled={localBusy || busy}
+            sourceId={mode.kind === "edit" ? mode.source.id : undefined}
+            canBackfill={canBackfill}
+            backfillBlockedMessage={mode.kind === "edit" ? "Save a target folio before backfill." : "Create and save this source before backfill."}
+          />
+          {!canSaveEnabled || destinationError || saveError ? (
             <div style={{ fontFamily: "var(--sans)", fontSize: 13, color: "var(--accent)", lineHeight: 1.45 }}>
-              {saveError || "Run a successful test before enabling this source."}
+              {saveError || destinationError || "Run a successful test before enabling this source."}
             </div>
           ) : null}
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, flexWrap: "wrap" }}>
             <button type="button" onClick={test} disabled={localBusy || busy} style={{ ...smallButtonStyle, minHeight: 44, padding: "0 18px" }}>
               {localBusy ? "Working..." : "Test"}
             </button>
-            <button type="button" onClick={save} disabled={localBusy || busy || !canSaveEnabled} style={{ minHeight: 44, padding: "0 20px", border: "1px solid var(--accent)", borderRadius: 99, background: "var(--accent)", color: "var(--on-accent)", fontFamily: "var(--sans)", fontSize: 14, fontWeight: 800, cursor: "pointer", opacity: localBusy || busy || !canSaveEnabled ? 0.55 : 1 }}>
+            <button type="button" onClick={save} disabled={localBusy || busy || !canSaveEnabled || Boolean(destinationError)} style={{ minHeight: 44, padding: "0 20px", border: "1px solid var(--accent)", borderRadius: 99, background: "var(--accent)", color: "var(--on-accent)", fontFamily: "var(--sans)", fontSize: 14, fontWeight: 800, cursor: "pointer", opacity: localBusy || busy || !canSaveEnabled || Boolean(destinationError) ? 0.55 : 1 }}>
               Save source
             </button>
           </div>
@@ -825,6 +855,8 @@ export default function Streams() {
           label: source.label,
           config: source.config ?? undefined,
           enabled: nextEnabled,
+          target_folio_id: source.target_folio_id ?? null,
+          show_in_library: source.show_in_library ?? true,
         }),
       ),
     )
@@ -855,6 +887,8 @@ export default function Streams() {
       label: source.label,
       config: source.config ?? undefined,
       enabled: !source.enabled,
+      target_folio_id: source.target_folio_id ?? null,
+      show_in_library: source.show_in_library ?? true,
     })
       .then(reload)
       .catch(() => {

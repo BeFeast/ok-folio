@@ -3,6 +3,7 @@ import { createConnectorSource, deleteConnectorSource, fetchConnectorSources, up
 import type { ConnectorSourceSetting } from "../types";
 import { useStorageEstimate } from "../hooks/useStorageEstimate";
 import { useFolio, formatBytes } from "./context";
+import DestinationControls, { destinationGateMessage } from "./DestinationControls";
 import { BrandMark, Hov, PageHeader } from "./ui";
 import { useViewport } from "./useViewport";
 
@@ -105,6 +106,13 @@ export default function Settings() {
   const [sources, setSources] = useState<ConnectorSourceSetting[]>([]);
   const [sourceLabel, setSourceLabel] = useState("");
   const [sourceChatID, setSourceChatID] = useState("");
+  const [sourceTargetFolioId, setSourceTargetFolioId] = useState<number | null>(null);
+  const [sourceShowInLibrary, setSourceShowInLibrary] = useState(true);
+  const [editingSourceID, setEditingSourceID] = useState<number | null>(null);
+  const [editSourceLabel, setEditSourceLabel] = useState("");
+  const [editSourceChatID, setEditSourceChatID] = useState("");
+  const [editSourceTargetFolioId, setEditSourceTargetFolioId] = useState<number | null>(null);
+  const [editSourceShowInLibrary, setEditSourceShowInLibrary] = useState(true);
   const [sourceBusy, setSourceBusy] = useState(false);
   const [sourceError, setSourceError] = useState("");
   const storageEstimate = useStorageEstimate();
@@ -132,6 +140,11 @@ export default function Settings() {
 
   const saveSource = async () => {
     setSourceError("");
+    const destinationError = destinationGateMessage(sourceTargetFolioId, sourceShowInLibrary);
+    if (destinationError) {
+      setSourceError(destinationError);
+      return;
+    }
     setSourceBusy(true);
     try {
       await createConnectorSource({
@@ -139,9 +152,13 @@ export default function Settings() {
         chat_id: sourceChatID,
         label: sourceLabel,
         enabled: true,
+        target_folio_id: sourceTargetFolioId,
+        show_in_library: sourceShowInLibrary,
       });
       setSourceLabel("");
       setSourceChatID("");
+      setSourceTargetFolioId(null);
+      setSourceShowInLibrary(true);
       await reloadSources();
     } catch (err) {
       setSourceError(err instanceof Error ? err.message : "Failed to save connector source");
@@ -159,7 +176,52 @@ export default function Settings() {
         chat_id: source.chat_id,
         label: source.label,
         enabled: !source.enabled,
+        target_folio_id: source.target_folio_id ?? null,
+        show_in_library: source.show_in_library ?? true,
       });
+      await reloadSources();
+    } catch (err) {
+      setSourceError(err instanceof Error ? err.message : "Failed to update connector source");
+    } finally {
+      setSourceBusy(false);
+    }
+  };
+
+  const beginEditSource = (source: ConnectorSourceSetting) => {
+    setSourceError("");
+    setEditingSourceID(source.id);
+    setEditSourceLabel(source.label);
+    setEditSourceChatID(source.chat_id);
+    setEditSourceTargetFolioId(source.target_folio_id ?? null);
+    setEditSourceShowInLibrary(source.show_in_library ?? true);
+  };
+
+  const cancelEditSource = () => {
+    setEditingSourceID(null);
+    setEditSourceLabel("");
+    setEditSourceChatID("");
+    setEditSourceTargetFolioId(null);
+    setEditSourceShowInLibrary(true);
+  };
+
+  const saveEditedSource = async (source: ConnectorSourceSetting) => {
+    setSourceError("");
+    const destinationError = destinationGateMessage(editSourceTargetFolioId, editSourceShowInLibrary);
+    if (destinationError) {
+      setSourceError(destinationError);
+      return;
+    }
+    setSourceBusy(true);
+    try {
+      await updateConnectorSource(source.id, {
+        type: source.type,
+        chat_id: editSourceChatID,
+        label: editSourceLabel,
+        enabled: source.enabled,
+        target_folio_id: editSourceTargetFolioId,
+        show_in_library: editSourceShowInLibrary,
+      });
+      cancelEditSource();
       await reloadSources();
     } catch (err) {
       setSourceError(err instanceof Error ? err.message : "Failed to update connector source");
@@ -327,30 +389,106 @@ export default function Settings() {
             />
             <button
               onClick={saveSource}
-              disabled={sourceBusy || sourceChatID.trim() === ""}
-              style={{ appearance: "none", cursor: sourceBusy || sourceChatID.trim() === "" ? "not-allowed" : "pointer", fontFamily: "var(--sans)", fontSize: 13, border: 0, borderRadius: 6, color: "var(--on-accent)", background: "var(--accent)", padding: "10px 14px", opacity: sourceBusy || sourceChatID.trim() === "" ? 0.55 : 1 }}
+              disabled={sourceBusy || sourceChatID.trim() === "" || Boolean(destinationGateMessage(sourceTargetFolioId, sourceShowInLibrary))}
+              style={{ appearance: "none", cursor: sourceBusy || sourceChatID.trim() === "" || Boolean(destinationGateMessage(sourceTargetFolioId, sourceShowInLibrary)) ? "not-allowed" : "pointer", fontFamily: "var(--sans)", fontSize: 13, border: 0, borderRadius: 6, color: "var(--on-accent)", background: "var(--accent)", padding: "10px 14px", minHeight: 44, opacity: sourceBusy || sourceChatID.trim() === "" || Boolean(destinationGateMessage(sourceTargetFolioId, sourceShowInLibrary)) ? 0.55 : 1 }}
             >
               Add
             </button>
           </div>
+          <DestinationControls
+            targetFolioId={sourceTargetFolioId}
+            showInLibrary={sourceShowInLibrary}
+            onTargetFolioIdChange={setSourceTargetFolioId}
+            onShowInLibraryChange={setSourceShowInLibrary}
+            disabled={sourceBusy}
+            backfillBlockedMessage="Create and save this source before backfill."
+            compact
+          />
           {sourceError && <div style={{ ...ROW_DESC, color: "var(--danger, #b42318)", marginTop: 10 }}>{sourceError}</div>}
           <div style={{ marginTop: 12 }}>
             {sources.length === 0 ? (
               <div style={{ ...ROW_DESC, padding: "10px 0" }}>No managed Telegram sources.</div>
             ) : sources.map((source) => (
-              <div key={source.id} style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: 12, alignItems: "center", padding: "11px 0", borderTop: "1px solid var(--line)" }}>
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontFamily: "var(--sans)", fontSize: 13.5, color: "var(--ink)", overflowWrap: "anywhere" }}>{source.label || "Telegram source"}</div>
-                  <div style={{ ...ROW_DESC, overflowWrap: "anywhere" }}>{source.chat_id}</div>
-                </div>
-                <Switch on={source.enabled} onClick={() => toggleSource(source)} />
-                <button
-                  onClick={() => removeSource(source)}
-                  disabled={sourceBusy}
-                  style={{ appearance: "none", cursor: sourceBusy ? "not-allowed" : "pointer", fontFamily: "var(--sans)", fontSize: 12.5, border: "1px solid var(--line)", borderRadius: 6, color: "var(--graphite)", background: "var(--surface)", padding: "7px 10px", opacity: sourceBusy ? 0.55 : 1 }}
-                >
-                  Remove
-                </button>
+              <div key={source.id} style={{ padding: "11px 0", borderTop: "1px solid var(--line)" }}>
+                {editingSourceID === source.id ? (
+                  <div style={{ display: "grid", gap: 12 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "minmax(150px, 1fr) minmax(180px, 1.2fr)", gap: 10 }}>
+                      <Hov
+                        as="input"
+                        value={editSourceLabel}
+                        placeholder="Label"
+                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setEditSourceLabel(e.target.value)}
+                        style={{ appearance: "none", fontFamily: "var(--sans)", fontSize: 13.5, color: "var(--ink)", border: "1px solid var(--line)", borderRadius: 6, background: "var(--surface)", outline: "none", padding: "9px 10px", minHeight: 44, minWidth: 0 }}
+                        focus={{ borderColor: "var(--accent)" }}
+                      />
+                      <Hov
+                        as="input"
+                        value={editSourceChatID}
+                        placeholder="Chat ID"
+                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setEditSourceChatID(e.target.value)}
+                        style={{ appearance: "none", fontFamily: "var(--sans)", fontSize: 13.5, color: "var(--ink)", border: "1px solid var(--line)", borderRadius: 6, background: "var(--surface)", outline: "none", padding: "9px 10px", minHeight: 44, minWidth: 0 }}
+                        focus={{ borderColor: "var(--accent)" }}
+                      />
+                    </div>
+                    <DestinationControls
+                      targetFolioId={editSourceTargetFolioId}
+                      showInLibrary={editSourceShowInLibrary}
+                      onTargetFolioIdChange={setEditSourceTargetFolioId}
+                      onShowInLibraryChange={setEditSourceShowInLibrary}
+                      disabled={sourceBusy}
+                      sourceId={source.id}
+                      canBackfill={
+                        editSourceTargetFolioId != null &&
+                        editSourceTargetFolioId === (source.target_folio_id ?? null) &&
+                        editSourceShowInLibrary === (source.show_in_library ?? true)
+                      }
+                      backfillBlockedMessage="Save a target folio before backfill."
+                      compact
+                    />
+                    <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
+                      <button
+                        onClick={cancelEditSource}
+                        disabled={sourceBusy}
+                        style={{ appearance: "none", cursor: sourceBusy ? "not-allowed" : "pointer", fontFamily: "var(--sans)", fontSize: 12.5, border: "1px solid var(--line)", borderRadius: 6, color: "var(--graphite)", background: "var(--surface)", padding: "9px 12px", minHeight: 44, opacity: sourceBusy ? 0.55 : 1 }}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={() => saveEditedSource(source)}
+                        disabled={sourceBusy || editSourceChatID.trim() === "" || Boolean(destinationGateMessage(editSourceTargetFolioId, editSourceShowInLibrary))}
+                        style={{ appearance: "none", cursor: sourceBusy || editSourceChatID.trim() === "" || Boolean(destinationGateMessage(editSourceTargetFolioId, editSourceShowInLibrary)) ? "not-allowed" : "pointer", fontFamily: "var(--sans)", fontSize: 12.5, border: 0, borderRadius: 6, color: "var(--on-accent)", background: "var(--accent)", padding: "9px 12px", minHeight: 44, opacity: sourceBusy || editSourceChatID.trim() === "" || Boolean(destinationGateMessage(editSourceTargetFolioId, editSourceShowInLibrary)) ? 0.55 : 1 }}
+                      >
+                        Save
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr auto auto auto", gap: 12, alignItems: "center" }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontFamily: "var(--sans)", fontSize: 13.5, color: "var(--ink)", overflowWrap: "anywhere" }}>{source.label || "Telegram source"}</div>
+                      <div style={{ ...ROW_DESC, overflowWrap: "anywhere" }}>
+                        {source.chat_id}
+                        {source.target_folio_id ? " · routed to folio" : ""}
+                        {source.show_in_library === false ? " · hidden from library" : ""}
+                      </div>
+                    </div>
+                    <Switch on={source.enabled} onClick={() => toggleSource(source)} />
+                    <button
+                      onClick={() => beginEditSource(source)}
+                      disabled={sourceBusy}
+                      style={{ appearance: "none", cursor: sourceBusy ? "not-allowed" : "pointer", fontFamily: "var(--sans)", fontSize: 12.5, border: "1px solid var(--line)", borderRadius: 6, color: "var(--graphite)", background: "var(--surface)", padding: "9px 10px", minHeight: 44, opacity: sourceBusy ? 0.55 : 1 }}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      onClick={() => removeSource(source)}
+                      disabled={sourceBusy}
+                      style={{ appearance: "none", cursor: sourceBusy ? "not-allowed" : "pointer", fontFamily: "var(--sans)", fontSize: 12.5, border: "1px solid var(--line)", borderRadius: 6, color: "var(--graphite)", background: "var(--surface)", padding: "9px 10px", minHeight: 44, opacity: sourceBusy ? 0.55 : 1 }}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                )}
               </div>
             ))}
           </div>
