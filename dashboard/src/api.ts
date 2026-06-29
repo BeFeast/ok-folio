@@ -23,6 +23,8 @@ import type {
   FolioPiecesResponse,
   Photo,
   ConnectorSourceInput,
+  ConnectorSourcePreviewInput,
+  ConnectorSourcePreviewResponse,
   ConnectorSourceSetting,
   ConnectorSourcesResponse,
 } from "./types";
@@ -142,6 +144,19 @@ export async function createConnectorSource(input: ConnectorSourceInput): Promis
   const source = await response.json();
   await clearOfflineCaches();
   return source;
+}
+
+export async function previewConnectorSource(input: ConnectorSourcePreviewInput): Promise<ConnectorSourcePreviewResponse> {
+  const response = await fetch(`${API_BASE}/settings/connector-sources/preview`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || "Failed to preview connector source");
+  }
+  return response.json();
 }
 
 export async function updateConnectorSource(id: number, input: ConnectorSourceInput): Promise<ConnectorSourceSetting> {
