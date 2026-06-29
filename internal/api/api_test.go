@@ -643,6 +643,73 @@ func TestConnectorSourceSettingsCreateDisabled(t *testing.T) {
 	}
 }
 
+func TestConnectorSourceSettingsAcceptsWebGalleryConfig(t *testing.T) {
+	server, _ := setupTestServer(t)
+	defer safeShutdown(server)
+
+	body := bytes.NewBufferString(`{
+		"type":"webgallery",
+		"label":"Alt gallery",
+		"config":{
+			"list_url":"https://gallery.example.test/archive",
+			"pagination":{"strategy":"none"},
+			"selectors":{
+				"item_link":"a.card",
+				"image":{"selector":"img.full","attr":"data-src"},
+				"title":{"selector":"h1"}
+			},
+			"item_link_filter":["/users/"]
+		}
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/connector-sources", body)
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create webgallery status=%d body=%q", w.Code, w.Body.String())
+	}
+	var created database.ConnectorSource
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode created webgallery connector source: %v", err)
+	}
+	if created.Type != "webgallery" || created.ChatID == "" || len(created.Config) == 0 || !created.Enabled {
+		t.Fatalf("unexpected created webgallery source: %#v", created)
+	}
+}
+
+func TestConnectorSourceSettingsRejectsMalformedWebGalleryConfig(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "bad URL",
+			body: `{"type":"webgallery","config":{"list_url":"://bad","pagination":{"strategy":"none"},"selectors":{"item_link":"a","image":{"selector":"img"}}}}`,
+		},
+		{
+			name: "missing selector",
+			body: `{"type":"webgallery","config":{"list_url":"https://gallery.example.test","pagination":{"strategy":"none"},"selectors":{"image":{"selector":"img"}}}}`,
+		},
+		{
+			name: "unknown pagination",
+			body: `{"type":"webgallery","config":{"list_url":"https://gallery.example.test","pagination":{"strategy":"cursor_magic"},"selectors":{"item_link":"a","image":{"selector":"img"}}}}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server, _ := setupTestServer(t)
+			defer safeShutdown(server)
+
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/connector-sources", bytes.NewBufferString(tt.body))
+			w := httptest.NewRecorder()
+			server.router.ServeHTTP(w, req)
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("expected malformed webgallery config to return 400, got %d body=%q", w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
 func TestConnectorSourceSettingsRejectInvalidTelegramChatID(t *testing.T) {
 	server, _ := setupTestServer(t)
 	defer safeShutdown(server)

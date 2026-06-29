@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"net/http"
@@ -155,14 +156,16 @@ func buildConnectors(cfg *config.Config, db *database.DB, logger zerolog.Logger)
 		MaxDelay:     cfg.Retry.MaxDelay,
 		Multiplier:   cfg.Retry.Multiplier,
 	}
-	connectors := []provider.Connector{
-		webgallery.New(webgallery.Config{
+	connectors := []provider.Connector{}
+	connectors = append(connectors, buildWebGalleryConnectors(cfg, db, client, retryConfig, logger)...)
+	if len(connectors) == 0 {
+		connectors = append(connectors, webgallery.New(webgallery.Config{
 			BaseURL:          cfg.Source.BaseURL,
 			Schedule:         cfg.Source.Schedule,
 			UserAgent:        cfg.Download.UserAgent,
 			RateLimitBackoff: cfg.Download.RateLimitBackoff,
 			Retry:            retryConfig,
-		}, client, logger.With().Str("provider", webgallery.ProviderID).Logger()),
+		}, client, logger.With().Str("provider", webgallery.ProviderID).Logger()))
 	}
 	if cfg.Telegram.BotToken != "" {
 		sources := make([]telegram.SourceConfig, 0, len(cfg.Telegram.Sources))
@@ -187,6 +190,84 @@ func buildConnectors(cfg *config.Config, db *database.DB, logger zerolog.Logger)
 		}, client, logger.With().Str("provider", telegram.ProviderID).Logger()))
 	}
 	return connectors
+}
+
+func buildWebGalleryConnectors(cfg *config.Config, db *database.DB, client *http.Client, retryConfig retry.Config, logger zerolog.Logger) []provider.Connector {
+	if db == nil {
+		return legacyWebGalleryConnectors(cfg, client, retryConfig, logger)
+	}
+
+	sources, err := db.ListConnectorSources(webgallery.ProviderID)
+	if err != nil {
+		logger.Error().Err(err).Msg("Failed to list webgallery connector sources")
+		return legacyWebGalleryConnectors(cfg, client, retryConfig, logger)
+	}
+	if len(sources) == 0 && strings.TrimSpace(cfg.Source.BaseURL) != "" {
+		seed, err := json.Marshal(webgallery.DefaultConfig(cfg.Source.BaseURL))
+		if err != nil {
+			logger.Error().Err(err).Msg("Failed to encode default webgallery connector source")
+		} else if created, err := db.CreateConnectorSource(database.ConnectorSource{
+			Type:    webgallery.ProviderID,
+			ChatID:  "default",
+			Label:   "Default Web Gallery",
+			Config:  database.JSONConfig(seed),
+			Enabled: true,
+		}); err != nil {
+			logger.Error().Err(err).Msg("Failed to seed default webgallery connector source")
+		} else {
+			sources = append(sources, *created)
+		}
+	}
+
+	connectors := make([]provider.Connector, 0, len(sources))
+	for _, source := range sources {
+		if !source.Enabled {
+			continue
+		}
+		galleryConfig, err := webgallery.ParseConfig(source.Config)
+		if err != nil {
+			logger.Error().Err(err).Uint64("source_id", source.ID).Msg("Skipping invalid webgallery connector source")
+			continue
+		}
+		label := source.Label
+		if strings.TrimSpace(label) == "" {
+			label = "Web Gallery"
+		}
+		schedule := strings.TrimSpace(galleryConfig.Schedule)
+		if schedule == "" {
+			schedule = cfg.Source.Schedule
+		}
+		userAgent := strings.TrimSpace(galleryConfig.UserAgent)
+		if userAgent == "" {
+			userAgent = cfg.Download.UserAgent
+		}
+		rateLimitBackoff := time.Duration(0)
+		if strings.TrimSpace(galleryConfig.RateLimit.Backoff) == "" {
+			rateLimitBackoff = cfg.Download.RateLimitBackoff
+		}
+		connectors = append(connectors, webgallery.New(webgallery.Config{
+			SourceID:         fmt.Sprintf("%d", source.ID),
+			DisplayName:      label,
+			Schedule:         schedule,
+			UserAgent:        userAgent,
+			RateLimitBackoff: rateLimitBackoff,
+			Retry:            retryConfig,
+			Gallery:          galleryConfig,
+		}, client, logger.With().Str("provider", webgallery.ProviderID).Uint64("source_id", source.ID).Logger()))
+	}
+	return connectors
+}
+
+func legacyWebGalleryConnectors(cfg *config.Config, client *http.Client, retryConfig retry.Config, logger zerolog.Logger) []provider.Connector {
+	return []provider.Connector{
+		webgallery.New(webgallery.Config{
+			BaseURL:          cfg.Source.BaseURL,
+			Schedule:         cfg.Source.Schedule,
+			UserAgent:        cfg.Download.UserAgent,
+			RateLimitBackoff: cfg.Download.RateLimitBackoff,
+			Retry:            retryConfig,
+		}, client, logger.With().Str("provider", webgallery.ProviderID).Logger()),
+	}
 }
 
 func setupLogger(cfg *config.Config) zerolog.Logger {

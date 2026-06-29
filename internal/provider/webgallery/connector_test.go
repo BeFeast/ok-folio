@@ -111,6 +111,130 @@ func TestResolveMediaUsesWebGalleryPhotoFixture(t *testing.T) {
 	}
 }
 
+func TestConfigDrivenConnectorSupportsDifferentSiteStructure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/archive":
+			if r.URL.Query().Get("p") != "5" {
+				t.Fatalf("expected p=5, got %q", r.URL.Query().Get("p"))
+			}
+			_, _ = w.Write([]byte(`
+				<main>
+					<a class="card" href="/work/one">One</a>
+					<a class="card" href="/profile/artist">Skip profile</a>
+				</main>
+			`))
+		case "/work/one":
+			_, _ = w.Write([]byte(`
+				<article>
+					<h2 class="piece-title">  Alternate Fixture  </h2>
+					<a class="artist" data-name="Alt Artist"></a>
+					<time datetime="2025-03-04"></time>
+					<img class="full" data-src="/media/alt.jpg">
+				</article>
+			`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	connector := New(Config{
+		SourceID: "alt",
+		Gallery: WebGalleryConfig{
+			ListURL: server.URL + "/archive",
+			Pagination: PaginationConfig{
+				Strategy:   "page_param",
+				ParamName:  "p",
+				StartIndex: 1,
+			},
+			Selectors: SelectorConfig{
+				ItemLink: "a.card",
+				Image:    FieldSelector{Selector: "img.full", Attr: "data-src"},
+				Title:    FieldSelector{Selector: ".piece-title"},
+				Artist:   FieldSelector{Selector: ".artist", Attr: "data-name"},
+				Date:     FieldSelector{Selector: "time", Attr: "datetime"},
+			},
+			ItemLinkFilter: []string{"/profile/"},
+		},
+		Retry: retry.Config{MaxAttempts: 1},
+	}, server.Client(), zerolog.New(os.Stdout))
+
+	result, err := connector.DiscoverPage(context.Background(), provider.PageRequest{Page: 5})
+	if err != nil {
+		t.Fatalf("DiscoverPage returned error: %v", err)
+	}
+	if len(result.Items) != 1 {
+		t.Fatalf("expected 1 filtered media item, got %d", len(result.Items))
+	}
+	if result.Items[0].ProviderID != "webgallery:alt" || result.Items[0].DedupeKey.ProviderID != "webgallery:alt" {
+		t.Fatalf("expected per-source provider IDs, got item=%q dedupe=%q", result.Items[0].ProviderID, result.Items[0].DedupeKey.ProviderID)
+	}
+
+	resolved, err := connector.ResolveMedia(context.Background(), result.Items[0])
+	if err != nil {
+		t.Fatalf("ResolveMedia returned error: %v", err)
+	}
+	if resolved.Title != "Alternate Fixture" || resolved.Artist != "Alt Artist" {
+		t.Fatalf("unexpected metadata: title=%q artist=%q", resolved.Title, resolved.Artist)
+	}
+	if resolved.Media.URL != server.URL+"/media/alt.jpg" {
+		t.Fatalf("unexpected media URL: %s", resolved.Media.URL)
+	}
+	if resolved.PublishedAt.Format("2006-01-02") != "2025-03-04" {
+		t.Fatalf("unexpected published date: %s", resolved.PublishedAt)
+	}
+}
+
+func TestDiscoverPageFollowsConfiguredNextLink(t *testing.T) {
+	requests := make([]string, 0, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.URL.String())
+		switch r.URL.Path {
+		case "/first":
+			_, _ = w.Write([]byte(`<a class="item" href="/work/one">One</a><a rel="next" href="/second">Next</a>`))
+		case "/second":
+			_, _ = w.Write([]byte(`<a class="item" href="/work/two">Two</a>`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	connector := New(Config{
+		Gallery: WebGalleryConfig{
+			ListURL: server.URL + "/first",
+			Pagination: PaginationConfig{
+				Strategy:         "next_link",
+				NextLinkSelector: "a[rel='next']",
+			},
+			Selectors: SelectorConfig{
+				ItemLink: "a.item",
+				Image:    FieldSelector{Selector: "img"},
+			},
+		},
+		Retry: retry.Config{MaxAttempts: 1},
+	}, server.Client(), zerolog.New(os.Stdout))
+
+	first, err := connector.DiscoverPage(context.Background(), provider.PageRequest{Page: 1})
+	if err != nil {
+		t.Fatalf("first DiscoverPage returned error: %v", err)
+	}
+	if !first.Pagination.HasNext || first.Pagination.NextCursor != server.URL+"/second" {
+		t.Fatalf("unexpected first pagination: %+v", first.Pagination)
+	}
+	second, err := connector.DiscoverPage(context.Background(), provider.PageRequest{Page: 2, Cursor: first.Pagination.NextCursor})
+	if err != nil {
+		t.Fatalf("second DiscoverPage returned error: %v", err)
+	}
+	if second.Pagination.HasNext {
+		t.Fatalf("expected second page to end pagination: %+v", second.Pagination)
+	}
+	if len(requests) != 2 || requests[0] != "/first" || requests[1] != "/second" {
+		t.Fatalf("unexpected requests: %#v", requests)
+	}
+}
+
 func TestDiscoverPageReturnsTypedRateLimitError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusTooManyRequests)

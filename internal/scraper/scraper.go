@@ -446,7 +446,7 @@ func StableDedupeKey(item provider.DiscoveredMedia) string {
 
 func (s *Scraper) IsMediaAlreadyKept(item provider.DiscoveredMedia) (bool, error) {
 	keys := []string{StableDedupeKey(item)}
-	if item.ProviderID == webgallery.ProviderID && item.Source.URL != "" {
+	if strings.HasPrefix(item.ProviderID, webgallery.ProviderID) && item.Source.URL != "" {
 		keys = append(keys, item.Source.URL)
 	}
 

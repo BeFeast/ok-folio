@@ -206,6 +206,7 @@ type ConnectorSource struct {
 	Type       string     `gorm:"column:type;type:text;not null;index;uniqueIndex:idx_connector_sources_type_chat_id" json:"type"`
 	ChatID     string     `gorm:"column:chat_id;type:text;not null;uniqueIndex:idx_connector_sources_type_chat_id" json:"chat_id"`
 	Label      string     `gorm:"column:label;type:text" json:"label"`
+	Config     JSONConfig `gorm:"column:config;type:jsonb" json:"config,omitempty"`
 	Enabled    bool       `gorm:"column:enabled;not null;index" json:"enabled"`
 	LastError  string     `gorm:"column:last_error;type:text" json:"last_error,omitempty"`
 	LastSeenAt *time.Time `gorm:"column:last_seen_at" json:"last_seen_at,omitempty"`
@@ -217,7 +218,55 @@ type ConnectorSource struct {
 type ConnectorSourceUpdates struct {
 	ChatID  *string
 	Label   *string
+	Config  *JSONConfig
 	Enabled *bool
+}
+
+type JSONConfig []byte
+
+func (c JSONConfig) Value() (driver.Value, error) {
+	if len(c) == 0 {
+		return nil, nil
+	}
+	if !json.Valid(c) {
+		return nil, fmt.Errorf("invalid JSON config")
+	}
+	return string(c), nil
+}
+
+func (c *JSONConfig) Scan(value any) error {
+	if value == nil {
+		*c = nil
+		return nil
+	}
+	switch v := value.(type) {
+	case []byte:
+		*c = append((*c)[:0], v...)
+	case string:
+		*c = append((*c)[:0], v...)
+	default:
+		return fmt.Errorf("unsupported JSON config type %T", value)
+	}
+	return nil
+}
+
+func (c JSONConfig) MarshalJSON() ([]byte, error) {
+	if len(c) == 0 {
+		return []byte("null"), nil
+	}
+	return c, nil
+}
+
+func (c *JSONConfig) UnmarshalJSON(data []byte) error {
+	if string(data) == "null" || len(data) == 0 {
+		*c = nil
+		return nil
+	}
+	if !json.Valid(data) {
+		return fmt.Errorf("invalid JSON config")
+	}
+	*c = append((*c)[:0], data...)
+	return nil
 }
 
 func (ConnectorSource) TableName() string {
@@ -1090,6 +1139,9 @@ func normalizeConnectorSource(source ConnectorSource) (ConnectorSource, error) {
 	if source.ChatID == "" {
 		return ConnectorSource{}, fmt.Errorf("connector source chat ID is required")
 	}
+	if len(source.Config) > 0 && !json.Valid(source.Config) {
+		return ConnectorSource{}, fmt.Errorf("connector source config must be valid JSON")
+	}
 	return source, nil
 }
 
@@ -1164,6 +1216,9 @@ func (db *DB) UpdateConnectorSource(id uint64, updates ConnectorSourceUpdates) (
 	}
 	if updates.ChatID != nil && strings.TrimSpace(*updates.ChatID) != "" {
 		attrs["chat_id"] = strings.TrimSpace(*updates.ChatID)
+	}
+	if updates.Config != nil {
+		attrs["config"] = *updates.Config
 	}
 
 	if len(attrs) > 0 {

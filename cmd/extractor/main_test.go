@@ -1,16 +1,21 @@
 package main
 
 import (
+	"encoding/json"
 	"io"
 	"os"
 	"strings"
 	"testing"
 
 	"ok-folio/internal/config"
+	"ok-folio/internal/database"
 	"ok-folio/internal/provider/telegram"
 	"ok-folio/internal/provider/webgallery"
 
 	"github.com/rs/zerolog"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 func TestBuildConnectorsSkipsTelegramWithoutBotToken(t *testing.T) {
@@ -56,6 +61,61 @@ func TestBuildConnectorsAddsWebGallerySchedule(t *testing.T) {
 	if connectors[0].Provider().Schedule != "0 0 */6 * * *" {
 		t.Fatalf("expected webgallery schedule to be configured, got %q", connectors[0].Provider().Schedule)
 	}
+}
+
+func TestBuildConnectorsAddsEveryEnabledWebGallerySource(t *testing.T) {
+	gormDB, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := gormDB.AutoMigrate(&database.ConnectorSource{}); err != nil {
+		t.Fatalf("migrate connector sources: %v", err)
+	}
+	db := &database.DB{DB: gormDB}
+
+	first := mustJSONConfig(t, webgallery.DefaultConfig("https://one.example.test/gallery"))
+	second := mustJSONConfig(t, webgallery.WebGalleryConfig{
+		ListURL: "https://two.example.test/archive",
+		Pagination: webgallery.PaginationConfig{
+			Strategy: "none",
+		},
+		Selectors: webgallery.SelectorConfig{
+			ItemLink: "a.item",
+			Image:    webgallery.FieldSelector{Selector: "img.full", Attr: "data-src"},
+		},
+	})
+	if _, err := db.CreateConnectorSource(database.ConnectorSource{Type: webgallery.ProviderID, ChatID: "one", Label: "One", Config: first, Enabled: true}); err != nil {
+		t.Fatalf("create first source: %v", err)
+	}
+	if _, err := db.CreateConnectorSource(database.ConnectorSource{Type: webgallery.ProviderID, ChatID: "two", Label: "Two", Config: second, Enabled: true}); err != nil {
+		t.Fatalf("create second source: %v", err)
+	}
+	if _, err := db.CreateConnectorSource(database.ConnectorSource{Type: webgallery.ProviderID, ChatID: "paused", Label: "Paused", Config: second, Enabled: false}); err != nil {
+		t.Fatalf("create disabled source: %v", err)
+	}
+
+	connectors := buildConnectors(&config.Config{}, db, zerolog.Nop())
+	var webgalleryIDs []string
+	for _, connector := range connectors {
+		if strings.HasPrefix(connector.Provider().ID, webgallery.ProviderID) {
+			webgalleryIDs = append(webgalleryIDs, connector.Provider().ID)
+		}
+	}
+	if len(webgalleryIDs) != 2 {
+		t.Fatalf("expected two enabled webgallery connectors, got %#v", webgalleryIDs)
+	}
+	if webgalleryIDs[0] == webgallery.ProviderID || webgalleryIDs[0] == webgalleryIDs[1] {
+		t.Fatalf("expected independent per-source provider IDs, got %#v", webgalleryIDs)
+	}
+}
+
+func mustJSONConfig(t *testing.T, cfg webgallery.WebGalleryConfig) database.JSONConfig {
+	t.Helper()
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("marshal webgallery config: %v", err)
+	}
+	return database.JSONConfig(data)
 }
 
 func TestSetupLoggerEmptyLevelEmitsInfo(t *testing.T) {
