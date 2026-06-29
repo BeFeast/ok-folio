@@ -233,6 +233,7 @@ export interface Photo {
   FileSize: number;
   Notes: string;
   keywords: string[];
+  manual_fields: string[];
   Favorite: boolean;
   Status: string;
 }

@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { fetchFolioPieces, fetchFolios, fetchGalleryCatalog, getPhotoThumbnailUrl } from "../api";
 import type { Folio, Photo } from "../types";
+import BulkEditBar from "./BulkEditBar";
 import { mapPhoto, useFolio, type PieceVM } from "./context";
 import { ChevronIcon, CloseIcon, DotsIcon, Hov, OkfImage, OutlineButton, PageHeader, PlusIcon } from "./ui";
 import { useViewport } from "./useViewport";
@@ -102,6 +103,69 @@ function PieceTile({ piece, folioId }: { piece: PieceVM; folioId: number }) {
         <div style={{ fontFamily: "var(--sans)", fontSize: 10.5, color: "rgba(251,246,238,0.7)", marginTop: 2 }}>{piece.a}</div>
       </figcaption>
     </figure>
+  );
+}
+
+function SelectionBadge({ selected }: { selected: boolean }) {
+  return (
+    <span
+      aria-hidden="true"
+      style={{
+        position: "absolute",
+        top: 8,
+        right: 8,
+        zIndex: 4,
+        width: 24,
+        height: 24,
+        borderRadius: 99,
+        border: selected ? 0 : "2px solid rgba(255,255,255,.9)",
+        background: selected ? "var(--accent)" : "rgba(20,14,10,.18)",
+        color: "var(--on-accent)",
+        display: "grid",
+        placeItems: "center",
+        boxShadow: "0 1px 5px rgba(0,0,0,.22)",
+      }}
+    >
+      {selected ? (
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+          <path d="M3.2 8.4l3 3 6.6-7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      ) : null}
+    </span>
+  );
+}
+
+function SelectPieceTile({ piece, selected, onToggle }: { piece: PieceVM; selected: boolean; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      aria-pressed={selected}
+      onClick={onToggle}
+      style={{
+        position: "relative",
+        aspectRatio: "1 / 1",
+        border: 0,
+        borderRadius: 3,
+        padding: 0,
+        overflow: "hidden",
+        background: "var(--wall)",
+        cursor: "pointer",
+        boxShadow: selected ? "0 0 0 3px var(--accent)" : "0 1px 8px var(--shadow)",
+      }}
+    >
+      <OkfImage
+        src={piece.thumb}
+        alt={piece.t}
+        title={piece.t}
+        artist={piece.a}
+        imgStyle={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", zIndex: 1 }}
+        matteStyle={TILE_MATTE}
+        matteTitleStyle={{ fontFamily: "var(--serif)", fontStyle: "italic", fontSize: 14, lineHeight: 1.2, color: "var(--ink)" }}
+        matteArtistStyle={{ fontFamily: "var(--sans)", fontSize: 9.5, letterSpacing: "0.12em", color: "var(--muted)" }}
+      />
+      {selected ? <span style={{ position: "absolute", inset: 0, zIndex: 2, background: "rgba(124,36,32,.18)" }} /> : null}
+      <SelectionBadge selected={selected} />
+    </button>
   );
 }
 
@@ -611,6 +675,11 @@ function MobileFolioDetail({
   existingIds,
   pickerOpen,
   setPickerOpen,
+  selectionMode,
+  selectedIds,
+  toggleSelected,
+  toggleSelectionMode,
+  clearSelection,
 }: {
   folio: Folio | undefined;
   folioId: number;
@@ -626,6 +695,11 @@ function MobileFolioDetail({
   existingIds: Set<number>;
   pickerOpen: boolean;
   setPickerOpen: (open: boolean) => void;
+  selectionMode: boolean;
+  selectedIds: Set<number>;
+  toggleSelected: (id: number) => void;
+  toggleSelectionMode: () => void;
+  clearSelection: () => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const firstPieceId = pieces[0]?.id ?? null;
@@ -637,6 +711,9 @@ function MobileFolioDetail({
           <Link to="/folios" aria-label="Back to folios" style={{ width: 40, height: 40, borderRadius: 99, color: "var(--ink)", display: "grid", placeItems: "center", textDecoration: "none" }}>
             <ChevronIcon dir="left" />
           </Link>
+          <button type="button" aria-label={selectionMode ? "Finish selecting" : "Select pieces"} onClick={toggleSelectionMode} style={{ minWidth: 72, height: 40, borderRadius: 99, border: "1px solid var(--line)", background: selectionMode ? "var(--accent)" : "var(--surface)", color: selectionMode ? "var(--on-accent)" : "var(--ink)", fontFamily: "var(--sans)", fontSize: 13, fontWeight: 800 }}>
+            {selectionMode ? "Done" : "Select"}
+          </button>
           <button type="button" aria-label="Folio actions" onClick={() => setMenuOpen(true)} style={{ width: 40, height: 40, borderRadius: 99, border: "1px solid var(--line)", background: "var(--surface)", color: "var(--ink)", display: "grid", placeItems: "center" }}>
             <DotsIcon />
           </button>
@@ -666,7 +743,11 @@ function MobileFolioDetail({
         <>
           <section style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
             {pieces.map((piece) => (
-              <MobileDetailTile key={piece.id} piece={piece} />
+              selectionMode ? (
+                <SelectPieceTile key={piece.id} piece={piece} selected={selectedIds.has(piece.id)} onToggle={() => toggleSelected(piece.id)} />
+              ) : (
+                <MobileDetailTile key={piece.id} piece={piece} />
+              )
             ))}
           </section>
           {piecesQuery.hasNextPage ? (
@@ -688,6 +769,7 @@ function MobileFolioDetail({
 
       {menuOpen && folio ? <MobileDetailMenu folio={folio} firstPieceId={firstPieceId} onClose={() => setMenuOpen(false)} /> : null}
       {pickerOpen ? <AddPiecesPicker folioId={folioId} folioName={folio?.name} existingIds={existingIds} onClose={() => setPickerOpen(false)} /> : null}
+      {selectionMode ? <BulkEditBar selectedIds={Array.from(selectedIds)} onClear={clearSelection} /> : null}
     </div>
   );
 }
@@ -698,6 +780,8 @@ export default function FolioDetail() {
   const { setViewerPieces } = useFolio();
   const { isMobile } = useViewport();
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(() => new Set());
   const folios = useQuery({ queryKey: ["folios"], queryFn: fetchFolios });
   const folio = folios.data?.folios.find((item) => item.id === folioId);
   const piecesQuery = useInfiniteQuery({
@@ -714,6 +798,22 @@ export default function FolioDetail() {
   const pieces = useMemo(() => photos.map(mapPhoto), [photos]);
   const existingIds = useMemo(() => new Set(photos.map((photo) => photo.ID)), [photos]);
   const total = piecesQuery.data?.pages[0]?.total ?? folio?.piece_count ?? pieces.length;
+  const toggleSelected = (id: number) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+  const clearSelection = () => {
+    setSelectedIds(new Set());
+    setSelectionMode(false);
+  };
+  const toggleSelectionMode = () => {
+    setSelectionMode((enabled) => !enabled);
+    setSelectedIds(new Set());
+  };
 
   useEffect(() => {
     setViewerPieces(pieces);
@@ -739,6 +839,11 @@ export default function FolioDetail() {
         existingIds={existingIds}
         pickerOpen={pickerOpen}
         setPickerOpen={setPickerOpen}
+        selectionMode={selectionMode}
+        selectedIds={selectedIds}
+        toggleSelected={toggleSelected}
+        toggleSelectionMode={toggleSelectionMode}
+        clearSelection={clearSelection}
       />
     );
   }
@@ -749,7 +854,12 @@ export default function FolioDetail() {
         eyebrow="Folio"
         title={folio?.name ?? "Loading folio"}
         subcopy={piecesQuery.isLoading ? "Gathering this folio..." : pieceCountLabel(total)}
-        action={<OutlineButton onClick={() => setPickerOpen(true)}>Add pieces</OutlineButton>}
+        action={
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <OutlineButton onClick={toggleSelectionMode}>{selectionMode ? "Done" : "Select"}</OutlineButton>
+            <OutlineButton onClick={() => setPickerOpen(true)}>Add pieces</OutlineButton>
+          </div>
+        }
       />
 
       {piecesQuery.isError ? (
@@ -770,11 +880,15 @@ export default function FolioDetail() {
             <span style={{ opacity: 0.5 }}>·</span>
             <span>{pieceCountLabel(total)}</span>
             <span style={{ flex: 1 }} />
-            <span style={{ color: "var(--faint)" }}>Click to open · remove pieces from the corner</span>
+            <span style={{ color: "var(--faint)" }}>{selectionMode ? `${selectedIds.size.toLocaleString()} selected` : "Click to open · remove pieces from the corner"}</span>
           </div>
           <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(166px, 1fr))", gap: 13 }}>
             {pieces.map((piece) => (
-              <PieceTile key={piece.id} piece={piece} folioId={folioId} />
+              selectionMode ? (
+                <SelectPieceTile key={piece.id} piece={piece} selected={selectedIds.has(piece.id)} onToggle={() => toggleSelected(piece.id)} />
+              ) : (
+                <PieceTile key={piece.id} piece={piece} folioId={folioId} />
+              )
             ))}
           </section>
           {piecesQuery.hasNextPage ? (
@@ -794,6 +908,7 @@ export default function FolioDetail() {
       )}
 
       {pickerOpen ? <AddPiecesPicker folioId={folioId} folioName={folio?.name} existingIds={existingIds} onClose={() => setPickerOpen(false)} /> : null}
+      {selectionMode ? <BulkEditBar selectedIds={Array.from(selectedIds)} onClear={clearSelection} /> : null}
     </div>
   );
 }

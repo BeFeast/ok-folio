@@ -439,6 +439,57 @@ export async function fetchGalleryCatalog(
   return response.json();
 }
 
+export interface PieceMetadataPatch {
+  title?: string;
+  artist?: string;
+  date?: string | null;
+  keywords?: string[];
+}
+
+export interface BulkMetadataEdit {
+  ids: number[];
+  set_artist?: string;
+  set_date?: string;
+  add_keywords?: string[];
+  remove_keywords?: string[];
+}
+
+export interface BulkMetadataEditResponse {
+  updated: number;
+  skipped: number;
+  photos: Photo[];
+}
+
+export async function updatePieceMetadata(id: number, input: PieceMetadataPatch): Promise<Photo> {
+  const response = await fetch(`${API_BASE}/photos/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || "Failed to update piece metadata");
+  }
+  const photo = await response.json();
+  await clearOfflineCaches();
+  return photo;
+}
+
+export async function bulkEditCatalog(input: BulkMetadataEdit): Promise<BulkMetadataEditResponse> {
+  const response = await fetch(`${API_BASE}/catalog/bulk-edit`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || "Failed to update selected pieces");
+  }
+  const result = await response.json();
+  await clearOfflineCaches();
+  return result;
+}
+
 export async function fetchInbox(
   status: InboxItem["status"] | "" = "",
   limit: number = 50,
