@@ -287,6 +287,36 @@ func TestDiscoverPageReturnsTypedRateLimitError(t *testing.T) {
 	}
 }
 
+func TestDiscoverPagePreservesRateLimitWhenContextExpiresDuringBackoff(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer server.Close()
+
+	connector := New(Config{
+		BaseURL: server.URL + "/gallery/category/1/",
+		Retry:   retry.Config{MaxAttempts: 1},
+	}, server.Client(), zerolog.New(os.Stdout))
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
+	defer cancel()
+	_, err := connector.DiscoverPage(ctx, provider.PageRequest{Page: 1})
+	if err == nil {
+		t.Fatal("expected rate-limit error, got nil")
+	}
+
+	var providerErr *provider.ProviderError
+	if !errors.As(err, &providerErr) {
+		t.Fatalf("expected ProviderError, got %T: %v", err, err)
+	}
+	if providerErr.Kind != provider.ErrorKindRateLimit {
+		t.Fatalf("expected rate-limit kind, got %+v", providerErr)
+	}
+	if providerErr.RetryAfter != defaultRateLimitDelay {
+		t.Fatalf("expected default retry-after %v, got %v", defaultRateLimitDelay, providerErr.RetryAfter)
+	}
+}
+
 func newTestConnector(baseURL string) *Connector {
 	return New(Config{
 		BaseURL: baseURL,

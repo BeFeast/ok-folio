@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -26,6 +27,8 @@ const (
 	connectorSourcePreviewDefaultLimit = 6
 	connectorSourcePreviewMaxLimit     = 6
 )
+
+var connectorSourcePreviewAllowPrivateHosts bool
 
 type connectorSourcesResponse struct {
 	Sources []database.ConnectorSource `json:"sources"`
@@ -90,6 +93,17 @@ func (s *Server) handlePreviewConnectorSource(w http.ResponseWriter, r *http.Req
 		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if err := validatePreviewURL(cfg.ListURL); err != nil {
+		s.writeProviderError(w, err)
+		return
+	}
+	cursor := strings.TrimSpace(input.Cursor)
+	if cursor != "" {
+		if err := validatePreviewURL(cursor); err != nil {
+			s.writeProviderError(w, err)
+			return
+		}
+	}
 
 	limit := input.Limit
 	if limit <= 0 {
@@ -106,14 +120,16 @@ func (s *Server) handlePreviewConnectorSource(w http.ResponseWriter, r *http.Req
 	ctx, cancel := context.WithTimeout(r.Context(), connectorSourcePreviewTimeout)
 	defer cancel()
 
-	client := &http.Client{Timeout: connectorSourcePreviewTimeout}
+	client := newPreviewHTTPClient(connectorSourcePreviewTimeout)
 	cfg.Retry = webgallery.SourceRetryConfig{}
 	connector := webgallery.New(webgallery.Config{
-		Gallery: cfg,
-		Retry:   retry.Config{MaxAttempts: 1},
+		UserAgent:        previewUserAgent(s, cfg),
+		RateLimitBackoff: previewRateLimitBackoff(s, cfg),
+		Gallery:          cfg,
+		Retry:            retry.Config{MaxAttempts: 1},
 	}, client, s.logger)
 
-	result, err := connector.DiscoverPage(ctx, provider.PageRequest{Page: input.Page, Cursor: strings.TrimSpace(input.Cursor)})
+	result, err := connector.DiscoverPage(ctx, provider.PageRequest{Page: input.Page, Cursor: cursor})
 	if err != nil {
 		s.writeProviderError(w, err)
 		return
@@ -341,6 +357,110 @@ func previewWebGalleryConfig(input connectorSourcePreviewRequest) (webgallery.We
 		return webgallery.WebGalleryConfig{}, err
 	}
 	return webgallery.ParseConfig(data)
+}
+
+func previewUserAgent(s *Server, cfg webgallery.WebGalleryConfig) string {
+	if strings.TrimSpace(cfg.UserAgent) != "" || s == nil || s.cfg == nil {
+		return ""
+	}
+	return s.cfg.Download.UserAgent
+}
+
+func previewRateLimitBackoff(s *Server, cfg webgallery.WebGalleryConfig) time.Duration {
+	if strings.TrimSpace(cfg.RateLimit.Backoff) != "" || s == nil || s.cfg == nil {
+		return 0
+	}
+	return s.cfg.Download.RateLimitBackoff
+}
+
+func newPreviewHTTPClient(timeout time.Duration) *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	baseDialContext := transport.DialContext
+	if baseDialContext == nil {
+		baseDialContext = (&net.Dialer{}).DialContext
+	}
+	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		host, _, err := net.SplitHostPort(address)
+		if err != nil {
+			host = address
+		}
+		if err := validatePreviewHost(ctx, host); err != nil {
+			return nil, err
+		}
+		return baseDialContext(ctx, network, address)
+	}
+	return &http.Client{Timeout: timeout, Transport: transport}
+}
+
+func validatePreviewURL(raw string) error {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return &provider.ProviderError{
+			ProviderID: webgallery.ProviderID,
+			Kind:       provider.ErrorKindParse,
+			Err:        fmt.Errorf("preview URL must be an absolute URL"),
+		}
+	}
+	switch parsed.Scheme {
+	case "http", "https":
+	default:
+		return &provider.ProviderError{
+			ProviderID: webgallery.ProviderID,
+			Kind:       provider.ErrorKindPermission,
+			Err:        fmt.Errorf("preview URL scheme %q is not allowed", parsed.Scheme),
+		}
+	}
+	if err := validatePreviewHost(context.Background(), parsed.Hostname()); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validatePreviewHost(ctx context.Context, host string) error {
+	if connectorSourcePreviewAllowPrivateHosts {
+		return nil
+	}
+	if strings.TrimSpace(host) == "" {
+		return &provider.ProviderError{
+			ProviderID: webgallery.ProviderID,
+			Kind:       provider.ErrorKindParse,
+			Err:        fmt.Errorf("preview URL host is required"),
+		}
+	}
+	ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return &provider.ProviderError{
+			ProviderID: webgallery.ProviderID,
+			Kind:       provider.ErrorKindTemporary,
+			Err:        fmt.Errorf("preview URL host could not be resolved"),
+		}
+	}
+	if len(ips) == 0 {
+		return &provider.ProviderError{
+			ProviderID: webgallery.ProviderID,
+			Kind:       provider.ErrorKindNotFound,
+			Err:        fmt.Errorf("preview URL host has no addresses"),
+		}
+	}
+	for _, resolved := range ips {
+		if isBlockedPreviewIP(resolved.IP) {
+			return &provider.ProviderError{
+				ProviderID: webgallery.ProviderID,
+				Kind:       provider.ErrorKindPermission,
+				Err:        fmt.Errorf("preview URL host is not allowed"),
+			}
+		}
+	}
+	return nil
+}
+
+func isBlockedPreviewIP(ip net.IP) bool {
+	return ip.IsLoopback() ||
+		ip.IsPrivate() ||
+		ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() ||
+		ip.IsUnspecified() ||
+		ip.IsMulticast()
 }
 
 func previewSample(item provider.DiscoveredMedia) connectorSourcePreviewSample {

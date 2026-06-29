@@ -3,6 +3,7 @@ package webgallery
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -337,6 +338,10 @@ func (c *Connector) get(ctx context.Context, target string) (*http.Response, err
 	}
 	resp, err := c.client.Do(req)
 	if err != nil {
+		var providerErr *provider.ProviderError
+		if errors.As(err, &providerErr) {
+			return nil, providerErr
+		}
 		return nil, &provider.ProviderError{ProviderID: ProviderID, Kind: provider.ErrorKindTemporary, Err: err}
 	}
 	return resp, nil
@@ -353,8 +358,9 @@ func (c *Connector) checkStatus(ctx context.Context, resp *http.Response) error 
 		case <-ctx.Done():
 			return &provider.ProviderError{
 				ProviderID: ProviderID,
-				Kind:       provider.ErrorKindTemporary,
-				Err:        ctx.Err(),
+				Kind:       provider.ErrorKindRateLimit,
+				RetryAfter: retryAfter,
+				Err:        fmt.Errorf("rate limited, retry after %v", retryAfter),
 			}
 		case <-time.After(retryAfter):
 		}
