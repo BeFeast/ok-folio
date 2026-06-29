@@ -170,7 +170,8 @@ function formConfig(form: WebGalleryForm): WebGalleryConfig {
   const pagination: WebGalleryPaginationConfig = { strategy: form.paginationStrategy };
   if (form.paginationStrategy === "page_param") {
     pagination.param_name = form.pageParam.trim() || "pager";
-    pagination.start_index = Number.parseInt(form.startIndex, 10) || 1;
+    const startIndex = Number.parseInt(form.startIndex, 10);
+    pagination.start_index = Number.isNaN(startIndex) ? 1 : startIndex;
   }
   if (form.paginationStrategy === "next_link") {
     pagination.next_link_selector = form.nextLinkSelector.trim();
@@ -647,7 +648,7 @@ function WebGalleryEditor({
         await updateConnectorSource(mode.source.id, {
           type: "webgallery",
           label: form.label,
-          config,
+          config: { ...mode.source.config, ...config },
           enabled: form.enabled,
         });
       } else {
@@ -830,6 +831,8 @@ export default function Streams() {
       .then(reload)
       .catch(() => {
         if (previous) queryClient.setQueryData(["connector-sources"], previous);
+        reload();
+        window.alert("Some stream sources could not be updated. The source list was refreshed.");
       })
       .finally(() => {
         setBusyConnectors((current) => {
@@ -854,6 +857,10 @@ export default function Streams() {
       enabled: !source.enabled,
     })
       .then(reload)
+      .catch(() => {
+        reload();
+        window.alert("The stream source could not be updated.");
+      })
       .finally(() => {
         setBusyConnectors((current) => {
           const next = { ...current };
@@ -868,6 +875,10 @@ export default function Streams() {
     setBusyConnectors((current) => ({ ...current, [source.type]: true }));
     deleteConnectorSource(source.id)
       .then(reload)
+      .catch(() => {
+        reload();
+        window.alert("The stream source could not be deleted.");
+      })
       .finally(() => {
         setBusyConnectors((current) => {
           const next = { ...current };
