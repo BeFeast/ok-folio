@@ -116,7 +116,7 @@ func (s *Scheduler) runConnectorExtraction(job *connectorJob) {
 
 	ctx := context.Background()
 	opts := ingest.RunOptions{}
-	if providerID == webgallery.ProviderID && len(s.cfg.Scheduler.Pages) > 0 {
+	if strings.HasPrefix(providerID, webgallery.ProviderID) && len(s.cfg.Scheduler.Pages) > 0 {
 		opts.AllowedPages = s.cfg.Scheduler.Pages
 	}
 	s.extractionMu.Lock()

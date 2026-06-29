@@ -206,6 +206,7 @@ type ConnectorSource struct {
 	Type       string     `gorm:"column:type;type:text;not null;index;uniqueIndex:idx_connector_sources_type_chat_id" json:"type"`
 	ChatID     string     `gorm:"column:chat_id;type:text;not null;uniqueIndex:idx_connector_sources_type_chat_id" json:"chat_id"`
 	Label      string     `gorm:"column:label;type:text" json:"label"`
+	Config     JSONConfig `gorm:"column:config;type:jsonb" json:"config,omitempty"`
 	Enabled    bool       `gorm:"column:enabled;not null;index" json:"enabled"`
 	LastError  string     `gorm:"column:last_error;type:text" json:"last_error,omitempty"`
 	LastSeenAt *time.Time `gorm:"column:last_seen_at" json:"last_seen_at,omitempty"`
@@ -217,7 +218,55 @@ type ConnectorSource struct {
 type ConnectorSourceUpdates struct {
 	ChatID  *string
 	Label   *string
+	Config  *JSONConfig
 	Enabled *bool
+}
+
+type JSONConfig []byte
+
+func (c JSONConfig) Value() (driver.Value, error) {
+	if len(c) == 0 {
+		return nil, nil
+	}
+	if !json.Valid(c) {
+		return nil, fmt.Errorf("invalid JSON config")
+	}
+	return string(c), nil
+}
+
+func (c *JSONConfig) Scan(value any) error {
+	if value == nil {
+		*c = nil
+		return nil
+	}
+	switch v := value.(type) {
+	case []byte:
+		*c = append((*c)[:0], v...)
+	case string:
+		*c = append((*c)[:0], v...)
+	default:
+		return fmt.Errorf("unsupported JSON config type %T", value)
+	}
+	return nil
+}
+
+func (c JSONConfig) MarshalJSON() ([]byte, error) {
+	if len(c) == 0 {
+		return []byte("null"), nil
+	}
+	return c, nil
+}
+
+func (c *JSONConfig) UnmarshalJSON(data []byte) error {
+	if string(data) == "null" || len(data) == 0 {
+		*c = nil
+		return nil
+	}
+	if !json.Valid(data) {
+		return fmt.Errorf("invalid JSON config")
+	}
+	*c = append((*c)[:0], data...)
+	return nil
 }
 
 func (ConnectorSource) TableName() string {
@@ -403,6 +452,7 @@ type GalleryFavoriteStats struct {
 
 // ConnectorSourceStats summarizes media state for a connector source.
 type ConnectorSourceStats struct {
+	Provider     string     `gorm:"column:provider" json:"provider"`
 	SourcePage   string     `gorm:"column:source_page" json:"source_page"`
 	URL          string     `gorm:"column:url" json:"url"`
 	Status       string     `gorm:"column:status" json:"status"`
@@ -413,6 +463,7 @@ type ConnectorSourceStats struct {
 // ConnectorError captures recent persisted connector failures.
 type ConnectorError struct {
 	ID           uint64    `gorm:"column:id" json:"id"`
+	Provider     string    `gorm:"column:provider" json:"provider"`
 	SourcePage   string    `gorm:"column:source_page" json:"source_page"`
 	URL          string    `gorm:"column:url" json:"url"`
 	Title        string    `gorm:"column:title" json:"title"`
@@ -1090,6 +1141,9 @@ func normalizeConnectorSource(source ConnectorSource) (ConnectorSource, error) {
 	if source.ChatID == "" {
 		return ConnectorSource{}, fmt.Errorf("connector source chat ID is required")
 	}
+	if len(source.Config) > 0 && !json.Valid(source.Config) {
+		return ConnectorSource{}, fmt.Errorf("connector source config must be valid JSON")
+	}
 	return source, nil
 }
 
@@ -1164,6 +1218,9 @@ func (db *DB) UpdateConnectorSource(id uint64, updates ConnectorSourceUpdates) (
 	}
 	if updates.ChatID != nil && strings.TrimSpace(*updates.ChatID) != "" {
 		attrs["chat_id"] = strings.TrimSpace(*updates.ChatID)
+	}
+	if updates.Config != nil {
+		attrs["config"] = *updates.Config
 	}
 
 	if len(attrs) > 0 {
@@ -1756,9 +1813,9 @@ func (db *DB) GetGallerySourceStatsForFilters(filters GalleryCatalogFilters) ([]
 // *time.Time, replacing the old CAST(... AS CHAR) + multi-layout parsing.
 func (db *DB) GetConnectorSourceStats() ([]ConnectorSourceStats, error) {
 	query := db.DB.Model(&DownloadedPhoto{}).
-		Select("source_page, url, status, COUNT(*) as count, MAX(downloaded_at) as last_activity").
-		Group("source_page, url, status").
-		Order("source_page ASC, url ASC, status ASC")
+		Select("provider, source_page, url, status, COUNT(*) as count, MAX(downloaded_at) as last_activity").
+		Group("provider, source_page, url, status").
+		Order("provider ASC, source_page ASC, url ASC, status ASC")
 
 	if db.Dialector.Name() != "postgres" {
 		// The sqlite unit-test driver returns the aggregated time as a string
@@ -1777,6 +1834,7 @@ func (db *DB) GetConnectorSourceStats() ([]ConnectorSourceStats, error) {
 
 func scanConnectorSourceStatsSQLite(query *gorm.DB) ([]ConnectorSourceStats, error) {
 	var rows []struct {
+		Provider     string  `gorm:"column:provider"`
 		SourcePage   string  `gorm:"column:source_page"`
 		URL          string  `gorm:"column:url"`
 		Status       string  `gorm:"column:status"`
@@ -1790,6 +1848,7 @@ func scanConnectorSourceStatsSQLite(query *gorm.DB) ([]ConnectorSourceStats, err
 	sources := make([]ConnectorSourceStats, 0, len(rows))
 	for _, row := range rows {
 		stat := ConnectorSourceStats{
+			Provider:   row.Provider,
 			SourcePage: row.SourcePage,
 			URL:        row.URL,
 			Status:     row.Status,
@@ -1812,7 +1871,7 @@ func (db *DB) GetRecentConnectorErrors(limit int) ([]ConnectorError, error) {
 	var errors []ConnectorError
 
 	err := db.DB.Model(&DownloadedPhoto{}).
-		Select("id, source_page, url, title, error_message, downloaded_at as occurred_at").
+		Select("id, provider, source_page, url, title, error_message, downloaded_at as occurred_at").
 		Where("status = ?", "failed").
 		Order("downloaded_at DESC, id DESC").
 		Limit(limit).
