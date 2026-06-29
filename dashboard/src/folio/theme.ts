@@ -5,6 +5,7 @@
 
 export type ThemeName = "light" | "dark" | "auto";
 export type ResolvedThemeName = "light" | "dark";
+export type InfoPanelMode = "pinned" | "remember" | "hidden";
 
 export const SANS =
   "'Hanken Grotesk', system-ui, -apple-system, 'Segoe UI', sans-serif";
@@ -54,6 +55,8 @@ export const TOKENS: Record<ResolvedThemeName, Record<string, string>> = {
 };
 
 const STORAGE_KEY = "okfolio-theme";
+const INFO_PANEL_MODE_STORAGE_KEY = "okfolio-info-panel-mode";
+const INFO_PANEL_OPEN_STORAGE_KEY = "okfolio-info-panel-open";
 
 export function resolveTheme(name: ThemeName): ResolvedThemeName {
   if (name !== "auto") return name;
@@ -87,6 +90,41 @@ export function readStoredTheme(): ThemeName {
 export function storeTheme(name: ThemeName): void {
   try {
     localStorage.setItem(STORAGE_KEY, name);
+  } catch {
+    /* ignore */
+  }
+}
+
+export function readStoredInfoPanelMode(): InfoPanelMode {
+  try {
+    const s = localStorage.getItem(INFO_PANEL_MODE_STORAGE_KEY);
+    if (s === "pinned" || s === "remember" || s === "hidden") return s;
+  } catch {
+    /* ignore */
+  }
+  return "remember";
+}
+
+export function storeInfoPanelMode(mode: InfoPanelMode): void {
+  try {
+    localStorage.setItem(INFO_PANEL_MODE_STORAGE_KEY, mode);
+  } catch {
+    /* ignore */
+  }
+}
+
+export function readStoredInfoPanelOpen(): boolean {
+  try {
+    return localStorage.getItem(INFO_PANEL_OPEN_STORAGE_KEY) === "true";
+  } catch {
+    /* ignore */
+  }
+  return false;
+}
+
+export function storeInfoPanelOpen(open: boolean): void {
+  try {
+    localStorage.setItem(INFO_PANEL_OPEN_STORAGE_KEY, open ? "true" : "false");
   } catch {
     /* ignore */
   }

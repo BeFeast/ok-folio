@@ -42,8 +42,13 @@ import {
 import type { FolioPiecesResponse, GalleryCatalogResponse, Photo } from "../types";
 import {
   applyTheme,
+  readStoredInfoPanelMode,
+  readStoredInfoPanelOpen,
   readStoredTheme,
+  storeInfoPanelMode,
+  storeInfoPanelOpen,
   storeTheme,
+  type InfoPanelMode,
   type ThemeName,
 } from "./theme";
 
@@ -226,6 +231,10 @@ interface FolioContextValue {
   theme: ThemeName;
   setTheme: (t: ThemeName) => void;
   toggleTheme: () => void;
+  infoPanelMode: InfoPanelMode;
+  setInfoPanelMode: (mode: InfoPanelMode) => void;
+  infoPanelRememberedOpen: boolean;
+  setInfoPanelRememberedOpen: (open: boolean) => void;
 
   query: string;
   setQuery: (q: string) => void;
@@ -300,6 +309,8 @@ export function FolioProvider({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [theme, setThemeState] = useState<ThemeName>(() => readStoredTheme());
+  const [infoPanelMode, setInfoPanelModeState] = useState<InfoPanelMode>(() => readStoredInfoPanelMode());
+  const [infoPanelRememberedOpen, setInfoPanelRememberedOpenState] = useState<boolean>(() => readStoredInfoPanelOpen());
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [favoriteOnly, setFavoriteOnly] = useState(false);
@@ -340,6 +351,14 @@ export function FolioProvider({ children }: { children: ReactNode }) {
       storeTheme(next);
       return next;
     });
+  }, []);
+  const setInfoPanelMode = useCallback((next: InfoPanelMode) => {
+    storeInfoPanelMode(next);
+    setInfoPanelModeState(next);
+  }, []);
+  const setInfoPanelRememberedOpen = useCallback((open: boolean) => {
+    storeInfoPanelOpen(open);
+    setInfoPanelRememberedOpenState(open);
   }, []);
 
   // Debounce the search query before it hits the catalog endpoint.
@@ -963,6 +982,10 @@ export function FolioProvider({ children }: { children: ReactNode }) {
     theme,
     setTheme,
     toggleTheme,
+    infoPanelMode,
+    setInfoPanelMode,
+    infoPanelRememberedOpen,
+    setInfoPanelRememberedOpen,
     query,
     setQuery,
     favoriteOnly,

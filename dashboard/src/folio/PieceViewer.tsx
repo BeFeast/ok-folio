@@ -173,7 +173,21 @@ function editedMarker(fields: string[], field: string) {
 }
 
 export default function PieceViewer() {
-  const { selected, closePiece, stepPiece, isFav, toggleFav, selIndex, selCount, filterByArtist, addPieceToFolioAction, editPieceMetadata } = useFolio();
+  const {
+    selected,
+    closePiece,
+    stepPiece,
+    isFav,
+    toggleFav,
+    selIndex,
+    selCount,
+    filterByArtist,
+    addPieceToFolioAction,
+    editPieceMetadata,
+    infoPanelMode,
+    infoPanelRememberedOpen,
+    setInfoPanelRememberedOpen,
+  } = useFolio();
   const { isMobile } = useViewport();
   const reducedMotion = useReducedMotion();
 
@@ -188,10 +202,8 @@ export default function PieceViewer() {
     return () => window.removeEventListener("keydown", onKey);
   }, [selected, closePiece, stepPiece]);
 
-  // The info panel is hidden by default so the artwork shows unobstructed; the
-  // edge handle (top-right, beside Close) toggles it open/closed on click, and
-  // it resets to hidden on each new piece.
-  const [panelOpen, setPanelOpen] = useState(false);
+  const [transientPanelOpen, setTransientPanelOpen] = useState(false);
+  const [mobilePinnedOpen, setMobilePinnedOpen] = useState(true);
   const [chromeVisible, setChromeVisible] = useState(true);
   const [drag, setDrag] = useState({ x: 0, y: 0, active: false });
   const [folioPickerOpen, setFolioPickerOpen] = useState(false);
@@ -205,7 +217,25 @@ export default function PieceViewer() {
   const chromeTimerRef = useRef<number | null>(null);
   const folios = useQuery({ queryKey: ["folios"], queryFn: fetchFolios, enabled: !!selected && isMobile });
 
-  const togglePanel = useCallback(() => setPanelOpen((open) => !open), []);
+  const pinnedDesktop = infoPanelMode === "pinned" && !isMobile;
+  const panelOpen = pinnedDesktop
+    ? true
+    : infoPanelMode === "remember"
+      ? infoPanelRememberedOpen
+      : infoPanelMode === "pinned"
+        ? mobilePinnedOpen
+        : transientPanelOpen;
+  const setPanelOpen = useCallback((open: boolean) => {
+    if (pinnedDesktop) return;
+    if (infoPanelMode === "remember") {
+      setInfoPanelRememberedOpen(open);
+    } else if (infoPanelMode === "pinned") {
+      setMobilePinnedOpen(open);
+    } else {
+      setTransientPanelOpen(open);
+    }
+  }, [infoPanelMode, pinnedDesktop, setInfoPanelRememberedOpen]);
+  const togglePanel = useCallback(() => setPanelOpen(!panelOpen), [panelOpen, setPanelOpen]);
   const showChrome = useCallback(() => {
     setChromeVisible(true);
     if (chromeTimerRef.current != null) window.clearTimeout(chromeTimerRef.current);
@@ -216,14 +246,19 @@ export default function PieceViewer() {
   // identity churns on every context re-render.
   const pieceId = selected?.id ?? null;
   useEffect(() => {
-    setPanelOpen(false);
+    if (infoPanelMode === "hidden") setTransientPanelOpen(false);
     setFolioPickerOpen(false);
     setEditing(false);
     setSavingEdit(false);
     setKeywordDraft("");
     setChromeVisible(true);
     setDrag({ x: 0, y: 0, active: false });
-  }, [pieceId]);
+  }, [infoPanelMode, pieceId]);
+
+  useEffect(() => {
+    if (infoPanelMode === "pinned" && isMobile) setMobilePinnedOpen(true);
+    if (infoPanelMode === "hidden") setTransientPanelOpen(false);
+  }, [infoPanelMode, isMobile]);
 
   useEffect(() => {
     if (!selected || editing) return;
@@ -343,7 +378,7 @@ export default function PieceViewer() {
       setPanelOpen(true);
       showChrome();
     }
-  }, [closePiece, showChrome, stepPiece]);
+  }, [closePiece, setPanelOpen, showChrome, stepPiece]);
 
   const onArtworkClick = useCallback((e: React.MouseEvent) => {
     stop(e);
@@ -370,7 +405,7 @@ export default function PieceViewer() {
     touchStartRef.current = null;
     if (!start || start.target !== "sheet" || !touch) return;
     if (touch.clientY - start.y > 58) setPanelOpen(false);
-  }, []);
+  }, [setPanelOpen]);
 
   if (!selected) return null;
   const p = selected;
@@ -564,15 +599,15 @@ export default function PieceViewer() {
             left: 16,
             right: 16,
             top: "calc(env(safe-area-inset-top) + 12px)",
-            zIndex: 8,
+            zIndex: 12,
             display: "grid",
-            gridTemplateColumns: "44px minmax(0, 1fr) 44px",
+            gridTemplateColumns: "44px minmax(0, 1fr) auto 44px",
             alignItems: "center",
             gap: 12,
-            opacity: chromeVisible && !panelOpen ? 1 : 0,
-            transform: chromeVisible && !panelOpen ? "translateY(0)" : "translateY(-8px)",
+            opacity: chromeVisible ? 1 : 0,
+            transform: chromeVisible ? "translateY(0)" : "translateY(-8px)",
             transition: reducedMotion ? "opacity .16s ease" : "opacity .22s ease, transform .22s ease",
-            pointerEvents: chromeVisible && !panelOpen ? "auto" : "none",
+            pointerEvents: chromeVisible ? "auto" : "none",
           }}
         >
           <button
@@ -606,6 +641,32 @@ export default function PieceViewer() {
           >
             {selIndex >= 0 ? `${selIndex + 1} / ${selCount}` : ""}
           </div>
+          <button
+            type="button"
+            onClick={(e) => {
+              stop(e);
+              togglePanel();
+              showChrome();
+            }}
+            aria-label={panelOpen ? "Hide info" : "Show info"}
+            aria-pressed={panelOpen}
+            style={{
+              ...MOBILE_CHROME,
+              minWidth: 76,
+              padding: "0 13px",
+              gap: 6,
+              cursor: "pointer",
+              background: panelOpen ? "#C75D49" : MOBILE_CHROME.background,
+              color: panelOpen ? "#16130E" : "#FBF6EE",
+              borderColor: panelOpen ? "rgba(199,93,73,.78)" : "rgba(251,246,238,0.12)",
+              fontFamily: "var(--sans)",
+              fontSize: 13,
+              fontWeight: 800,
+            }}
+          >
+            <span aria-hidden="true">ⓘ</span>
+            Info
+          </button>
           <button
             onClick={(e) => {
               stop(e);
@@ -1003,29 +1064,36 @@ export default function PieceViewer() {
           stop(e);
           togglePanel();
         }}
-        aria-label={panelOpen ? "Hide details" : "Show details"}
-        title={panelOpen ? "Hide details" : "Show details"}
+        aria-label={panelOpen ? "Hide info" : "Show info"}
+        aria-pressed={panelOpen}
+        title={pinnedDesktop ? "Info panel pinned in Settings" : panelOpen ? "Hide info" : "Show info"}
         style={{
           position: "absolute",
           top: 22,
           right: 76,
           zIndex: 8,
           appearance: "none",
-          cursor: "pointer",
-          width: 42,
+          cursor: pinnedDesktop ? "default" : "pointer",
+          minWidth: 88,
           height: 42,
+          padding: "0 16px",
           borderRadius: 99,
-          border: 0,
-          background: "rgba(251,246,238,0.12)",
+          border: panelOpen ? "1px solid rgba(199,93,73,0.78)" : "1px solid rgba(251,246,238,0.12)",
+          background: panelOpen ? "#C75D49" : "rgba(251,246,238,0.12)",
           backdropFilter: "blur(6px)",
           WebkitBackdropFilter: "blur(6px)",
-          color: "#FBF6EE",
+          color: panelOpen ? "#16130E" : "#FBF6EE",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
+          gap: 7,
+          fontFamily: "var(--sans)",
+          fontSize: 13,
+          fontWeight: 800,
         }}
       >
-        <ChevronIcon dir={panelOpen ? "right" : "left"} />
+        <span aria-hidden="true">ⓘ</span>
+        Info
       </button>
 
       <div

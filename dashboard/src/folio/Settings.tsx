@@ -95,7 +95,7 @@ function Row({ title, desc, children }: { title: string; desc: string; children:
 }
 
 export default function Settings() {
-  const { theme, setTheme, mode, setMode, totalPhotos, totalSizeBytes } = useFolio();
+  const { theme, setTheme, mode, setMode, infoPanelMode, setInfoPanelMode, totalPhotos, totalSizeBytes } = useFolio();
   const { isMobile } = useViewport();
 
   const [reduceMotion, setReduceMotion] = useLocalPref<boolean>("okfolio-reduce-motion", false);
@@ -304,6 +304,14 @@ export default function Settings() {
                 <option value="wall">Wall</option>
               </select>,
             )}
+            <div style={{ padding: "14px 0 0" }}>
+              <div style={{ fontFamily: "var(--sans)", fontSize: 15, color: "var(--ink)", marginBottom: 8 }}>Info panel</div>
+              <div style={{ display: "flex", gap: 3, padding: 4, borderRadius: 13, background: "var(--wall)" }}>
+                <button type="button" onClick={() => setInfoPanelMode("pinned")} style={mobileSegment(infoPanelMode === "pinned")}>Pinned</button>
+                <button type="button" onClick={() => setInfoPanelMode("remember")} style={mobileSegment(infoPanelMode === "remember")}>Remember</button>
+                <button type="button" onClick={() => setInfoPanelMode("hidden")} style={mobileSegment(infoPanelMode === "hidden")}>Hidden</button>
+              </div>
+            </div>
           </div>
 
           <h2 style={{ ...SECTION, margin: "28px 0 8px", letterSpacing: "0.06em" }}>Storage & Sync</h2>
@@ -333,6 +341,13 @@ export default function Settings() {
           <div style={{ display: "flex", alignItems: "center", gap: 3, padding: 4, border: "1px solid var(--line)", borderRadius: 99, background: "var(--surface)", flex: "none" }}>
             <button onClick={() => setTheme("light")} style={seg(theme !== "dark")}>Light</button>
             <button onClick={() => setTheme("dark")} style={seg(theme === "dark")}>Dark</button>
+          </div>
+        </Row>
+        <Row title="Info panel" desc="Choose how the viewer keeps details visible while browsing pieces.">
+          <div style={{ display: "flex", alignItems: "center", gap: 3, padding: 4, border: "1px solid var(--line)", borderRadius: 99, background: "var(--surface)", flex: "none" }}>
+            <button type="button" onClick={() => setInfoPanelMode("pinned")} style={seg(infoPanelMode === "pinned")}>Pinned</button>
+            <button type="button" onClick={() => setInfoPanelMode("remember")} style={seg(infoPanelMode === "remember")}>Remember</button>
+            <button type="button" onClick={() => setInfoPanelMode("hidden")} style={seg(infoPanelMode === "hidden")}>Hidden</button>
           </div>
         </Row>
         <Row title="Reduce motion" desc="Calmer transitions throughout.">
