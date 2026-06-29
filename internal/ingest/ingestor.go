@@ -214,7 +214,7 @@ func (i *Ingestor) ingestPages(ctx context.Context, connector provider.Connector
 				result.PhotosSkipped++
 				continue
 			}
-			if err := i.applySourceRoute(providerID, photo.ID); err != nil {
+			if err := i.applySourceRoute(providerID, *resolved, photo.ID); err != nil {
 				return result, err
 			}
 			if err := i.cache.MarkDedupeHash(ctx, photo.ContentHash, dedupeKey); err != nil {
@@ -265,8 +265,8 @@ func (i *Ingestor) ingestPages(ctx context.Context, connector provider.Connector
 	}
 }
 
-func (i *Ingestor) applySourceRoute(providerID string, photoID uint64) error {
-	source, err := i.db.ConnectorSourceForProvider(providerID)
+func (i *Ingestor) applySourceRoute(providerID string, item provider.DiscoveredMedia, photoID uint64) error {
+	source, err := i.connectorSourceForRoute(providerID, item)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil
 	}
@@ -303,6 +303,23 @@ func (i *Ingestor) applySourceRoute(providerID string, photoID uint64) error {
 		return err
 	}
 	return i.db.AddPieceToFolio(*source.TargetFolioID, photoID)
+}
+
+func (i *Ingestor) connectorSourceForRoute(providerID string, item provider.DiscoveredMedia) (*database.ConnectorSource, error) {
+	source, err := i.db.ConnectorSourceForProvider(providerID)
+	if err == nil || !errors.Is(err, gorm.ErrRecordNotFound) {
+		return source, err
+	}
+	if providerID != "telegram" {
+		return nil, err
+	}
+	for _, chatID := range []string{item.Source.ExternalID, item.Source.CollectionID, item.Source.ItemID} {
+		source, lookupErr := i.db.ConnectorSourceForTelegramChat(chatID)
+		if lookupErr == nil || !errors.Is(lookupErr, gorm.ErrRecordNotFound) {
+			return source, lookupErr
+		}
+	}
+	return nil, gorm.ErrRecordNotFound
 }
 
 func (i *Ingestor) recordInboxDuplicate(providerID string, dedupeKey string, item provider.DiscoveredMedia, reason string) error {

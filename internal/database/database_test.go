@@ -1660,6 +1660,87 @@ func TestUpdateConnectorSourceClearsTargetFolio(t *testing.T) {
 	}
 }
 
+func TestDeleteFolioUnhidesPhotosRoutedToTargetFolio(t *testing.T) {
+	db := setupTestDB(t)
+	folio, err := db.CreateFolio(Folio{Name: "Delete target"})
+	if err != nil {
+		t.Fatalf("CreateFolio failed: %v", err)
+	}
+	source, err := db.CreateConnectorSource(ConnectorSource{
+		Type:          "telegram",
+		ChatID:        "-1001234567890",
+		Enabled:       true,
+		TargetFolioID: &folio.ID,
+		ShowInLibrary: false,
+	})
+	if err != nil {
+		t.Fatalf("CreateConnectorSource failed: %v", err)
+	}
+
+	routed := DownloadedPhoto{
+		URL:               "-1001234567890:1",
+		SourcePage:        "https://t.me/c/1234567890/1",
+		Title:             "Routed",
+		FilePath:          filepath.Join(t.TempDir(), "routed.jpg"),
+		FileName:          "routed.jpg",
+		Status:            "downloaded",
+		Provider:          "telegram",
+		HiddenFromGallery: true,
+	}
+	unrelated := DownloadedPhoto{
+		URL:               "other-source:1",
+		SourcePage:        "https://example.com/other",
+		Title:             "Other",
+		FilePath:          filepath.Join(t.TempDir(), "other.jpg"),
+		FileName:          "other.jpg",
+		Status:            "downloaded",
+		Provider:          "telegram",
+		HiddenFromGallery: true,
+	}
+	if err := db.Create(&routed).Error; err != nil {
+		t.Fatalf("create routed photo: %v", err)
+	}
+	if err := db.Create(&unrelated).Error; err != nil {
+		t.Fatalf("create unrelated photo: %v", err)
+	}
+	if err := db.AddPieceToFolio(folio.ID, routed.ID); err != nil {
+		t.Fatalf("AddPieceToFolio failed: %v", err)
+	}
+
+	if err := db.DeleteFolio(folio.ID); err != nil {
+		t.Fatalf("DeleteFolio failed: %v", err)
+	}
+
+	var storedSource ConnectorSource
+	if err := db.Where("id = ?", source.ID).First(&storedSource).Error; err != nil {
+		t.Fatalf("load connector source: %v", err)
+	}
+	if storedSource.TargetFolioID != nil || !storedSource.ShowInLibrary {
+		t.Fatalf("expected deleted target route cleared to library, got %#v", storedSource)
+	}
+	var storedRouted DownloadedPhoto
+	if err := db.Where("id = ?", routed.ID).First(&storedRouted).Error; err != nil {
+		t.Fatalf("load routed photo: %v", err)
+	}
+	if storedRouted.HiddenFromGallery {
+		t.Fatalf("expected routed photo unhidden after target folio delete: %#v", storedRouted)
+	}
+	var storedUnrelated DownloadedPhoto
+	if err := db.Where("id = ?", unrelated.ID).First(&storedUnrelated).Error; err != nil {
+		t.Fatalf("load unrelated photo: %v", err)
+	}
+	if !storedUnrelated.HiddenFromGallery {
+		t.Fatalf("expected unrelated hidden photo to remain hidden: %#v", storedUnrelated)
+	}
+	var membershipCount int64
+	if err := db.Model(&FolioPiece{}).Where("folio_id = ?", folio.ID).Count(&membershipCount).Error; err != nil {
+		t.Fatalf("count folio pieces: %v", err)
+	}
+	if membershipCount != 0 {
+		t.Fatalf("expected deleted folio memberships removed, got %d", membershipCount)
+	}
+}
+
 func TestGetGalleryCatalogOrdersByBestAvailableTimestamp(t *testing.T) {
 	db := setupTestDB(t)
 	downloaded2026 := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)

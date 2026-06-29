@@ -1321,6 +1321,18 @@ func (db *DB) ConnectorSourceForProvider(providerID string) (*ConnectorSource, e
 	return &source, nil
 }
 
+func (db *DB) ConnectorSourceForTelegramChat(chatID string) (*ConnectorSource, error) {
+	chatID = strings.TrimSpace(chatID)
+	if chatID == "" {
+		return nil, gorm.ErrRecordNotFound
+	}
+	var source ConnectorSource
+	if err := db.Where("type = ? AND chat_id = ?", "telegram", chatID).First(&source).Error; err != nil {
+		return nil, err
+	}
+	return &source, nil
+}
+
 type ConnectorSourceBackfillResult struct {
 	Matched           int64   `json:"matched"`
 	Updated           int64   `json:"updated"`
@@ -1500,6 +1512,18 @@ func (db *DB) DeleteFolio(id uint64) error {
 		return fmt.Errorf("folio ID is required")
 	}
 	return db.Transaction(func(tx *gorm.DB) error {
+		var sources []ConnectorSource
+		if err := tx.Where("target_folio_id = ?", id).Find(&sources).Error; err != nil {
+			return err
+		}
+		for _, source := range sources {
+			if err := connectorSourcePhotoScope(tx.Model(&DownloadedPhoto{}), source).
+				Where(downloadedStatusPredicate).
+				Where("hidden_from_gallery = ?", true).
+				Update("hidden_from_gallery", false).Error; err != nil {
+				return err
+			}
+		}
 		if err := tx.Model(&ConnectorSource{}).
 			Where("target_folio_id = ?", id).
 			Updates(map[string]interface{}{"target_folio_id": gorm.Expr("NULL"), "show_in_library": true}).Error; err != nil {

@@ -166,6 +166,63 @@ func TestRunConnectorAppliesConnectorSourceRoute(t *testing.T) {
 	}
 }
 
+func TestRunConnectorAppliesTelegramConnectorSourceRouteByChat(t *testing.T) {
+	ctx := context.Background()
+	body := []byte("telegram routed fixture image bytes")
+	imageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(body)
+	}))
+	defer imageServer.Close()
+
+	item := fakeItem("telegram-routed", imageServer.URL+"/telegram-routed.jpg")
+	item.Source.ExternalID = "-1001234567890"
+	connector := &fakeConnector{
+		providerID: "telegram",
+		pages: map[string]*provider.PageResult{
+			"": {Items: []provider.DiscoveredMedia{item}},
+		},
+	}
+	db, _, ing := setupIngestorTest(t, connector)
+	folio, err := db.CreateFolio(database.Folio{Name: "Telegram routed stream"})
+	if err != nil {
+		t.Fatalf("CreateFolio failed: %v", err)
+	}
+	_, err = db.CreateConnectorSource(database.ConnectorSource{
+		Type:          "telegram",
+		ChatID:        "-1001234567890",
+		Label:         "Telegram routed",
+		Enabled:       true,
+		TargetFolioID: &folio.ID,
+		ShowInLibrary: false,
+	})
+	if err != nil {
+		t.Fatalf("CreateConnectorSource failed: %v", err)
+	}
+
+	result, err := ing.RunConnector(ctx, connector)
+	if err != nil {
+		t.Fatalf("RunConnector failed: %v", err)
+	}
+	if result.PhotosDownloaded != 1 {
+		t.Fatalf("expected one routed download, got %#v", result)
+	}
+
+	var photo database.DownloadedPhoto
+	if err := db.Where("provider = ?", "telegram").First(&photo).Error; err != nil {
+		t.Fatalf("load routed telegram photo: %v", err)
+	}
+	if !photo.HiddenFromGallery {
+		t.Fatalf("expected telegram routed photo hidden from gallery: %#v", photo)
+	}
+	pieces, total, err := db.ListFolioPieces(folio.ID, 10, 0)
+	if err != nil {
+		t.Fatalf("ListFolioPieces failed: %v", err)
+	}
+	if total != 1 || len(pieces) != 1 || pieces[0].ID != photo.ID {
+		t.Fatalf("expected telegram routed photo in folio, total=%d pieces=%#v", total, pieces)
+	}
+}
+
 func TestRunConnectorContentHashCacheHitRoutesDuplicateToInbox(t *testing.T) {
 	ctx := context.Background()
 	body := []byte("fixture image bytes")
