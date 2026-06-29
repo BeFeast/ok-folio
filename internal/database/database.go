@@ -905,6 +905,9 @@ func downloadAssignments(photo *DownloadedPhoto) map[string]interface{} {
 		provider = DefaultProvider
 	}
 	artist := normalizeArtist(photo.Artist)
+	if photo.HasManualField("artist") {
+		artist = photo.Artist
+	}
 	title := catalogquality.NormalizeTitle(photo.Title, photo.FileName)
 	if photo.HasManualField("title") {
 		title = photo.Title
@@ -974,16 +977,33 @@ func (db *DB) RecordDownloadOrDuplicate(photo *DownloadedPhoto, duplicate *Inbox
 }
 
 func (db *DB) updateNonDownloadedURLHashOwner(photo *DownloadedPhoto) (bool, error) {
-	result := db.Model(&DownloadedPhoto{}).
-		Where("url_hash = ? AND status <> ?", HashURL(photo.URL), "downloaded").
-		Updates(downloadAssignments(photo))
-	if result.Error != nil || result.RowsAffected == 0 {
-		return false, result.Error
-	}
-	if err := db.Where("url_hash = ?", HashURL(photo.URL)).First(photo).Error; err != nil {
-		return false, err
-	}
-	return true, nil
+	updated := false
+	err := db.Transaction(func(tx *gorm.DB) error {
+		var existing DownloadedPhoto
+		err := tx.Where("url_hash = ? AND status <> ?", HashURL(photo.URL), "downloaded").First(&existing).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		applyManualFieldLocks(photo, existing)
+		result := tx.Model(&DownloadedPhoto{}).
+			Where("id = ? AND status <> ?", existing.ID, "downloaded").
+			Updates(downloadAssignments(photo))
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return nil
+		}
+		if err := tx.Where("id = ?", existing.ID).First(photo).Error; err != nil {
+			return err
+		}
+		updated = true
+		return nil
+	})
+	return updated, err
 }
 
 func (db *DB) routeDuplicateToInbox(duplicate *InboxItem, contentHash []byte) (bool, error) {

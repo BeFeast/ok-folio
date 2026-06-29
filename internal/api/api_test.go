@@ -262,6 +262,42 @@ func TestPatchPieceMetadataPersistsManualFields(t *testing.T) {
 	}
 }
 
+func TestPatchPieceMetadataClearsDateWithNull(t *testing.T) {
+	server, db := setupTestServer(t)
+	defer safeShutdown(server)
+
+	uploadDate := time.Date(2024, 5, 6, 0, 0, 0, 0, time.UTC)
+	photo := &database.DownloadedPhoto{
+		URL:        "https://example.com/clear-date.jpg",
+		Title:      "Has Date",
+		UploadDate: &uploadDate,
+		FileName:   "clear-date.jpg",
+		Status:     "downloaded",
+	}
+	if err := db.Create(photo).Error; err != nil {
+		t.Fatalf("Failed to seed photo: %v", err)
+	}
+
+	body := strings.NewReader(`{"date":null}`)
+	req := httptest.NewRequest(http.MethodPatch, fmt.Sprintf("/api/v1/photos/%d", photo.ID), body)
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	var updated database.DownloadedPhoto
+	if err := json.NewDecoder(w.Body).Decode(&updated); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+	if updated.UploadDate != nil {
+		t.Fatalf("Expected upload date to be cleared, got %v", updated.UploadDate)
+	}
+	if !updated.HasManualField("date") {
+		t.Fatalf("Expected date manual field lock, got %#v", updated.ManualFields)
+	}
+}
+
 func TestBulkEditCatalogAppliesOperationsAndLocks(t *testing.T) {
 	server, db := setupTestServer(t)
 	defer safeShutdown(server)

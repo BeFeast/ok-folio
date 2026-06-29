@@ -17,10 +17,21 @@ import (
 const maxBulkEditIDs = 500
 
 type pieceMetadataPatch struct {
-	Title    *string          `json:"title"`
-	Artist   *string          `json:"artist"`
-	Date     *json.RawMessage `json:"date"`
-	Keywords *[]string        `json:"keywords"`
+	Title    *string         `json:"title"`
+	Artist   *string         `json:"artist"`
+	Date     optionalRawDate `json:"date"`
+	Keywords *[]string       `json:"keywords"`
+}
+
+type optionalRawDate struct {
+	Raw json.RawMessage
+	Set bool
+}
+
+func (d *optionalRawDate) UnmarshalJSON(raw []byte) error {
+	d.Set = true
+	d.Raw = append(d.Raw[:0], raw...)
+	return nil
 }
 
 type bulkEditRequest struct {
@@ -59,8 +70,8 @@ func (s *Server) handleUpdatePieceMetadata(w http.ResponseWriter, r *http.Reques
 		update.Artist = &artist
 		update.LockFields = append(update.LockFields, "artist")
 	}
-	if req.Date != nil {
-		uploadDate, err := parseEditorDateRaw(*req.Date)
+	if req.Date.Set {
+		uploadDate, err := parseEditorDateRaw(req.Date.Raw)
 		if err != nil {
 			s.writeError(w, http.StatusBadRequest, err.Error())
 			return
