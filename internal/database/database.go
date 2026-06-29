@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -48,6 +49,7 @@ var (
 	ErrInboxItemNoMatchedPhoto = errors.New("inbox item has no matched photo")
 	ErrInboxItemPhotoMismatch  = errors.New("photo does not match inbox item")
 	ErrPhotoNotFound           = errors.New("photo not found")
+	ErrInvalidConnectorRoute   = errors.New("connector source route is invalid")
 )
 
 // DownloadedPhoto represents a photo that has been downloaded.
@@ -96,6 +98,9 @@ type DownloadedPhoto struct {
 	Keywords     Keywords `gorm:"type:text[]" json:"keywords"`
 	// Favorite is OK Folio-owned and never written by the ETL.
 	Favorite bool `gorm:"not null;default:false;index"`
+	// HiddenFromGallery removes a piece from library-wide views while preserving
+	// direct folio membership.
+	HiddenFromGallery bool `gorm:"column:hidden_from_gallery;not null;default:false;index" json:"hidden_from_gallery"`
 	// Provider is set on INSERT only; it is text, NOT a Postgres ENUM.
 	Provider string `gorm:"type:text;not null;default:'sight.photo';index"`
 	// Category is derived once at write time (replacing the N+1 derive-from-URL
@@ -202,24 +207,30 @@ func (ConnectorState) TableName() string {
 // Telegram uses ChatID as the source scope; other providers can add their own
 // scoped columns without changing connector_state.
 type ConnectorSource struct {
-	ID         uint64     `gorm:"primarykey" json:"id"`
-	Type       string     `gorm:"column:type;type:text;not null;index;uniqueIndex:idx_connector_sources_type_chat_id" json:"type"`
-	ChatID     string     `gorm:"column:chat_id;type:text;not null;uniqueIndex:idx_connector_sources_type_chat_id" json:"chat_id"`
-	Label      string     `gorm:"column:label;type:text" json:"label"`
-	Config     JSONConfig `gorm:"column:config;type:jsonb" json:"config,omitempty"`
-	Enabled    bool       `gorm:"column:enabled;not null;index" json:"enabled"`
-	LastError  string     `gorm:"column:last_error;type:text" json:"last_error,omitempty"`
-	LastSeenAt *time.Time `gorm:"column:last_seen_at" json:"last_seen_at,omitempty"`
-	CreatedAt  time.Time  `gorm:"autoCreateTime" json:"created_at"`
-	UpdatedAt  time.Time  `gorm:"autoUpdateTime" json:"updated_at"`
+	ID            uint64     `gorm:"primarykey" json:"id"`
+	Type          string     `gorm:"column:type;type:text;not null;index;uniqueIndex:idx_connector_sources_type_chat_id" json:"type"`
+	ChatID        string     `gorm:"column:chat_id;type:text;not null;uniqueIndex:idx_connector_sources_type_chat_id" json:"chat_id"`
+	Label         string     `gorm:"column:label;type:text" json:"label"`
+	Config        JSONConfig `gorm:"column:config;type:jsonb" json:"config,omitempty"`
+	Enabled       bool       `gorm:"column:enabled;not null;index" json:"enabled"`
+	TargetFolioID *uint64    `gorm:"column:target_folio_id;index" json:"target_folio_id"`
+	TargetFolio   *Folio     `gorm:"foreignKey:TargetFolioID;constraint:OnUpdate:CASCADE,OnDelete:SET NULL" json:"-"`
+	ShowInLibrary bool       `gorm:"column:show_in_library;not null;default:true" json:"show_in_library"`
+	LastError     string     `gorm:"column:last_error;type:text" json:"last_error,omitempty"`
+	LastSeenAt    *time.Time `gorm:"column:last_seen_at" json:"last_seen_at,omitempty"`
+	CreatedAt     time.Time  `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt     time.Time  `gorm:"autoUpdateTime" json:"updated_at"`
 }
 
 // ConnectorSourceUpdates contains optional fields for partial source updates.
 type ConnectorSourceUpdates struct {
-	ChatID  *string
-	Label   *string
-	Config  *JSONConfig
-	Enabled *bool
+	ChatID                *string
+	Label                 *string
+	Config                *JSONConfig
+	Enabled               *bool
+	TargetFolioIDProvided bool
+	TargetFolioID         *uint64
+	ShowInLibrary         *bool
 }
 
 type JSONConfig []byte
@@ -1144,6 +1155,9 @@ func normalizeConnectorSource(source ConnectorSource) (ConnectorSource, error) {
 	if len(source.Config) > 0 && !json.Valid(source.Config) {
 		return ConnectorSource{}, fmt.Errorf("connector source config must be valid JSON")
 	}
+	if source.TargetFolioID != nil && *source.TargetFolioID == 0 {
+		return ConnectorSource{}, fmt.Errorf("target folio ID must be greater than zero")
+	}
 	return source, nil
 }
 
@@ -1194,13 +1208,17 @@ func (db *DB) CreateConnectorSource(source ConnectorSource) (*ConnectorSource, e
 	if err != nil {
 		return nil, err
 	}
-	if !source.Enabled {
-		normalized.Enabled = false
-	} else {
-		normalized.Enabled = true
+	if normalized.TargetFolioID == nil && !source.ShowInLibrary {
+		normalized.ShowInLibrary = true
 	}
-	if err := db.Create(&normalized).Error; err != nil {
+	if err := db.Select("Type", "ChatID", "Label", "Config", "Enabled", "TargetFolioID", "ShowInLibrary", "LastError", "LastSeenAt").Create(&normalized).Error; err != nil {
 		return nil, err
+	}
+	if normalized.TargetFolioID != nil && !source.ShowInLibrary {
+		if err := db.Model(&ConnectorSource{}).Where("id = ?", normalized.ID).Update("show_in_library", false).Error; err != nil {
+			return nil, err
+		}
+		normalized.ShowInLibrary = false
 	}
 	return &normalized, nil
 }
@@ -1209,7 +1227,12 @@ func (db *DB) UpdateConnectorSource(id uint64, updates ConnectorSourceUpdates) (
 	if id == 0 {
 		return nil, fmt.Errorf("connector source ID is required")
 	}
+	var current ConnectorSource
+	if err := db.Where("id = ?", id).First(&current).Error; err != nil {
+		return nil, err
+	}
 	attrs := map[string]interface{}{}
+	clearTargetFolioID := false
 	if updates.Enabled != nil {
 		attrs["enabled"] = *updates.Enabled
 	}
@@ -1222,9 +1245,36 @@ func (db *DB) UpdateConnectorSource(id uint64, updates ConnectorSourceUpdates) (
 	if updates.Config != nil {
 		attrs["config"] = *updates.Config
 	}
+	if updates.TargetFolioIDProvided {
+		if updates.TargetFolioID != nil && *updates.TargetFolioID == 0 {
+			return nil, fmt.Errorf("target folio ID must be greater than zero")
+		}
+		if updates.TargetFolioID == nil {
+			clearTargetFolioID = true
+		} else {
+			attrs["target_folio_id"] = updates.TargetFolioID
+		}
+		current.TargetFolioID = updates.TargetFolioID
+	}
+	if updates.ShowInLibrary != nil {
+		attrs["show_in_library"] = *updates.ShowInLibrary
+		current.ShowInLibrary = *updates.ShowInLibrary
+	}
+	if !current.ShowInLibrary && current.TargetFolioID == nil {
+		return nil, ErrInvalidConnectorRoute
+	}
 
 	if len(attrs) > 0 {
 		result := db.Model(&ConnectorSource{}).Where("id = ?", id).Updates(attrs)
+		if result.Error != nil {
+			return nil, result.Error
+		}
+		if result.RowsAffected == 0 {
+			return nil, gorm.ErrRecordNotFound
+		}
+	}
+	if clearTargetFolioID {
+		result := db.Model(&ConnectorSource{}).Where("id = ?", id).Update("target_folio_id", gorm.Expr("NULL"))
 		if result.Error != nil {
 			return nil, result.Error
 		}
@@ -1238,6 +1288,113 @@ func (db *DB) UpdateConnectorSource(id uint64, updates ConnectorSourceUpdates) (
 		return nil, err
 	}
 	return &source, nil
+}
+
+func (db *DB) GetConnectorSource(id uint64) (*ConnectorSource, error) {
+	if id == 0 {
+		return nil, fmt.Errorf("connector source ID is required")
+	}
+	var source ConnectorSource
+	if err := db.Where("id = ?", id).First(&source).Error; err != nil {
+		return nil, err
+	}
+	return &source, nil
+}
+
+func (db *DB) ConnectorSourceForProvider(providerID string) (*ConnectorSource, error) {
+	providerID = strings.TrimSpace(providerID)
+	if providerID == "" {
+		return nil, gorm.ErrRecordNotFound
+	}
+	sourceType, sourceID, ok := strings.Cut(providerID, ":")
+	if !ok || sourceID == "" {
+		return nil, gorm.ErrRecordNotFound
+	}
+	id, err := strconv.ParseUint(sourceID, 10, 64)
+	if err != nil || id == 0 {
+		return nil, gorm.ErrRecordNotFound
+	}
+	var source ConnectorSource
+	if err := db.Where("id = ? AND type = ?", id, sourceType).First(&source).Error; err != nil {
+		return nil, err
+	}
+	return &source, nil
+}
+
+type ConnectorSourceBackfillResult struct {
+	Matched           int64   `json:"matched"`
+	Updated           int64   `json:"updated"`
+	AddedToFolio      int64   `json:"added_to_folio"`
+	HiddenFromGallery bool    `json:"hidden_from_gallery"`
+	TargetFolioID     *uint64 `json:"target_folio_id,omitempty"`
+	ShowInLibrary     bool    `json:"show_in_library"`
+}
+
+func (db *DB) BackfillConnectorSourceRoute(source ConnectorSource, batchLimit int) (ConnectorSourceBackfillResult, error) {
+	if source.ID == 0 {
+		return ConnectorSourceBackfillResult{}, fmt.Errorf("connector source ID is required")
+	}
+	if batchLimit <= 0 || batchLimit > 1000 {
+		batchLimit = 1000
+	}
+	hidden := !source.ShowInLibrary && source.TargetFolioID != nil
+	result := ConnectorSourceBackfillResult{
+		HiddenFromGallery: hidden,
+		TargetFolioID:     source.TargetFolioID,
+		ShowInLibrary:     source.ShowInLibrary,
+	}
+
+	err := db.Transaction(func(tx *gorm.DB) error {
+		scoped := connectorSourcePhotoScope(tx.Model(&DownloadedPhoto{}), source).Where(downloadedStatusPredicate)
+		var total int64
+		if err := scoped.Count(&total).Error; err != nil {
+			return err
+		}
+		result.Matched = total
+
+		var photos []DownloadedPhoto
+		if err := scoped.Order("id ASC").Limit(batchLimit).Find(&photos).Error; err != nil {
+			return err
+		}
+		if len(photos) == 0 {
+			return nil
+		}
+		ids := make([]uint64, 0, len(photos))
+		for _, photo := range photos {
+			ids = append(ids, photo.ID)
+		}
+
+		update := tx.Model(&DownloadedPhoto{}).Where("id IN ?", ids).Update("hidden_from_gallery", hidden)
+		if update.Error != nil {
+			return update.Error
+		}
+		result.Updated = update.RowsAffected
+
+		if source.TargetFolioID == nil {
+			return nil
+		}
+		memberships := make([]FolioPiece, 0, len(ids))
+		for _, photoID := range ids {
+			memberships = append(memberships, FolioPiece{FolioID: *source.TargetFolioID, PhotoID: photoID})
+		}
+		create := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&memberships)
+		if create.Error != nil {
+			return create.Error
+		}
+		result.AddedToFolio = create.RowsAffected
+		return nil
+	})
+	return result, err
+}
+
+func connectorSourcePhotoScope(query *gorm.DB, source ConnectorSource) *gorm.DB {
+	if source.Type == "webgallery" {
+		return query.Where("provider = ?", fmt.Sprintf("%s:%d", source.Type, source.ID))
+	}
+	if source.Type == "telegram" {
+		return query.Where("provider = ? AND (url LIKE ? OR source_page LIKE ?)", source.Type, source.ChatID+":%", "%"+escapeSQLLike(source.ChatID)+"%")
+	}
+	return query.Where("provider = ?", source.Type)
 }
 
 func (db *DB) DeleteConnectorSource(id uint64) error {
@@ -1343,6 +1500,11 @@ func (db *DB) DeleteFolio(id uint64) error {
 		return fmt.Errorf("folio ID is required")
 	}
 	return db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&ConnectorSource{}).
+			Where("target_folio_id = ?", id).
+			Updates(map[string]interface{}{"target_folio_id": gorm.Expr("NULL"), "show_in_library": true}).Error; err != nil {
+			return err
+		}
 		result := tx.Delete(&Folio{}, id)
 		if result.Error != nil {
 			return result.Error
@@ -1519,7 +1681,7 @@ func (db *DB) GetDownloadStats() (map[string]interface{}, error) {
 			COALESCE(SUM(file_size), 0) as total_size,
 			COUNT(DISTINCT artist) as unique_artists
 		`).
-		Where("status = ?", "downloaded").
+		Where("status = ? AND hidden_from_gallery = ?", "downloaded", false).
 		Scan(&result).Error
 
 	if err != nil {
@@ -1533,7 +1695,7 @@ func (db *DB) GetDownloadStats() (map[string]interface{}, error) {
 
 	if result.TotalPhotos > 0 {
 		var latest DownloadedPhoto
-		if err := db.Where("status = ?", "downloaded").
+		if err := db.Where("status = ? AND hidden_from_gallery = ?", "downloaded", false).
 			Order("downloaded_at DESC").
 			First(&latest).Error; err != nil {
 			return nil, err
@@ -1559,7 +1721,7 @@ func (db *DB) GetTopArtists(limit int) ([]ArtistStats, error) {
 
 	err := db.DB.Model(&DownloadedPhoto{}).
 		Select("artist, COUNT(*) as photo_count, SUM(file_size) as total_size").
-		Where("status = ?", "downloaded").
+		Where("status = ? AND hidden_from_gallery = ?", "downloaded", false).
 		Group("artist").
 		Order("photo_count DESC").
 		Limit(limit).
@@ -1612,7 +1774,7 @@ func (db *DB) SearchPhotos(query string, limit int, offset int) ([]DownloadedPho
 	op := db.caseInsensitiveLike()
 	keywordsExpr := db.keywordsSearchExpr()
 	countQuery := db.DB.Model(&DownloadedPhoto{}).
-		Where("status = ?", "downloaded").
+		Where("status = ? AND hidden_from_gallery = ?", "downloaded", false).
 		Where(
 			"title "+op+" ? OR artist "+op+" ? OR file_name "+op+" ? OR "+keywordsExpr+" "+op+" ?",
 			searchPattern,
@@ -1699,7 +1861,7 @@ func (db *DB) GetPhotosToday(limit int, offset int) ([]DownloadedPhoto, int64, e
 
 	// Get total count
 	countQuery := db.DB.Model(&DownloadedPhoto{}).
-		Where("status = ? AND downloaded_at >= ?", "downloaded", startOfDay)
+		Where("status = ? AND hidden_from_gallery = ? AND downloaded_at >= ?", "downloaded", false, startOfDay)
 
 	if err := countQuery.Count(&total).Error; err != nil {
 		return nil, 0, err
@@ -1729,7 +1891,7 @@ func (db *DB) GetPhotosLastWeek(limit int, offset int) ([]DownloadedPhoto, int64
 
 	// Get total count
 	countQuery := db.DB.Model(&DownloadedPhoto{}).
-		Where("status = ? AND downloaded_at >= ?", "downloaded", weekAgo)
+		Where("status = ? AND hidden_from_gallery = ? AND downloaded_at >= ?", "downloaded", false, weekAgo)
 
 	if err := countQuery.Count(&total).Error; err != nil {
 		return nil, 0, err
@@ -1755,7 +1917,8 @@ func (db *DB) GetGalleryCatalog(limit int, offset int, filters GalleryCatalogFil
 	var total int64
 
 	query := db.DB.Model(&DownloadedPhoto{}).
-		Where(downloadedStatusPredicate)
+		Where(downloadedStatusPredicate).
+		Where("hidden_from_gallery = ?", false)
 	query, err := db.applyGalleryCatalogFilters(query, filters)
 	if err != nil {
 		return nil, 0, err
@@ -1791,7 +1954,8 @@ func (db *DB) GetGallerySourceStatsForFilters(filters GalleryCatalogFilters) ([]
 
 	query := db.DB.Model(&DownloadedPhoto{}).
 		Select("source_page, COUNT(*) as count").
-		Where(downloadedStatusPredicate)
+		Where(downloadedStatusPredicate).
+		Where("hidden_from_gallery = ?", false)
 	query, err := db.applyGalleryCatalogFilters(query, filters)
 	if err != nil {
 		return nil, err
@@ -1900,8 +2064,9 @@ func (db *DB) GetGalleryCategoryStatsForFilters(filters GalleryCatalogFilters) (
 	var categories []GalleryFacetStats
 
 	query := db.DB.Model(&DownloadedPhoto{}).
-		Select(galleryCategoryExpr + " as id, COUNT(*) as count").
-		Where(downloadedStatusPredicate)
+		Select(galleryCategoryExpr+" as id, COUNT(*) as count").
+		Where(downloadedStatusPredicate).
+		Where("hidden_from_gallery = ?", false)
 	query, err := db.applyGalleryCatalogFilters(query, filters)
 	if err != nil {
 		return nil, err
@@ -1929,7 +2094,8 @@ func (db *DB) GetGalleryArtistStatsForFilters(filters GalleryCatalogFilters) ([]
 
 	query := db.DB.Model(&DownloadedPhoto{}).
 		Select("artist as id, COUNT(*) as count").
-		Where(downloadedStatusPredicate)
+		Where(downloadedStatusPredicate).
+		Where("hidden_from_gallery = ?", false)
 	query, err := db.applyGalleryCatalogFilters(query, filters)
 	if err != nil {
 		return nil, err
@@ -1956,7 +2122,7 @@ func (db *DB) GetGalleryFavoriteStats() ([]GalleryFavoriteStats, error) {
 // is referenced directly without the old runtime column probe.
 func (db *DB) GetGalleryFavoriteStatsForFilters(filters GalleryCatalogFilters) ([]GalleryFavoriteStats, error) {
 	var total int64
-	totalQuery := db.DB.Model(&DownloadedPhoto{}).Where(downloadedStatusPredicate)
+	totalQuery := db.DB.Model(&DownloadedPhoto{}).Where(downloadedStatusPredicate).Where("hidden_from_gallery = ?", false)
 	totalQuery, err := db.applyGalleryCatalogFilters(totalQuery, filters)
 	if err != nil {
 		return nil, err
@@ -1966,7 +2132,7 @@ func (db *DB) GetGalleryFavoriteStatsForFilters(filters GalleryCatalogFilters) (
 	}
 
 	var favoriteCount int64
-	favoriteQuery := db.DB.Model(&DownloadedPhoto{}).Where(downloadedStatusPredicate)
+	favoriteQuery := db.DB.Model(&DownloadedPhoto{}).Where(downloadedStatusPredicate).Where("hidden_from_gallery = ?", false)
 	favoriteQuery, err = db.applyGalleryCatalogFilters(favoriteQuery, filters)
 	if err != nil {
 		return nil, err
@@ -2108,7 +2274,7 @@ func (db *DB) GetPhotosByRunID(runID uint64, limit int, offset int) ([]Downloade
 
 	// Get total count
 	countQuery := db.DB.Model(&DownloadedPhoto{}).
-		Where("status = ? AND downloaded_at >= ? AND downloaded_at <= ?", "downloaded", run.StartTime, endTime)
+		Where("status = ? AND hidden_from_gallery = ? AND downloaded_at >= ? AND downloaded_at <= ?", "downloaded", false, run.StartTime, endTime)
 
 	if err := countQuery.Count(&total).Error; err != nil {
 		return nil, 0, err
@@ -2135,7 +2301,7 @@ func (db *DB) GetAllArtists(limit int, offset int, sortBy string) ([]ArtistStats
 
 	// Get total count of unique artists
 	if err := db.DB.Model(&DownloadedPhoto{}).
-		Where("status = ?", "downloaded").
+		Where("status = ? AND hidden_from_gallery = ?", "downloaded", false).
 		Distinct("artist").
 		Count(&total).Error; err != nil {
 		return nil, 0, err
@@ -2153,7 +2319,7 @@ func (db *DB) GetAllArtists(limit int, offset int, sortBy string) ([]ArtistStats
 	// Get paginated artists
 	err := db.DB.Model(&DownloadedPhoto{}).
 		Select("artist, COUNT(*) as photo_count, SUM(file_size) as total_size").
-		Where("status = ?", "downloaded").
+		Where("status = ? AND hidden_from_gallery = ?", "downloaded", false).
 		Group("artist").
 		Order(orderClause).
 		Limit(limit).
@@ -2174,7 +2340,7 @@ func (db *DB) GetPhotosByArtist(artist string, limit int, offset int) ([]Downloa
 
 	// Get total count for this artist
 	countQuery := db.DB.Model(&DownloadedPhoto{}).
-		Where("artist = ? AND status = ?", artist, "downloaded")
+		Where("artist = ? AND status = ? AND hidden_from_gallery = ?", artist, "downloaded", false)
 
 	if err := countQuery.Count(&total).Error; err != nil {
 		return nil, 0, err

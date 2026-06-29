@@ -291,6 +291,124 @@ func TestConnectorSourceSettingsCRUD(t *testing.T) {
 	}
 }
 
+func TestReadConnectorSourceRequestDetectsNullTargetFolio(t *testing.T) {
+	server, _ := setupTestServer(t)
+	defer safeShutdown(server)
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/settings/connector-sources/1", bytes.NewBufferString(`{"show_in_library":true,"target_folio_id":null}`))
+	w := httptest.NewRecorder()
+	input, ok := server.readConnectorSourceRequest(w, req)
+	if !ok {
+		t.Fatalf("readConnectorSourceRequest failed status=%d body=%q", w.Code, w.Body.String())
+	}
+	if !input.TargetFolioID.Set || input.TargetFolioID.Value != nil {
+		t.Fatalf("expected explicit null target folio, got %#v", input.TargetFolioID)
+	}
+}
+
+func TestConnectorSourceRoutingValidationAndBackfill(t *testing.T) {
+	server, db := setupTestServer(t)
+	defer safeShutdown(server)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/connector-sources", bytes.NewBufferString(`{"type":"telegram","chat_id":"-1001234567890","show_in_library":false}`))
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected missing target folio to be rejected, status=%d body=%q", w.Code, w.Body.String())
+	}
+
+	folio, err := db.CreateFolio(database.Folio{Name: "Connector target"})
+	if err != nil {
+		t.Fatalf("CreateFolio failed: %v", err)
+	}
+	createBody := bytes.NewBufferString(`{"type":"telegram","chat_id":"-1001234567890","target_folio_id":` + strconv.FormatUint(folio.ID, 10) + `,"show_in_library":false}`)
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/settings/connector-sources", createBody)
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create routed source status=%d body=%q", w.Code, w.Body.String())
+	}
+	var source database.ConnectorSource
+	if err := json.NewDecoder(w.Body).Decode(&source); err != nil {
+		t.Fatalf("decode routed source: %v", err)
+	}
+	if source.TargetFolioID == nil || *source.TargetFolioID != folio.ID || source.ShowInLibrary {
+		t.Fatalf("unexpected routed source: %#v", source)
+	}
+
+	patchBody := bytes.NewBufferString(`{"show_in_library":true,"target_folio_id":null}`)
+	req = httptest.NewRequest(http.MethodPatch, "/api/v1/settings/connector-sources/"+strconv.FormatUint(source.ID, 10), patchBody)
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("clear route patch status=%d body=%q", w.Code, w.Body.String())
+	}
+	if err := json.NewDecoder(w.Body).Decode(&source); err != nil {
+		t.Fatalf("decode cleared source: %v", err)
+	}
+	if source.TargetFolioID != nil || !source.ShowInLibrary {
+		t.Fatalf("expected route cleared to library-only, got %#v", source)
+	}
+
+	patchBody = bytes.NewBufferString(`{"target_folio_id":` + strconv.FormatUint(folio.ID, 10) + `,"show_in_library":false}`)
+	req = httptest.NewRequest(http.MethodPatch, "/api/v1/settings/connector-sources/"+strconv.FormatUint(source.ID, 10), patchBody)
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("restore route patch status=%d body=%q", w.Code, w.Body.String())
+	}
+	if err := json.NewDecoder(w.Body).Decode(&source); err != nil {
+		t.Fatalf("decode restored source: %v", err)
+	}
+
+	targetProvider := "telegram"
+	targetPhoto := database.DownloadedPhoto{
+		URL:        source.ChatID + ":42:media",
+		SourcePage: "https://t.me/fixture/42",
+		Provider:   targetProvider,
+		Title:      "Backfill me",
+		Status:     "downloaded",
+	}
+	otherPhoto := database.DownloadedPhoto{
+		URL:      "-1009999999999:42:media",
+		Provider: targetProvider,
+		Title:    "Leave visible",
+		Status:   "downloaded",
+	}
+	if err := db.Create(&targetPhoto).Error; err != nil {
+		t.Fatalf("create target photo: %v", err)
+	}
+	if err := db.Create(&otherPhoto).Error; err != nil {
+		t.Fatalf("create other photo: %v", err)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/settings/connector-sources/"+strconv.FormatUint(source.ID, 10)+"/backfill", nil)
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("backfill status=%d body=%q", w.Code, w.Body.String())
+	}
+	var result database.ConnectorSourceBackfillResult
+	if err := json.NewDecoder(w.Body).Decode(&result); err != nil {
+		t.Fatalf("decode backfill result: %v", err)
+	}
+	if result.Matched != 1 || result.AddedToFolio != 1 || !result.HiddenFromGallery {
+		t.Fatalf("unexpected backfill result: %#v", result)
+	}
+
+	var storedTarget database.DownloadedPhoto
+	if err := db.Where("id = ?", targetPhoto.ID).First(&storedTarget).Error; err != nil {
+		t.Fatalf("load target photo: %v", err)
+	}
+	var storedOther database.DownloadedPhoto
+	if err := db.Where("id = ?", otherPhoto.ID).First(&storedOther).Error; err != nil {
+		t.Fatalf("load other photo: %v", err)
+	}
+	if !storedTarget.HiddenFromGallery || storedOther.HiddenFromGallery {
+		t.Fatalf("expected scoped hidden flags, target=%#v other=%#v", storedTarget, storedOther)
+	}
+}
+
 func TestFolioAPICRUD(t *testing.T) {
 	server, _ := setupTestServer(t)
 	defer safeShutdown(server)

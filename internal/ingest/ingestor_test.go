@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -105,6 +106,63 @@ func TestRunConnectorCursorProvenanceHashAndEpochBatches(t *testing.T) {
 	}
 	if state == nil || state.Cursor != "cursor-2" || state.LastStatus != "completed" || state.LastRunAt == nil {
 		t.Fatalf("unexpected connector state: %#v", state)
+	}
+}
+
+func TestRunConnectorAppliesConnectorSourceRoute(t *testing.T) {
+	ctx := context.Background()
+	body := []byte("routed fixture image bytes")
+	imageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(body)
+	}))
+	defer imageServer.Close()
+
+	connector := &fakeConnector{
+		pages: map[string]*provider.PageResult{
+			"": {
+				Items: []provider.DiscoveredMedia{fakeItem("routed", imageServer.URL+"/routed.jpg")},
+			},
+		},
+	}
+	db, _, ing := setupIngestorTest(t, connector)
+	folio, err := db.CreateFolio(database.Folio{Name: "Routed stream"})
+	if err != nil {
+		t.Fatalf("CreateFolio failed: %v", err)
+	}
+	source, err := db.CreateConnectorSource(database.ConnectorSource{
+		Type:          "webgallery",
+		ChatID:        "routed",
+		Label:         "Routed",
+		Enabled:       true,
+		TargetFolioID: &folio.ID,
+		ShowInLibrary: false,
+	})
+	if err != nil {
+		t.Fatalf("CreateConnectorSource failed: %v", err)
+	}
+	connector.providerID = "webgallery:" + strconv.FormatUint(source.ID, 10)
+
+	result, err := ing.RunConnector(ctx, connector)
+	if err != nil {
+		t.Fatalf("RunConnector failed: %v", err)
+	}
+	if result.PhotosDownloaded != 1 {
+		t.Fatalf("expected one routed download, got %#v", result)
+	}
+
+	var photo database.DownloadedPhoto
+	if err := db.Where("provider = ?", connector.providerID).First(&photo).Error; err != nil {
+		t.Fatalf("load routed photo: %v", err)
+	}
+	if !photo.HiddenFromGallery {
+		t.Fatalf("expected routed photo hidden from gallery: %#v", photo)
+	}
+	pieces, total, err := db.ListFolioPieces(folio.ID, 10, 0)
+	if err != nil {
+		t.Fatalf("ListFolioPieces failed: %v", err)
+	}
+	if total != 1 || len(pieces) != 1 || pieces[0].ID != photo.ID {
+		t.Fatalf("expected routed photo in folio, total=%d pieces=%#v", total, pieces)
 	}
 }
 
@@ -598,7 +656,7 @@ func setupIngestorTest(t *testing.T, connector provider.Connector) (*database.DB
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
-	if err := gormDB.AutoMigrate(&database.DownloadedPhoto{}, &database.ExtractionRun{}, &database.InboxItem{}, &database.ConnectorState{}); err != nil {
+	if err := gormDB.AutoMigrate(&database.DownloadedPhoto{}, &database.ExtractionRun{}, &database.InboxItem{}, &database.ConnectorState{}, &database.ConnectorSource{}, &database.Folio{}, &database.FolioPiece{}); err != nil {
 		t.Fatalf("migrate sqlite: %v", err)
 	}
 	db := &database.DB{DB: gormDB}

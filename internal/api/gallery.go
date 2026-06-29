@@ -84,7 +84,7 @@ type cacheGalleryCatalogETagShape struct {
 }
 
 const catalogCacheControl = "private, no-cache, stale-while-revalidate=120"
-const catalogCacheVersion = 5
+const catalogCacheVersion = 6
 
 var galleryMediumCategories = galleryMediumCategoryFacets()
 

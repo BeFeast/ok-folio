@@ -14,6 +14,7 @@ import (
 	"ok-folio/internal/scraper"
 
 	"github.com/rs/zerolog"
+	"gorm.io/gorm"
 )
 
 type Ingestor struct {
@@ -213,6 +214,9 @@ func (i *Ingestor) ingestPages(ctx context.Context, connector provider.Connector
 				result.PhotosSkipped++
 				continue
 			}
+			if err := i.applySourceRoute(providerID, photo.ID); err != nil {
+				return result, err
+			}
 			if err := i.cache.MarkDedupeHash(ctx, photo.ContentHash, dedupeKey); err != nil {
 				return result, err
 			}
@@ -259,6 +263,46 @@ func (i *Ingestor) ingestPages(ctx context.Context, connector provider.Connector
 			req.Cursor = ""
 		}
 	}
+}
+
+func (i *Ingestor) applySourceRoute(providerID string, photoID uint64) error {
+	source, err := i.db.ConnectorSourceForProvider(providerID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+
+	hidden := !source.ShowInLibrary && source.TargetFolioID != nil
+	if !source.ShowInLibrary && source.TargetFolioID == nil {
+		i.logger.Warn().
+			Str("provider", providerID).
+			Uint64("source_id", source.ID).
+			Msg("Connector source hides from library but has no target folio; keeping piece visible")
+	}
+	if err := i.db.DB.Model(&database.DownloadedPhoto{}).
+		Where("id = ?", photoID).
+		Update("hidden_from_gallery", hidden).Error; err != nil {
+		return err
+	}
+	if source.TargetFolioID == nil {
+		return nil
+	}
+	if _, err := i.db.GetFolio(*source.TargetFolioID); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			i.logger.Warn().
+				Str("provider", providerID).
+				Uint64("source_id", source.ID).
+				Uint64("folio_id", *source.TargetFolioID).
+				Msg("Connector source target folio is missing; keeping piece visible in library")
+			return i.db.DB.Model(&database.DownloadedPhoto{}).
+				Where("id = ?", photoID).
+				Update("hidden_from_gallery", false).Error
+		}
+		return err
+	}
+	return i.db.AddPieceToFolio(*source.TargetFolioID, photoID)
 }
 
 func (i *Ingestor) recordInboxDuplicate(providerID string, dedupeKey string, item provider.DiscoveredMedia, reason string) error {

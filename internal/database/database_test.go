@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1493,6 +1494,169 @@ func TestGetGalleryCatalog(t *testing.T) {
 	}
 	if len(filteredArtists) != 1 || filteredArtists[0].ID != "Artist B" || filteredArtists[0].Count != 1 {
 		t.Fatalf("Expected active category filter to narrow artist facets, got %#v", filteredArtists)
+	}
+}
+
+func TestGalleryQueriesExcludeHiddenFromGallery(t *testing.T) {
+	db := setupTestDB(t)
+	folio, err := db.CreateFolio(Folio{Name: "Private stream"})
+	if err != nil {
+		t.Fatalf("CreateFolio failed: %v", err)
+	}
+	visible := DownloadedPhoto{
+		URL:        "https://example.com/visible.jpg",
+		SourcePage: "https://webgallery/gallery/category/1/visible",
+		Title:      "Visible Catalog",
+		Artist:     "Visible Artist",
+		FileName:   "visible.jpg",
+		Status:     "downloaded",
+		Favorite:   true,
+	}
+	hidden := DownloadedPhoto{
+		URL:               "https://example.com/hidden.jpg",
+		SourcePage:        "https://webgallery/gallery/category/2/hidden",
+		Title:             "Hidden Catalog",
+		Artist:            "Hidden Artist",
+		FileName:          "hidden.jpg",
+		Status:            "downloaded",
+		Favorite:          true,
+		HiddenFromGallery: true,
+	}
+	if err := db.Create(&visible).Error; err != nil {
+		t.Fatalf("create visible photo: %v", err)
+	}
+	if err := db.Create(&hidden).Error; err != nil {
+		t.Fatalf("create hidden photo: %v", err)
+	}
+	if err := db.AddPieceToFolio(folio.ID, hidden.ID); err != nil {
+		t.Fatalf("AddPieceToFolio failed: %v", err)
+	}
+
+	catalog, total, err := db.GetGalleryCatalog(10, 0, GalleryCatalogFilters{})
+	if err != nil {
+		t.Fatalf("GetGalleryCatalog failed: %v", err)
+	}
+	if total != 1 || len(catalog) != 1 || catalog[0].ID != visible.ID {
+		t.Fatalf("expected only visible photo in catalog, total=%d catalog=%#v", total, catalog)
+	}
+	search, total, err := db.GetGalleryCatalog(10, 0, GalleryCatalogFilters{Query: "Hidden"})
+	if err != nil {
+		t.Fatalf("GetGalleryCatalog search failed: %v", err)
+	}
+	if total != 0 || len(search) != 0 {
+		t.Fatalf("expected hidden photo excluded from q search, total=%d search=%#v", total, search)
+	}
+	sources, err := db.GetGallerySourceStats()
+	if err != nil {
+		t.Fatalf("GetGallerySourceStats failed: %v", err)
+	}
+	if len(sources) != 1 || sources[0].SourcePage != visible.SourcePage {
+		t.Fatalf("expected hidden photo excluded from source facets, got %#v", sources)
+	}
+	favorites, err := db.GetGalleryFavoriteStats()
+	if err != nil {
+		t.Fatalf("GetGalleryFavoriteStats failed: %v", err)
+	}
+	if len(favorites) != 2 || favorites[0].Count != 1 || favorites[1].Count != 0 {
+		t.Fatalf("expected hidden favorite excluded from favorite facets, got %#v", favorites)
+	}
+	pieces, total, err := db.ListFolioPieces(folio.ID, 10, 0)
+	if err != nil {
+		t.Fatalf("ListFolioPieces failed: %v", err)
+	}
+	if total != 1 || len(pieces) != 1 || pieces[0].ID != hidden.ID {
+		t.Fatalf("expected hidden photo visible inside folio, total=%d pieces=%#v", total, pieces)
+	}
+}
+
+func TestBackfillConnectorSourceRouteIsScopedAndIdempotent(t *testing.T) {
+	db := setupTestDB(t)
+	folio, err := db.CreateFolio(Folio{Name: "Backfill target"})
+	if err != nil {
+		t.Fatalf("CreateFolio failed: %v", err)
+	}
+	source, err := db.CreateConnectorSource(ConnectorSource{
+		Type:          "webgallery",
+		ChatID:        "source-one",
+		Label:         "Source One",
+		Enabled:       true,
+		TargetFolioID: &folio.ID,
+		ShowInLibrary: false,
+	})
+	if err != nil {
+		t.Fatalf("CreateConnectorSource failed: %v", err)
+	}
+	targetProvider := "webgallery:" + strconv.FormatUint(source.ID, 10)
+	photos := []DownloadedPhoto{
+		{URL: "target-one", Provider: targetProvider, Title: "Target One", Status: "downloaded"},
+		{URL: "target-two", Provider: targetProvider, Title: "Target Two", Status: "downloaded"},
+		{URL: "other-source", Provider: "webgallery:999", Title: "Other", Status: "downloaded"},
+	}
+	for i := range photos {
+		if err := db.Create(&photos[i]).Error; err != nil {
+			t.Fatalf("create photo %d: %v", i, err)
+		}
+	}
+
+	result, err := db.BackfillConnectorSourceRoute(*source, 1000)
+	if err != nil {
+		t.Fatalf("BackfillConnectorSourceRoute failed: %v", err)
+	}
+	if result.Matched != 2 || result.Updated != 2 || result.AddedToFolio != 2 || !result.HiddenFromGallery {
+		t.Fatalf("unexpected first backfill result: %#v", result)
+	}
+	pieces, total, err := db.ListFolioPieces(folio.ID, 10, 0)
+	if err != nil {
+		t.Fatalf("ListFolioPieces failed: %v", err)
+	}
+	if total != 2 || len(pieces) != 2 {
+		t.Fatalf("expected two target pieces in folio, total=%d pieces=%#v", total, pieces)
+	}
+	var other DownloadedPhoto
+	if err := db.Where("url = ?", "other-source").First(&other).Error; err != nil {
+		t.Fatalf("load other source: %v", err)
+	}
+	if other.HiddenFromGallery {
+		t.Fatalf("expected other source to stay visible: %#v", other)
+	}
+
+	second, err := db.BackfillConnectorSourceRoute(*source, 1000)
+	if err != nil {
+		t.Fatalf("second BackfillConnectorSourceRoute failed: %v", err)
+	}
+	if second.Matched != 2 || second.AddedToFolio != 0 {
+		t.Fatalf("expected idempotent second backfill, got %#v", second)
+	}
+}
+
+func TestUpdateConnectorSourceClearsTargetFolio(t *testing.T) {
+	db := setupTestDB(t)
+	folio, err := db.CreateFolio(Folio{Name: "Clear target"})
+	if err != nil {
+		t.Fatalf("CreateFolio failed: %v", err)
+	}
+	source, err := db.CreateConnectorSource(ConnectorSource{
+		Type:          "telegram",
+		ChatID:        "-1001234567890",
+		Enabled:       true,
+		TargetFolioID: &folio.ID,
+		ShowInLibrary: false,
+	})
+	if err != nil {
+		t.Fatalf("CreateConnectorSource failed: %v", err)
+	}
+
+	show := true
+	updated, err := db.UpdateConnectorSource(source.ID, ConnectorSourceUpdates{
+		TargetFolioIDProvided: true,
+		TargetFolioID:         nil,
+		ShowInLibrary:         &show,
+	})
+	if err != nil {
+		t.Fatalf("UpdateConnectorSource failed: %v", err)
+	}
+	if updated.TargetFolioID != nil || !updated.ShowInLibrary {
+		t.Fatalf("expected target folio cleared, got %#v", updated)
 	}
 }
 

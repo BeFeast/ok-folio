@@ -198,6 +198,7 @@ func (s *Server) setupRoutes() {
 		r.Get("/settings/connector-sources", s.handleListConnectorSources)
 		r.Post("/settings/connector-sources/preview", s.handlePreviewConnectorSource)
 		r.Post("/settings/connector-sources", s.handleCreateConnectorSource)
+		r.Post("/settings/connector-sources/{id}/backfill", s.handleBackfillConnectorSource)
 		r.Patch("/settings/connector-sources/{id}", s.handleUpdateConnectorSource)
 		r.Delete("/settings/connector-sources/{id}", s.handleDeleteConnectorSource)
 
