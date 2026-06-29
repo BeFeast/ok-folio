@@ -38,6 +38,25 @@ const downloadedPhotoUpsertSQL = `
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (url_hash) DO UPDATE SET
 			source_page = EXCLUDED.source_page,
+			title = CASE WHEN downloaded_photos.manual_fields @> ARRAY['title']::text[] THEN downloaded_photos.title ELSE EXCLUDED.title END,
+			artist = CASE WHEN downloaded_photos.manual_fields @> ARRAY['artist']::text[] THEN downloaded_photos.artist ELSE EXCLUDED.artist END,
+			file_name = EXCLUDED.file_name,
+			upload_date = CASE WHEN downloaded_photos.manual_fields @> ARRAY['date']::text[] THEN downloaded_photos.upload_date ELSE EXCLUDED.upload_date END,
+			file_path = EXCLUDED.file_path,
+			file_size = EXCLUDED.file_size,
+			status = EXCLUDED.status,
+			error_message = EXCLUDED.error_message,
+			downloaded_at = EXCLUDED.downloaded_at
+		RETURNING downloaded_at`
+
+const sqliteDownloadedPhotoUpsertSQL = `
+		INSERT INTO downloaded_photos (
+			id, url, url_hash, source_page, title, artist, upload_date, file_path,
+			file_name, downloaded_at, file_size, status, error_message, provider, category
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT (url_hash) DO UPDATE SET
+			source_page = EXCLUDED.source_page,
 			title = EXCLUDED.title,
 			artist = EXCLUDED.artist,
 			file_name = EXCLUDED.file_name,
@@ -128,7 +147,7 @@ func LoadDump(db *database.DB, rows DumpRows, opts LoadOptions) (LoadResult, err
 
 func upsertDownloadedPhoto(tx *gorm.DB, row LegacyDownloadedPhoto) (time.Time, error) {
 	var loadedAt sql.NullTime
-	err := tx.Raw(downloadedPhotoUpsertSQL,
+	err := tx.Raw(downloadedPhotoUpsertSQLForDialect(tx),
 		row.ID,
 		row.URL,
 		database.HashURL(row.URL),
@@ -149,6 +168,13 @@ func upsertDownloadedPhoto(tx *gorm.DB, row LegacyDownloadedPhoto) (time.Time, e
 		return time.Time{}, fmt.Errorf("upsert downloaded_photos legacy id %d: %w", row.ID, err)
 	}
 	return loadedAt.Time, nil
+}
+
+func downloadedPhotoUpsertSQLForDialect(tx *gorm.DB) string {
+	if tx.Dialector.Name() == "sqlite" {
+		return sqliteDownloadedPhotoUpsertSQL
+	}
+	return downloadedPhotoUpsertSQL
 }
 
 func upsertExtractionRun(tx *gorm.DB, row LegacyExtractionRun) (time.Time, error) {

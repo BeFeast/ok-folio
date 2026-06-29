@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -94,6 +95,7 @@ type DownloadedPhoto struct {
 	FileSize     int64
 	Notes        string   `gorm:"type:text"`
 	Keywords     Keywords `gorm:"type:text[]" json:"keywords"`
+	ManualFields Fields   `gorm:"type:text[]" json:"manual_fields"`
 	// Favorite is OK Folio-owned and never written by the ETL.
 	Favorite bool `gorm:"not null;default:false;index"`
 	// Provider is set on INSERT only; it is text, NOT a Postgres ENUM.
@@ -114,6 +116,8 @@ type DownloadedPhoto struct {
 
 type Keywords []string
 
+type Fields []string
+
 func (k Keywords) Value() (driver.Value, error) {
 	if k == nil {
 		return pq.StringArray{}.Value()
@@ -127,6 +131,22 @@ func (k *Keywords) Scan(value any) error {
 		return err
 	}
 	*k = Keywords(items)
+	return nil
+}
+
+func (f Fields) Value() (driver.Value, error) {
+	if f == nil {
+		return pq.StringArray{}.Value()
+	}
+	return pq.StringArray(f).Value()
+}
+
+func (f *Fields) Scan(value any) error {
+	var items pq.StringArray
+	if err := items.Scan(value); err != nil {
+		return err
+	}
+	*f = Fields(items)
 	return nil
 }
 
@@ -343,14 +363,79 @@ func normalizeArtist(rawArtist string) string {
 	return strings.Join(strings.Fields(rawArtist), " ")
 }
 
+func normalizeManualFields(raw Fields) Fields {
+	allowed := map[string]struct{}{
+		"title":    {},
+		"artist":   {},
+		"date":     {},
+		"keywords": {},
+	}
+	seen := make(map[string]struct{}, len(raw))
+	fields := make([]string, 0, len(raw))
+	for _, field := range raw {
+		field = strings.ToLower(strings.TrimSpace(field))
+		if _, ok := allowed[field]; !ok {
+			continue
+		}
+		if _, duplicate := seen[field]; duplicate {
+			continue
+		}
+		seen[field] = struct{}{}
+		fields = append(fields, field)
+	}
+	sort.Strings(fields)
+	return Fields(fields)
+}
+
+func hasField(fields Fields, field string) bool {
+	field = strings.ToLower(strings.TrimSpace(field))
+	for _, candidate := range fields {
+		if strings.ToLower(strings.TrimSpace(candidate)) == field {
+			return true
+		}
+	}
+	return false
+}
+
+func mergeManualFields(existing Fields, added ...string) Fields {
+	fields := make(Fields, 0, len(existing)+len(added))
+	fields = append(fields, existing...)
+	fields = append(fields, added...)
+	return normalizeManualFields(fields)
+}
+
+// NormalizeManualKeywords applies the editor's intentional keyword cleanup:
+// trim, lowercase, and dedupe. It does not strip blocklisted or artist tokens.
+func NormalizeManualKeywords(raw []string) Keywords {
+	seen := make(map[string]struct{}, len(raw))
+	cleaned := make([]string, 0, len(raw))
+	for _, keyword := range raw {
+		key := strings.ToLower(strings.TrimSpace(keyword))
+		if key == "" {
+			continue
+		}
+		if _, duplicate := seen[key]; duplicate {
+			continue
+		}
+		seen[key] = struct{}{}
+		cleaned = append(cleaned, key)
+	}
+	return Keywords(cleaned)
+}
+
 // BeforeSave populates the NOT NULL url_hash and the derived category from the
 // single hook so every insert/update path is covered. A NULL url_hash would let
 // duplicates slip the unique guard, so this must be the only place it is set.
 func (p *DownloadedPhoto) BeforeSave(tx *gorm.DB) error {
 	p.URLHash = HashURL(p.URL)
 	p.Artist = normalizeArtist(p.Artist)
-	p.Title = catalogquality.NormalizeTitle(p.Title, p.FileName)
-	p.Keywords = Keywords(catalogquality.SanitizeKeywords(p.Artist, []string(p.Keywords)))
+	if !p.HasManualField("title") {
+		p.Title = catalogquality.NormalizeTitle(p.Title, p.FileName)
+	}
+	if !p.HasManualField("keywords") {
+		p.Keywords = Keywords(catalogquality.SanitizeKeywords(p.Artist, []string(p.Keywords)))
+	}
+	p.ManualFields = normalizeManualFields(p.ManualFields)
 	p.Category = resolveCategory(p)
 	if p.Provider == "" {
 		p.Provider = DefaultProvider
@@ -362,7 +447,14 @@ func (p *DownloadedPhoto) AfterFind(tx *gorm.DB) error {
 	if p.Keywords == nil {
 		p.Keywords = Keywords{}
 	}
+	if p.ManualFields == nil {
+		p.ManualFields = Fields{}
+	}
 	return nil
+}
+
+func (p *DownloadedPhoto) HasManualField(field string) bool {
+	return hasField(p.ManualFields, field)
 }
 
 // resolveCategory derives the stored category for a photo, mirroring the
@@ -762,20 +854,49 @@ func (db *DB) RecordDownload(photo *DownloadedPhoto) error {
 	// BeforeSave, so reading photo.Category here would capture the caller's empty
 	// value (the scraper relies on the hook deriving it from SourcePage) and a
 	// retry update would regroup recovered downloads as "unknown".
-	result := db.Clauses(clause.OnConflict{
-		Columns: []clause.Column{{Name: "url_hash"}},
-		Where: clause.Where{Exprs: []clause.Expression{
-			gorm.Expr("downloaded_photos.status <> ?", "downloaded"),
-		}},
-		DoUpdates: clause.Assignments(downloadAssignments(photo)),
-	}).Create(photo)
-	if result.Error != nil {
-		return result.Error
+	return db.Transaction(func(tx *gorm.DB) error {
+		var existing DownloadedPhoto
+		err := tx.Where("url_hash = ?", HashURL(photo.URL)).First(&existing).Error
+		switch {
+		case err == nil:
+			if existing.Status == "downloaded" {
+				return fmt.Errorf("photo already downloaded: %s", photo.URL)
+			}
+			applyManualFieldLocks(photo, existing)
+		case !errors.Is(err, gorm.ErrRecordNotFound):
+			return err
+		}
+		result := tx.Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "url_hash"}},
+			Where: clause.Where{Exprs: []clause.Expression{
+				gorm.Expr("downloaded_photos.status <> ?", "downloaded"),
+			}},
+			DoUpdates: clause.Assignments(downloadAssignments(photo)),
+		}).Create(photo)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return fmt.Errorf("photo already downloaded: %s", photo.URL)
+		}
+		return nil
+	})
+}
+
+func applyManualFieldLocks(photo *DownloadedPhoto, existing DownloadedPhoto) {
+	photo.ManualFields = existing.ManualFields
+	if existing.HasManualField("title") {
+		photo.Title = existing.Title
 	}
-	if result.RowsAffected == 0 {
-		return fmt.Errorf("photo already downloaded: %s", photo.URL)
+	if existing.HasManualField("artist") {
+		photo.Artist = existing.Artist
 	}
-	return nil
+	if existing.HasManualField("date") {
+		photo.UploadDate = existing.UploadDate
+	}
+	if existing.HasManualField("keywords") {
+		photo.Keywords = existing.Keywords
+	}
 }
 
 func downloadAssignments(photo *DownloadedPhoto) map[string]interface{} {
@@ -784,9 +905,20 @@ func downloadAssignments(photo *DownloadedPhoto) map[string]interface{} {
 		provider = DefaultProvider
 	}
 	artist := normalizeArtist(photo.Artist)
+	if photo.HasManualField("artist") {
+		artist = photo.Artist
+	}
+	title := catalogquality.NormalizeTitle(photo.Title, photo.FileName)
+	if photo.HasManualField("title") {
+		title = photo.Title
+	}
+	keywords := Keywords(catalogquality.SanitizeKeywords(artist, []string(photo.Keywords)))
+	if photo.HasManualField("keywords") {
+		keywords = photo.Keywords
+	}
 	return map[string]interface{}{
 		"source_page":     photo.SourcePage,
-		"title":           catalogquality.NormalizeTitle(photo.Title, photo.FileName),
+		"title":           title,
 		"artist":          artist,
 		"category":        resolveCategory(photo),
 		"upload_date":     photo.UploadDate,
@@ -803,7 +935,8 @@ func downloadAssignments(photo *DownloadedPhoto) map[string]interface{} {
 		"gps_longitude":   photo.GPSLongitude,
 		"file_size":       photo.FileSize,
 		"notes":           photo.Notes,
-		"keywords":        Keywords(catalogquality.SanitizeKeywords(artist, []string(photo.Keywords))),
+		"keywords":        keywords,
+		"manual_fields":   normalizeManualFields(photo.ManualFields),
 		"provider":        provider,
 		"content_hash":    photo.ContentHash,
 		"perceptual_hash": photo.PerceptualHash,
@@ -844,16 +977,33 @@ func (db *DB) RecordDownloadOrDuplicate(photo *DownloadedPhoto, duplicate *Inbox
 }
 
 func (db *DB) updateNonDownloadedURLHashOwner(photo *DownloadedPhoto) (bool, error) {
-	result := db.Model(&DownloadedPhoto{}).
-		Where("url_hash = ? AND status <> ?", HashURL(photo.URL), "downloaded").
-		Updates(downloadAssignments(photo))
-	if result.Error != nil || result.RowsAffected == 0 {
-		return false, result.Error
-	}
-	if err := db.Where("url_hash = ?", HashURL(photo.URL)).First(photo).Error; err != nil {
-		return false, err
-	}
-	return true, nil
+	updated := false
+	err := db.Transaction(func(tx *gorm.DB) error {
+		var existing DownloadedPhoto
+		err := tx.Where("url_hash = ? AND status <> ?", HashURL(photo.URL), "downloaded").First(&existing).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		applyManualFieldLocks(photo, existing)
+		result := tx.Model(&DownloadedPhoto{}).
+			Where("id = ? AND status <> ?", existing.ID, "downloaded").
+			Updates(downloadAssignments(photo))
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return nil
+		}
+		if err := tx.Where("id = ?", existing.ID).First(photo).Error; err != nil {
+			return err
+		}
+		updated = true
+		return nil
+	})
+	return updated, err
 }
 
 func (db *DB) routeDuplicateToInbox(duplicate *InboxItem, contentHash []byte) (bool, error) {
@@ -1686,6 +1836,157 @@ func (db *DB) SetPhotoFavorite(id uint64, favorite bool) error {
 	return db.DB.Model(&DownloadedPhoto{}).
 		Where("id = ?", id).
 		Update("favorite", favorite).Error
+}
+
+type PhotoMetadataUpdate struct {
+	Title      *string
+	Artist     *string
+	UploadDate **time.Time
+	Keywords   *Keywords
+	LockFields []string
+}
+
+func (u PhotoMetadataUpdate) empty() bool {
+	return u.Title == nil && u.Artist == nil && u.UploadDate == nil && u.Keywords == nil
+}
+
+func (db *DB) UpdatePhotoMetadata(id uint64, update PhotoMetadataUpdate) (*DownloadedPhoto, bool, error) {
+	if update.empty() {
+		photo, err := db.GetPhotoByID(id)
+		return photo, false, err
+	}
+	var out DownloadedPhoto
+	updated := false
+	err := db.Transaction(func(tx *gorm.DB) error {
+		var existing DownloadedPhoto
+		if err := tx.Where("id = ?", id).First(&existing).Error; err != nil {
+			return err
+		}
+		assignments := map[string]interface{}{}
+		if update.Title != nil {
+			assignments["title"] = strings.TrimSpace(*update.Title)
+		}
+		if update.Artist != nil {
+			assignments["artist"] = normalizeArtist(*update.Artist)
+		}
+		if update.UploadDate != nil {
+			assignments["upload_date"] = *update.UploadDate
+		}
+		if update.Keywords != nil {
+			assignments["keywords"] = *update.Keywords
+		}
+		lockFields := mergeManualFields(existing.ManualFields, update.LockFields...)
+		assignments["manual_fields"] = lockFields
+		if len(assignments) > 0 {
+			if err := tx.Model(&DownloadedPhoto{}).Where("id = ?", id).UpdateColumns(assignments).Error; err != nil {
+				return err
+			}
+			updated = true
+		}
+		if err := tx.Where("id = ?", id).First(&out).Error; err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	return &out, updated, nil
+}
+
+type BulkMetadataEdit struct {
+	IDs            []uint64
+	SetTitle       *string
+	SetArtist      *string
+	SetUploadDate  **time.Time
+	AddKeywords    Keywords
+	RemoveKeywords Keywords
+}
+
+type BulkMetadataEditResult struct {
+	Updated int
+	Skipped int
+	Photos  []DownloadedPhoto
+}
+
+func (db *DB) BulkEditPhotoMetadata(edit BulkMetadataEdit) (BulkMetadataEditResult, error) {
+	result := BulkMetadataEditResult{}
+	if len(edit.IDs) == 0 {
+		return result, nil
+	}
+	err := db.Transaction(func(tx *gorm.DB) error {
+		var photos []DownloadedPhoto
+		if err := tx.Where("id IN ?", edit.IDs).Find(&photos).Error; err != nil {
+			return err
+		}
+		byID := make(map[uint64]DownloadedPhoto, len(photos))
+		for _, photo := range photos {
+			byID[photo.ID] = photo
+		}
+		result.Skipped = len(edit.IDs) - len(byID)
+		updatedIDs := make([]uint64, 0, len(photos))
+		for _, id := range edit.IDs {
+			photo, ok := byID[id]
+			if !ok {
+				continue
+			}
+			assignments := map[string]interface{}{}
+			locks := []string{}
+			if edit.SetTitle != nil {
+				assignments["title"] = strings.TrimSpace(*edit.SetTitle)
+				locks = append(locks, "title")
+			}
+			if edit.SetArtist != nil {
+				assignments["artist"] = normalizeArtist(*edit.SetArtist)
+				locks = append(locks, "artist")
+			}
+			if edit.SetUploadDate != nil {
+				assignments["upload_date"] = *edit.SetUploadDate
+				locks = append(locks, "date")
+			}
+			if edit.AddKeywords != nil || edit.RemoveKeywords != nil {
+				assignments["keywords"] = editKeywords(photo.Keywords, edit.AddKeywords, edit.RemoveKeywords)
+				locks = append(locks, "keywords")
+			}
+			if len(assignments) == 0 {
+				result.Skipped++
+				continue
+			}
+			assignments["manual_fields"] = mergeManualFields(photo.ManualFields, locks...)
+			if err := tx.Model(&DownloadedPhoto{}).Where("id = ?", id).UpdateColumns(assignments).Error; err != nil {
+				return err
+			}
+			updatedIDs = append(updatedIDs, id)
+		}
+		result.Updated = len(updatedIDs)
+		if len(updatedIDs) > 0 {
+			if err := tx.Where("id IN ?", updatedIDs).Find(&result.Photos).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	return result, err
+}
+
+func editKeywords(existing Keywords, add Keywords, remove Keywords) Keywords {
+	removeSet := make(map[string]struct{}, len(remove))
+	for _, keyword := range remove {
+		removeSet[string(keyword)] = struct{}{}
+	}
+	combined := make([]string, 0, len(existing)+len(add))
+	for _, keyword := range existing {
+		key := strings.ToLower(strings.TrimSpace(keyword))
+		if key == "" {
+			continue
+		}
+		if _, removed := removeSet[key]; removed {
+			continue
+		}
+		combined = append(combined, key)
+	}
+	combined = append(combined, []string(add)...)
+	return NormalizeManualKeywords(combined)
 }
 
 // GetPhotosToday returns photos downloaded today

@@ -22,11 +22,15 @@ func TestDownloadedPhotoUpsertContract(t *testing.T) {
 		t.Fatalf("downloaded_photos must upsert on url_hash: %s", sql)
 	}
 	for _, mutable := range []string{
-		"source_page", "title", "artist", "file_name", "upload_date",
-		"file_path", "file_size", "status", "error_message", "downloaded_at",
+		"source_page", "file_name", "file_path", "file_size", "status", "error_message", "downloaded_at",
 	} {
 		if !strings.Contains(sql, mutable+" = EXCLUDED."+mutable) {
 			t.Fatalf("expected mutable legacy field %s in SET list: %s", mutable, sql)
+		}
+	}
+	for _, locked := range []string{"title", "artist", "date"} {
+		if !strings.Contains(sql, "manual_fields @> ARRAY['"+locked+"']::text[]") {
+			t.Fatalf("expected legacy upsert to respect manual %s lock: %s", locked, sql)
 		}
 	}
 	setList := sql[strings.Index(sql, " DO UPDATE SET "):strings.Index(sql, " RETURNING ")]
@@ -34,6 +38,9 @@ func TestDownloadedPhotoUpsertContract(t *testing.T) {
 		if strings.Contains(setList, owned) {
 			t.Fatalf("%s must never be in downloaded_photos SET list: %s", owned, setList)
 		}
+	}
+	if strings.Contains(setList, "manual_fields =") {
+		t.Fatalf("manual_fields must never be assigned by ETL: %s", setList)
 	}
 	if !strings.Contains(sql, "provider") {
 		t.Fatalf("provider must be stamped on insert: %s", sql)

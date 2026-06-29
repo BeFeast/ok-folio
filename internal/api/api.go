@@ -176,6 +176,7 @@ func (s *Server) setupRoutes() {
 		// Photo endpoints
 		r.Post("/pieces", s.handleCreatePiece)
 		r.Get("/photos/{id}", s.handlePhotoDetail)
+		r.Patch("/photos/{id}", s.handleUpdatePieceMetadata)
 		r.Get("/photos/{id}/thumbnail", s.handleImageThumbnail)
 		r.Get("/photos/{id}/image", s.handleImageFull)
 		r.Get("/photos/{id}/favorite", s.handleGetFavoriteStatus)
@@ -185,6 +186,7 @@ func (s *Server) setupRoutes() {
 		r.Get("/photos/week", s.handleWeekPhotos)
 
 		// Gallery architecture prototype
+		r.Post("/catalog/bulk-edit", s.handleBulkEditCatalog)
 		r.Get("/gallery/catalog", s.handleGalleryCatalog)
 		r.Get("/gallery/decision", s.handleGalleryDecision)
 		r.Get("/inbox", s.handleInbox)

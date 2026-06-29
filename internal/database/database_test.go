@@ -192,6 +192,55 @@ func TestRecordDownloadSanitizesRetryUpdate(t *testing.T) {
 	}
 }
 
+func TestRecordDownloadRetryRespectsManualFieldLocks(t *testing.T) {
+	db := setupTestDB(t)
+
+	const sharedURL = "https://example.com/manual-lock.jpg"
+	manualDate := time.Date(2020, 4, 5, 0, 0, 0, 0, time.UTC)
+	if err := db.Create(&DownloadedPhoto{
+		URL:          sharedURL,
+		Title:        "Manual Title",
+		Artist:       "Manual Artist",
+		UploadDate:   &manualDate,
+		Keywords:     NormalizeManualKeywords([]string{"Favorite", "Portrait"}),
+		ManualFields: Fields{"title", "artist", "date", "keywords"},
+		Status:       "failed",
+	}).Error; err != nil {
+		t.Fatalf("Failed to seed manual row: %v", err)
+	}
+
+	retryDate := time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC)
+	retry := &DownloadedPhoto{
+		URL:        sharedURL,
+		Title:      "Provider Title",
+		Artist:     "Provider Artist",
+		UploadDate: &retryDate,
+		Keywords:   Keywords{"provider", "hidden"},
+		FileName:   "manual-lock.jpg",
+		Status:     "downloaded",
+	}
+	if err := db.RecordDownload(retry); err != nil {
+		t.Fatalf("Retry RecordDownload failed: %v", err)
+	}
+
+	var stored DownloadedPhoto
+	if err := db.Where("url_hash = ?", HashURL(sharedURL)).First(&stored).Error; err != nil {
+		t.Fatalf("Failed to load retried row: %v", err)
+	}
+	if stored.Title != "Manual Title" || stored.Artist != "Manual Artist" {
+		t.Fatalf("Expected manual title/artist preserved, got %#v", stored)
+	}
+	if stored.UploadDate == nil || !stored.UploadDate.Equal(manualDate) {
+		t.Fatalf("Expected manual date preserved, got %v", stored.UploadDate)
+	}
+	if strings.Join(stored.Keywords, ",") != "favorite,portrait" {
+		t.Fatalf("Expected manual keywords preserved without blocklist strip, got %#v", stored.Keywords)
+	}
+	if !stored.HasManualField("title") || !stored.HasManualField("keywords") {
+		t.Fatalf("Expected manual field locks preserved, got %#v", stored.ManualFields)
+	}
+}
+
 func TestRecordDownload_DuplicateURL(t *testing.T) {
 	db := setupTestDB(t)
 
@@ -520,6 +569,72 @@ func TestRecordDownloadOrDuplicateRecoversFailedURLHashOwner(t *testing.T) {
 	}
 	if total != 0 || len(exceptions) != 0 {
 		t.Fatalf("Expected no inbox duplicate for successful retry, got total=%d items=%#v", total, exceptions)
+	}
+}
+
+func TestRecordDownloadOrDuplicateRecoveryRespectsManualFieldLocks(t *testing.T) {
+	db := setupTestDB(t)
+
+	const sharedURL = "https://example.com/retry-manual-lock.jpg"
+	manualDate := time.Date(2021, 2, 3, 0, 0, 0, 0, time.UTC)
+	manualRow := &DownloadedPhoto{
+		URL:          sharedURL,
+		Title:        "Manual Title",
+		Artist:       "Manual Artist",
+		UploadDate:   &manualDate,
+		Keywords:     NormalizeManualKeywords([]string{"Favorite", "NonPS"}),
+		ManualFields: Fields{"title", "artist", "date", "keywords"},
+		Status:       "failed",
+	}
+	if err := db.Create(manualRow).Error; err != nil {
+		t.Fatalf("Failed to seed manual failed row: %v", err)
+	}
+	if err := db.Model(&DownloadedPhoto{}).Where("id = ?", manualRow.ID).UpdateColumn("artist", "  Manual  Artist  ").Error; err != nil {
+		t.Fatalf("Failed to seed locked raw artist: %v", err)
+	}
+
+	providerDate := time.Date(2025, 6, 7, 0, 0, 0, 0, time.UTC)
+	retry := &DownloadedPhoto{
+		URL:        sharedURL,
+		Title:      "Provider Title",
+		Artist:     "Provider Artist",
+		UploadDate: &providerDate,
+		Keywords:   Keywords{"provider", "hidden"},
+		FileName:   "retry-manual-lock.jpg",
+		FileSize:   456,
+		Status:     "downloaded",
+	}
+	duplicate := &InboxItem{
+		ProviderID: "webgallery",
+		DedupeKey:  "webgallery:retry-manual-lock",
+		Status:     "duplicate",
+		Reason:     "url_hash already kept",
+	}
+	kept, err := db.RecordDownloadOrDuplicate(retry, duplicate)
+	if err != nil {
+		t.Fatalf("Expected retry to update failed row without error, got %v", err)
+	}
+	if !kept {
+		t.Fatalf("Expected retry to be kept after recovering failed row")
+	}
+
+	var stored DownloadedPhoto
+	if err := db.Where("url_hash = ?", HashURL(sharedURL)).First(&stored).Error; err != nil {
+		t.Fatalf("Failed to load recovered row: %v", err)
+	}
+	if stored.Title != "Manual Title" || stored.Artist != "  Manual  Artist  " {
+		t.Fatalf("Expected manual title/artist preserved, got %#v", stored)
+	}
+	if stored.UploadDate == nil || !stored.UploadDate.Equal(manualDate) {
+		t.Fatalf("Expected manual date preserved, got %v", stored.UploadDate)
+	}
+	if strings.Join(stored.Keywords, ",") != "favorite,nonps" {
+		t.Fatalf("Expected manual keywords preserved without blocklist strip, got %#v", stored.Keywords)
+	}
+	for _, field := range []string{"title", "artist", "date", "keywords"} {
+		if !stored.HasManualField(field) {
+			t.Fatalf("Expected manual field %q in %#v", field, stored.ManualFields)
+		}
 	}
 }
 
