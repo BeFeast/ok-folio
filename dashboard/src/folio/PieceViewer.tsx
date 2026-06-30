@@ -321,11 +321,11 @@ export default function PieceViewer() {
   }, [addPieceToFolioAction]);
 
   const startEditing = useCallback(() => {
-    if (!selected) return;
+    if (!selected || editing) return;
     setEditDraft({ title: selected.t, artist: selected.a === "Unknown" ? "" : selected.a, date: selected.editDate, keywords: selected.keywords });
     setKeywordDraft("");
     setEditing(true);
-  }, [selected]);
+  }, [editing, selected]);
 
   const addKeyword = useCallback(() => {
     const value = keywordDraft.trim();
