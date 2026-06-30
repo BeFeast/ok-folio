@@ -49,7 +49,80 @@ function coverIds(folio: Folio, photos?: Photo[]): number[] {
   if (folio.cover_photo_id && !ids.includes(folio.cover_photo_id)) {
     ids.unshift(folio.cover_photo_id);
   }
-  return ids.slice(0, 2);
+  return ids.slice(0, 3);
+}
+
+function FolioCoverObject({
+  folio,
+  ids,
+  selected = false,
+  eager = false,
+}: {
+  folio: Folio;
+  ids: number[];
+  selected?: boolean;
+  eager?: boolean;
+}) {
+  const layers = [
+    { key: "back", id: ids[2], left: "15%", top: "15%", zIndex: 1, size: 520, filter: "brightness(0.8) saturate(0.9)", shadow: "0 8px 16px var(--shadow)" },
+    { key: "mid", id: ids[1], left: "7.5%", top: "7.5%", zIndex: 2, size: 600, filter: "brightness(0.92)", shadow: "0 9px 18px var(--shadow)" },
+    { key: "hero", id: ids[0], left: 0, top: 0, zIndex: 3, size: 720, filter: undefined, shadow: "0 14px 28px var(--shadow-2), 0 2px 6px var(--shadow)" },
+  ].filter((layer) => layer.id);
+
+  return (
+    <span style={{ display: "block", position: "relative", width: "100%", aspectRatio: "1 / 1", fontFamily: "var(--sans)" }}>
+      {layers.length === 0 ? (
+        <span
+          style={{
+            position: "absolute",
+            inset: 0,
+            border: "1.5px dashed var(--line-2)",
+            borderRadius: 3,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            background: "var(--surface)",
+            boxShadow: selected ? "0 0 0 3px var(--accent)" : undefined,
+          }}
+        >
+          <span style={{ opacity: 0.55 }}>
+            <BrandMark width={34} height={39} />
+          </span>
+        </span>
+      ) : (
+        layers.map((layer) => (
+          <span
+            key={layer.key}
+            style={{
+              position: "absolute",
+              left: layer.left,
+              top: layer.top,
+              width: "80%",
+              height: "80%",
+              zIndex: layer.zIndex,
+              borderRadius: 3,
+              overflow: "hidden",
+              background: "var(--surface-2)",
+              boxShadow: layer.key === "hero" && selected ? `0 0 0 3px var(--accent), ${layer.shadow}` : layer.shadow,
+              border: "1px solid var(--line)",
+            }}
+          >
+            <OkfImage
+              src={getPhotoThumbnailUrl(layer.id!, layer.size)}
+              alt={layer.key === "hero" ? folio.name : ""}
+              title={folio.name}
+              artist={layer.key === "hero" ? folioPiecesLabel(folio.piece_count) : undefined}
+              loading={eager && layer.key === "hero" ? "eager" : "lazy"}
+              imgStyle={{ width: "100%", height: "100%", objectFit: "cover", display: "block", filter: layer.filter }}
+              matteStyle={{ ...TILE_MATTE, borderRadius: 3 }}
+              matteTitleStyle={{ fontFamily: "var(--serif)", fontSize: 16, lineHeight: 1.12, color: "var(--ink)" }}
+              matteArtistStyle={{ fontFamily: "var(--sans)", fontSize: 11, color: "var(--muted)" }}
+            />
+          </span>
+        ))
+      )}
+    </span>
+  );
 }
 
 function MobileFolioTile({
@@ -63,16 +136,13 @@ function MobileFolioTile({
 }) {
   const pieces = useQuery({
     queryKey: ["folio-cover-pieces", folio.id],
-    queryFn: () => fetchFolioPieces(folio.id, 2, 0),
+    queryFn: () => fetchFolioPieces(folio.id, 3, 0),
     staleTime: 15000,
   });
-  const ids = coverIds(folio, pieces.data?.photos);
-  const top = ids[0];
-  const peek = ids[1] ?? ids[0];
 
   return (
     <figure style={{ margin: 0, minWidth: 0 }}>
-      <div style={{ position: "relative", paddingTop: 8, paddingRight: 6 }}>
+      <div style={{ position: "relative" }}>
         <Link
           to={`/folios/${folio.id}`}
           style={{
@@ -83,54 +153,7 @@ function MobileFolioTile({
             textDecoration: "none",
           }}
         >
-          <span
-            style={{
-              position: "absolute",
-              inset: "8px 0 0 6px",
-              overflow: "hidden",
-              borderRadius: 3,
-              background: "var(--wall)",
-              opacity: 0.55,
-            }}
-          >
-            {peek ? (
-              <OkfImage
-                src={getPhotoThumbnailUrl(peek, 500)}
-                alt=""
-                title={folio.name}
-                imgStyle={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
-                matteStyle={{ ...TILE_MATTE, borderRadius: 3 }}
-              />
-            ) : null}
-          </span>
-          <span
-            style={{
-              position: "absolute",
-              inset: "0 6px 8px 0",
-              overflow: "hidden",
-              borderRadius: 3,
-              background: "var(--wall)",
-              boxShadow: selected ? "0 0 0 3px var(--accent), 0 8px 20px rgba(48,40,28,0.16)" : "0 8px 20px rgba(48,40,28,0.16)",
-            }}
-          >
-            {top ? (
-              <OkfImage
-                src={getPhotoThumbnailUrl(top, 600)}
-                alt={folio.name}
-                title={folio.name}
-                artist={folioPiecesLabel(folio.piece_count)}
-                loading="eager"
-                imgStyle={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
-                matteStyle={{ ...TILE_MATTE, borderRadius: 3 }}
-                matteTitleStyle={{ fontFamily: "var(--serif)", fontSize: 16, lineHeight: 1.12, color: "var(--ink)" }}
-                matteArtistStyle={{ fontFamily: "var(--sans)", fontSize: 11, color: "var(--muted)" }}
-              />
-            ) : (
-              <span style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center" }}>
-                <BrandMark width={34} height={39} />
-              </span>
-            )}
-          </span>
+          <FolioCoverObject folio={folio} ids={coverIds(folio, pieces.data?.photos)} selected={selected} eager />
         </Link>
         <button
           type="button"
@@ -138,8 +161,8 @@ function MobileFolioTile({
           onClick={() => onActions(folio)}
           style={{
             position: "absolute",
-            top: 14,
-            right: 12,
+            top: 8,
+            right: 8,
             zIndex: 3,
             width: 36,
             height: 36,
@@ -175,7 +198,7 @@ function MobileNewFolioTile({ onClick }: { onClick: () => void }) {
         border: 0,
         background: "transparent",
         color: "inherit",
-        padding: "8px 6px 0 0",
+        padding: 0,
         textAlign: "left",
       }}
     >
@@ -442,9 +465,18 @@ function MobileFolios({
 }
 
 function FolioTile({ folio }: { folio: Folio }) {
-  const { renameFolioAction, deleteFolioAction } = useFolio();
-  const [menuOpen, setMenuOpen] = useState(false);
-  const coverSrc = folio.cover_photo_id == null ? `__missing-folio-cover-${folio.id}` : getPhotoThumbnailUrl(folio.cover_photo_id, 700);
+  const { renameFolioAction, changeFolioCoverAction, deleteFolioAction } = useFolio();
+  const [menuOpen, setMenuOpen] = useState<"actions" | "cover" | null>(null);
+  const pieces = useQuery({
+    queryKey: ["folio-cover-pieces", folio.id],
+    queryFn: () => fetchFolioPieces(folio.id, 3, 0),
+    staleTime: 15000,
+  });
+  const coverChoices = useQuery({
+    queryKey: ["folio-cover-menu-pieces", folio.id],
+    queryFn: () => fetchFolioPieces(folio.id, 24, 0),
+    enabled: menuOpen === "cover",
+  });
 
   const rename = () => {
     const next = window.prompt("Rename folio", folio.name);
@@ -453,14 +485,19 @@ function FolioTile({ folio }: { folio: Folio }) {
     if (name && name !== folio.name) {
       renameFolioAction(folio.id, name);
     }
-    setMenuOpen(false);
+    setMenuOpen(null);
+  };
+
+  const changeCover = (photoId: number) => {
+    changeFolioCoverAction(folio.id, photoId);
+    setMenuOpen(null);
   };
 
   const remove = () => {
     if (window.confirm(`Delete "${folio.name}"? Pieces stay in your gallery.`)) {
       deleteFolioAction(folio.id);
     }
-    setMenuOpen(false);
+    setMenuOpen(null);
   };
 
   return (
@@ -471,33 +508,21 @@ function FolioTile({ folio }: { folio: Folio }) {
           display: "block",
           position: "relative",
           aspectRatio: "1 / 1",
-          overflow: "hidden",
-          background: "var(--surface)",
-          boxShadow: "0 1px 8px var(--shadow)",
           color: "inherit",
           textDecoration: "none",
         }}
       >
-        <OkfImage
-          src={coverSrc}
-          alt={folio.name}
-          title={folio.name}
-          artist={folioPiecesLabel(folio.piece_count)}
-          imgStyle={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", zIndex: 1 }}
-          matteStyle={TILE_MATTE}
-          matteTitleStyle={{ fontFamily: "var(--serif)", fontStyle: "italic", fontSize: 17, lineHeight: 1.2, color: "var(--ink)" }}
-          matteArtistStyle={{ fontFamily: "var(--sans)", fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: "var(--muted)" }}
-        />
+        <FolioCoverObject folio={folio} ids={coverIds(folio, pieces.data?.photos)} />
       </Link>
 
-      <div style={{ position: "absolute", top: 9, right: 9, zIndex: 4 }}>
+      <div style={{ position: "absolute", top: 8, right: 8, zIndex: 4 }}>
         <Hov
           as="button"
           aria-label={`Actions for ${folio.name}`}
           onClick={(event: MouseEvent<HTMLButtonElement>) => {
             event.preventDefault();
             event.stopPropagation();
-            setMenuOpen((open) => !open);
+            setMenuOpen((open) => (open ? null : "actions"));
           }}
           style={{
             appearance: "none",
@@ -517,7 +542,7 @@ function FolioTile({ folio }: { folio: Folio }) {
         >
           <DotsIcon />
         </Hov>
-        {menuOpen ? (
+        {menuOpen === "actions" ? (
           <div
             style={{
               position: "absolute",
@@ -532,7 +557,51 @@ function FolioTile({ folio }: { folio: Folio }) {
             }}
           >
             <MenuButton onClick={rename}>Rename</MenuButton>
+            <MenuButton onClick={() => setMenuOpen("cover")}>Change cover</MenuButton>
             <MenuButton onClick={remove}>Delete</MenuButton>
+          </div>
+        ) : menuOpen === "cover" ? (
+          <div
+            style={{
+              position: "absolute",
+              right: 0,
+              top: 38,
+              width: 270,
+              padding: 10,
+              border: "1px solid var(--line)",
+              background: "var(--surface)",
+              boxShadow: "0 18px 50px rgba(0,0,0,0.22)",
+              zIndex: 5,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 10 }}>
+              <div style={{ fontFamily: "var(--sans)", fontSize: 12, fontWeight: 700, color: "var(--graphite)" }}>Change cover</div>
+              <button type="button" onClick={() => setMenuOpen("actions")} style={{ border: 0, background: "transparent", color: "var(--accent)", fontFamily: "var(--sans)", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                Back
+              </button>
+            </div>
+            {coverChoices.isLoading ? (
+              <div style={{ padding: "22px 0", textAlign: "center", fontFamily: "var(--sans)", fontSize: 12, color: "var(--muted)" }}>Loading pieces...</div>
+            ) : coverChoices.data?.photos.length ? (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 7 }}>
+                {coverChoices.data.photos.map((photo) => {
+                  const piece = mapPhoto(photo);
+                  return (
+                    <button
+                      key={photo.ID}
+                      type="button"
+                      aria-label={`Use ${piece.t} as cover`}
+                      onClick={() => changeCover(photo.ID)}
+                      style={{ position: "relative", aspectRatio: "1 / 1", border: 0, borderRadius: 3, padding: 0, overflow: "hidden", background: "var(--wall)", cursor: "pointer", boxShadow: photo.ID === folio.cover_photo_id ? "0 0 0 3px var(--accent)" : "0 1px 5px var(--shadow)" }}
+                    >
+                      <OkfImage src={getPhotoThumbnailUrl(photo.ID, 320)} alt={piece.t} title={piece.t} imgStyle={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} matteStyle={TILE_MATTE} />
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div style={{ padding: "22px 0", textAlign: "center", fontFamily: "var(--sans)", fontSize: 12, color: "var(--muted)" }}>Add pieces before choosing a cover.</div>
+            )}
           </div>
         ) : null}
       </div>
@@ -616,7 +685,7 @@ export default function Folios() {
             </div>
           </div>
         ) : (
-          <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(166px, 1fr))", gap: 13 }}>
+          <section style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: "40px 34px" }}>
             {folios.map((folio) => (
               <FolioTile key={folio.id} folio={folio} />
             ))}
