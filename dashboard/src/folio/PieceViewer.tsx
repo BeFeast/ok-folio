@@ -217,7 +217,7 @@ export default function PieceViewer() {
     infoPanelRememberedOpen,
     setInfoPanelRememberedOpen,
   } = useFolio();
-  const { isMobile } = useViewport();
+  const { isMobile, width: viewportWidth } = useViewport();
   const reducedMotion = useReducedMotion();
 
   useEffect(() => {
@@ -564,6 +564,13 @@ export default function PieceViewer() {
   );
 
   if (isMobile) {
+    const compactMobileChrome = viewportWidth > 0 && viewportWidth <= 360;
+    const mobileChromeInset = compactMobileChrome ? 12 : 16;
+    const mobileChromeGap = compactMobileChrome ? 6 : 8;
+    const mobileChromeButton: CSSProperties = compactMobileChrome
+      ? { ...MOBILE_CHROME, width: 40, height: 40, minWidth: 40 }
+      : MOBILE_CHROME;
+
     return (
       <div
         style={{
@@ -627,14 +634,15 @@ export default function PieceViewer() {
         <div
           style={{
             position: "absolute",
-            left: 16,
-            right: 16,
+            left: mobileChromeInset,
+            right: mobileChromeInset,
             top: "calc(env(safe-area-inset-top) + 12px)",
             zIndex: 12,
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
-            gap: 10,
+            gap: 8,
+            minWidth: 0,
             opacity: chromeVisible ? 1 : 0,
             transform: chromeVisible ? "translateY(0)" : "translateY(-8px)",
             transition: reducedMotion ? "opacity .16s ease" : "opacity .22s ease, transform .22s ease",
@@ -644,7 +652,7 @@ export default function PieceViewer() {
           <div
             style={{
               minHeight: 36,
-              padding: "0 14px",
+              padding: "0 12px",
               borderRadius: 999,
               background: "rgba(20,14,10,.4)",
               backdropFilter: "blur(14px)",
@@ -657,12 +665,17 @@ export default function PieceViewer() {
               fontSize: 12,
               fontWeight: 600,
               color: "rgba(251,246,238,.86)",
-              flex: "none",
+              flex: "1 1 auto",
+              minWidth: 0,
+              maxWidth: compactMobileChrome ? 92 : 120,
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
             }}
           >
             {selIndex >= 0 ? `${selIndex + 1} / ${selCount}` : ""}
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flex: "none" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: mobileChromeGap, flex: "0 0 auto" }}>
             <button
               type="button"
               onClick={(e) => {
@@ -672,7 +685,7 @@ export default function PieceViewer() {
               }}
               aria-label={panelOpen ? "Hide info" : "Show info"}
               aria-pressed={panelOpen}
-              style={{ ...MOBILE_CHROME, ...(panelOpen ? VIEWER_CHROME_ACTIVE : null), cursor: "pointer" }}
+              style={{ ...mobileChromeButton, ...(panelOpen ? VIEWER_CHROME_ACTIVE : null), cursor: "pointer" }}
             >
               <InfoIcon />
             </button>
@@ -685,7 +698,7 @@ export default function PieceViewer() {
                 showChrome();
               }}
               aria-label="Edit metadata"
-              style={{ ...MOBILE_CHROME, ...(editing ? VIEWER_CHROME_ACTIVE : null), cursor: "pointer" }}
+              style={{ ...mobileChromeButton, ...(editing ? VIEWER_CHROME_ACTIVE : null), cursor: "pointer" }}
             >
               <PencilIcon />
             </button>
@@ -696,7 +709,7 @@ export default function PieceViewer() {
                 showChrome();
               }}
               aria-label={fav ? "Remove favorite" : "Favorite"}
-              style={{ ...MOBILE_CHROME, cursor: "pointer" }}
+              style={{ ...mobileChromeButton, cursor: "pointer" }}
             >
               <HeartIcon size={20} fill={fav ? "#DC8A70" : "transparent"} stroke={fav ? "#DC8A70" : "#FBF6EE"} strokeWidth={1.7} />
             </button>
@@ -706,7 +719,7 @@ export default function PieceViewer() {
                 closePiece();
               }}
               aria-label="Close"
-              style={{ ...MOBILE_CHROME, cursor: "pointer" }}
+              style={{ ...mobileChromeButton, cursor: "pointer" }}
             >
               <CloseIcon />
             </button>
