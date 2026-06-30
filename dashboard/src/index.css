@@ -22,8 +22,8 @@
   --on-accent: #fbf6ee;
   --shadow: rgba(48, 40, 28, 0.1);
   --shadow-2: rgba(48, 40, 28, 0.2);
-  --serif: "Spectral", Georgia, "Times New Roman", serif;
-  --sans: "Hanken Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --serif: "Newsreader", Georgia, "Times New Roman", serif;
+  --sans: "Instrument Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-right: env(safe-area-inset-right, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);

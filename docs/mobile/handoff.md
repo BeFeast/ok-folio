@@ -68,25 +68,25 @@ images — wire them to actual piece thumbnails/full images.
 On accent buttons in dark mode, label/icon color is the dark bg `#16130E` (not white).
 
 ### Typography
-- **Display / titles:** `Spectral` (serif). Weights 300/400/500/600. Used for screen
+- **Display / titles:** `Newsreader` (serif). Weights 300/400/500/600. Used for screen
   titles, piece titles, folio names, empty-state headings, museum labels.
-- **UI / labels / metadata:** `Hanken Grotesk` (sans). Weights 400/500/600/700. Used for
+- **UI / labels / metadata:** `Instrument Sans` (sans). Weights 400/500/600/700. Used for
   all controls, body, captions, pills, nav labels.
 
 Type scale observed in the mock (px):
 | Role | Font / weight / size / line-height |
 |---|---|
-| Screen title | Spectral 500 · 26 |
-| Screen title (compact, w/ mode bar) | Spectral 500 · 24 |
-| FolioDetail / viewer big title | Spectral 400 · 28 / 26 |
-| Piece title (grid caption) | Spectral 500 · 13–15 |
-| Empty-state heading | Spectral 500 · 21–22 |
-| Body / field text | Hanken 400 · 14–15 |
-| Metadata / caption | Hanken 400 · 11–12 |
-| Nav label | Hanken 500/600 · 9.5–10 |
-| Section label (ALL-CAPS) | Hanken 600 · 11, letter-spacing .05–.06em, ink-45 |
-| Button label | Hanken 600 · 14–15 |
-| Chip / pill | Hanken 500 · 12–13 |
+| Screen title | Newsreader 500 · 26 |
+| Screen title (compact, w/ mode bar) | Newsreader 500 · 24 |
+| FolioDetail / viewer big title | Newsreader 400 · 28 / 26 |
+| Piece title (grid caption) | Newsreader 500 · 13–15 |
+| Empty-state heading | Newsreader 500 · 21–22 |
+| Body / field text | Instrument Sans 400 · 14–15 |
+| Metadata / caption | Instrument Sans 400 · 11–12 |
+| Nav label | Instrument Sans 500/600 · 9.5–10 |
+| Section label (ALL-CAPS) | Instrument Sans 600 · 11, letter-spacing .05–.06em, ink-45 |
+| Button label | Instrument Sans 600 · 14–15 |
+| Chip / pill | Instrument Sans 500 · 12–13 |
 
 ### Spacing & Geometry
 - Screen horizontal padding: **20px** (16px on dense 3-up grids / pickers).
@@ -114,7 +114,7 @@ Type scale observed in the mock (px):
   - Active tab = accent icon **and** label; inactive = ink-50 icon + label.
   - **Inbox** shows an unread **count badge** (accent fill, 1.5px bg-colored ring,
     700 weight numeral) at top-right of its icon.
-- **Compact top bar:** screen title (Spectral) on the left; on the right, three actions:
+- **Compact top bar:** screen title (Newsreader) on the left; on the right, three actions:
   **search** (magnifier), **light/dark toggle** (half-moon), and the accent **Add piece**
   (+, the only filled control). Icon buttons ~40px circular.
 - **Search:** tapping the magnifier expands a full-width rounded field (focus ring
@@ -138,17 +138,17 @@ Responsive columns: **1 on small phones, 2 on large/landscape**; Wall adds a 3rd
 
 Three modes:
 - **Magazine** — editorial varied layout: a full-width hero (196px) with an overlaid
-  caption (gradient scrim bottom; Spectral title + Hanken artist/date in white), then a
+  caption (gradient scrim bottom; Newsreader title + Instrument Sans artist/date in white), then a
   mixed row (one tall tile beside two stacked tiles), then a wide tile. For slow browsing.
 - **Library** — uniform 2-col grid; each cell = image (124px) + **museum label below**
-  (Spectral title + Hanken "Artist · Year"). For scanning by title/author.
+  (Newsreader title + Instrument Sans "Artist · Year"). For scanning by title/author.
 - **Wall** — edge-to-edge salon hang: `grid-template-columns: 1fr 1fr 1fr`, `gap: 3px`,
   `grid-auto-rows: 84px`, some tiles `grid-row: span 2`. No gutters, no labels.
 
 States:
 - **Loading** — title shows, grid is shimmer skeleton tiles in final aspect ratios; a
   centered "Loading your folio…" with spinner. App shell paints instantly from cache.
-- **Empty (first run)** — centered BrandMark (outlined), Spectral "Nothing here yet",
+- **Empty (first run)** — centered BrandMark (outlined), Newsreader "Nothing here yet",
   body copy, accent **"Add your first piece"** button. Warm, never scolding.
 - **Filtered-empty** — active filters remain as removable chips under the title; centered
   magnifier-with-minus glyph, "No pieces match", "Try loosening one", outlined
@@ -156,7 +156,7 @@ States:
 
 ### 2. Filters (bottom sheet)
 Rises over a dim scrim from the bottom; 24px top radius, drag handle. Contents:
-- Title "Filters" (Spectral) + "Reset" text button.
+- Title "Filters" (Newsreader) + "Reset" text button.
 - **Favorites only** row (heart icon + label) with an accent toggle (on).
 - **ARTIST** type-ahead input (magnifier + "Type to find an artist…").
 - **MEDIUM** chips (Painting/Photography/Drawing/Print/Sculpture): selected = accent
@@ -168,7 +168,7 @@ Full-screen artwork on near-black (`#0c0a08`). Chrome floats on blurred pills
 (`rgba(20,14,10,.4)`, blur):
 - Top: **close ×** (left), **counter** "12 / 248" (center), **favorite heart** (right,
   filled accent when favorited).
-- Bottom **peek**: gradient scrim with Spectral title, Hanken "Artist · Year", a
+- Bottom **peek**: gradient scrim with Newsreader title, Instrument Sans "Artist · Year", a
   "Swipe up for details" hint, and an up-chevron.
 - Chrome **auto-hides** after a beat (tap to bring back).
 
@@ -177,7 +177,7 @@ artwork down with a gentle scale, then drops back to the exact grid tile it came
 swipe **▲** → open info sheet. Honor **reduced-motion** (fall back to a quiet fade).
 
 **Info bottom sheet** (hidden by default): drag-up reveals a sheet (surface `#161310`,
-24px top radius) with the **museum label** — big Spectral title, accent artist name, then
+24px top radius) with the **museum label** — big Newsreader title, accent artist name, then
 a key/value list: **Date, Medium, Source, Dimensions, File** (e.g. "3024 × 2796 · 4.2 MB").
 **KEYWORDS** as chips. Pinned footer actions: accent **"Add to folio"**, a **share**
 button, a **favorite** button.
@@ -185,13 +185,13 @@ button, a **favorite** button.
 ### 4. Folios
 - **Cover grid** — title "Folios" + accent Add (+). 2-col grid of **cover tiles**: a
   top piece image over a peeking second image (offset `inset:8px 0 0 6px`, opacity .55)
-  to read as a stack; below = folio name (Spectral) + "N pieces". A dashed **"New folio"**
+  to read as a stack; below = folio name (Newsreader) + "N pieces". A dashed **"New folio"**
   tile (accent dashed border, + icon) closes the grid.
 - **Create / rename / delete** — long-press (or ⋯) a folio → action sheet listing the
   folio header, **Rename**, **Change cover**, **Delete folio** (danger red), plus a
   separate **Cancel** card. The selected folio shows an accent selection ring behind the
   sheet. Delete confirms. The "+" opens the same sheet to name a new folio.
-- **FolioDetail** — back chevron + ⋯ menu; big Spectral folio name + "N pieces · updated …".
+- **FolioDetail** — back chevron + ⋯ menu; big Newsreader folio name + "N pieces · updated …".
   Tighter **3-up** grid (108px tiles, 8px gap). A floating accent **"Add pieces"** pill
   over a bottom paper-fade.
 - **Add pieces (multi-select picker)** — full-screen sheet "Add to <Folio>" with
@@ -202,13 +202,13 @@ button, a **favorite** button.
 ### 5. Inbox (exceptions queue)
 Title "Inbox" + "N to review". **Text-first rows** (paper-raised cards): a status **pill**
 (e.g. "Source removed" = danger; "Possible duplicate" = accent-tint; "Missing image" =
-warning), Spectral title, Hanken artist, the **reason in plain words**, and a **source/
+warning), Newsreader title, Instrument Sans artist, the **reason in plain words**, and a **source/
 action link** (arrow-out icon + "View source" / "Compare" / "Retry import"). A
 **thumbnail** (54px) when the matched piece has an image, else a placeholder glyph tile.
 A **×** dismiss button at the row's top-right.
 - **Swipe-to-dismiss** — swipe a row left to reveal a danger **Dismiss** action behind it
   (× + label); the × does the same. Dismissed items leave a brief **undo** toast.
-- **All caught up (empty)** — accent-tint circle with a check, Spectral "All caught up",
+- **All caught up (empty)** — accent-tint circle with a check, Newsreader "All caught up",
   body copy. No tab badge when empty.
 
 ### 6. Add piece (full-screen sheet)
@@ -228,7 +228,7 @@ Auto-dismisses. Toasts/feedback always render bottom-center, above the tab bar.
 
 ### 8. Streams
 Title "Streams" + subtitle "Sources that fill your folio" + accent Add. Single-column
-stack of source cards: a 44px source thumbnail, Spectral source name, Hanken
+stack of source cards: a 44px source thumbnail, Newsreader source name, Instrument Sans
 "Type · synced … · N pieces" (API / RSS / Manual), and an **on/off toggle** (accent when
 on, neutral when off). Calm, list-like, imagery subdued.
 
@@ -288,7 +288,7 @@ Sheets become centered popovers; the viewer keeps its full-bleed gesture behavio
   padding, used full-bleed on accent) and **standard** forms; scales legibly to 16px (front
   frame alone at the smallest size). Theme-color meta = `#F3EFE7` (light) so OS chrome
   tints to paper; dark splash/identity uses `#16130E` + `#C75D49`.
-- **Splash:** paper `#F3EFE7`, centered accent BrandMark + "OK Folio" (Spectral) + small
+- **Splash:** paper `#F3EFE7`, centered accent BrandMark + "OK Folio" (Newsreader) + small
   "A folio for visual discoveries".
 - **Artwork:** the gradient tiles are **placeholders** — wire to real piece images.
 
