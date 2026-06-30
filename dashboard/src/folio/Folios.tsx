@@ -49,7 +49,92 @@ function coverIds(folio: Folio, photos?: Photo[]): number[] {
   if (folio.cover_photo_id && !ids.includes(folio.cover_photo_id)) {
     ids.unshift(folio.cover_photo_id);
   }
-  return ids.slice(0, 2);
+  return ids.slice(0, 3);
+}
+
+function FolioCover({
+  ids,
+  title,
+  countLabel,
+  selected = false,
+}: {
+  ids: number[];
+  title: string;
+  countLabel: string;
+  selected?: boolean;
+}) {
+  const [hero, mid, back] = ids;
+
+  if (!hero) {
+    return (
+      <div style={{ position: "relative", width: "100%", aspectRatio: "1 / 1", fontFamily: "var(--sans)" }}>
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            border: "1.5px dashed var(--line-2)",
+            borderRadius: 3,
+            display: "grid",
+            placeItems: "center",
+            background: "var(--surface)",
+          }}
+        >
+          <BrandMark width={34} height={38} />
+        </div>
+      </div>
+    );
+  }
+
+  const layer = (
+    id: number | undefined,
+    style: CSSProperties,
+    filter?: string,
+  ) => id ? (
+    <div
+      style={{
+        position: "absolute",
+        borderRadius: 3,
+        overflow: "hidden",
+        background: "var(--surface-2)",
+        border: "1px solid var(--line)",
+        ...style,
+      }}
+    >
+      <OkfImage
+        src={getPhotoThumbnailUrl(id, 700)}
+        alt={id === hero ? title : ""}
+        title={title}
+        artist={countLabel}
+        imgStyle={{ width: "100%", height: "100%", objectFit: "cover", display: "block", filter }}
+        matteStyle={{ width: "100%", height: "100%", ...TILE_MATTE }}
+        matteTitleStyle={{ fontFamily: "var(--serif)", fontStyle: "italic", fontSize: 16, lineHeight: 1.18, color: "var(--ink)" }}
+        matteArtistStyle={{ fontFamily: "var(--sans)", fontSize: 10.5, letterSpacing: "0.08em", color: "var(--muted)" }}
+      />
+    </div>
+  ) : null;
+
+  return (
+    <div style={{ position: "relative", width: "100%", aspectRatio: "1 / 1", fontFamily: "var(--sans)" }}>
+      {layer(back, { left: "15%", top: "15%", width: "80%", height: "80%", zIndex: 1, boxShadow: "0 8px 16px var(--shadow)" }, "brightness(0.8) saturate(0.9)")}
+      {layer(mid, { left: "7.5%", top: "7.5%", width: "80%", height: "80%", zIndex: 2, boxShadow: "0 9px 18px var(--shadow)" }, "brightness(0.92)")}
+      {layer(hero, { left: 0, top: 0, width: "80%", height: "80%", zIndex: 3, boxShadow: "0 14px 28px var(--shadow-2), 0 2px 6px var(--shadow)" })}
+      {selected ? (
+        <div
+          style={{
+            position: "absolute",
+            left: -3,
+            top: -3,
+            width: "calc(80% + 6px)",
+            height: "calc(80% + 6px)",
+            borderRadius: 5,
+            boxShadow: "0 0 0 3px var(--accent)",
+            zIndex: 8,
+            pointerEvents: "none",
+          }}
+        />
+      ) : null}
+    </div>
+  );
 }
 
 function MobileFolioTile({
@@ -63,74 +148,24 @@ function MobileFolioTile({
 }) {
   const pieces = useQuery({
     queryKey: ["folio-cover-pieces", folio.id],
-    queryFn: () => fetchFolioPieces(folio.id, 2, 0),
+    queryFn: () => fetchFolioPieces(folio.id, 3, 0),
     staleTime: 15000,
   });
   const ids = coverIds(folio, pieces.data?.photos);
-  const top = ids[0];
-  const peek = ids[1] ?? ids[0];
 
   return (
     <figure style={{ margin: 0, minWidth: 0 }}>
-      <div style={{ position: "relative", paddingTop: 8, paddingRight: 6 }}>
+      <div style={{ position: "relative" }}>
         <Link
           to={`/folios/${folio.id}`}
           style={{
             display: "block",
             position: "relative",
-            aspectRatio: "1 / 1",
             color: "inherit",
             textDecoration: "none",
           }}
         >
-          <span
-            style={{
-              position: "absolute",
-              inset: "8px 0 0 6px",
-              overflow: "hidden",
-              borderRadius: 3,
-              background: "var(--wall)",
-              opacity: 0.55,
-            }}
-          >
-            {peek ? (
-              <OkfImage
-                src={getPhotoThumbnailUrl(peek, 500)}
-                alt=""
-                title={folio.name}
-                imgStyle={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
-                matteStyle={{ ...TILE_MATTE, borderRadius: 3 }}
-              />
-            ) : null}
-          </span>
-          <span
-            style={{
-              position: "absolute",
-              inset: "0 6px 8px 0",
-              overflow: "hidden",
-              borderRadius: 3,
-              background: "var(--wall)",
-              boxShadow: selected ? "0 0 0 3px var(--accent), 0 8px 20px rgba(48,40,28,0.16)" : "0 8px 20px rgba(48,40,28,0.16)",
-            }}
-          >
-            {top ? (
-              <OkfImage
-                src={getPhotoThumbnailUrl(top, 600)}
-                alt={folio.name}
-                title={folio.name}
-                artist={folioPiecesLabel(folio.piece_count)}
-                loading="eager"
-                imgStyle={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
-                matteStyle={{ ...TILE_MATTE, borderRadius: 3 }}
-                matteTitleStyle={{ fontFamily: "var(--serif)", fontSize: 16, lineHeight: 1.12, color: "var(--ink)" }}
-                matteArtistStyle={{ fontFamily: "var(--sans)", fontSize: 11, color: "var(--muted)" }}
-              />
-            ) : (
-              <span style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center" }}>
-                <BrandMark width={34} height={39} />
-              </span>
-            )}
-          </span>
+          <FolioCover ids={ids} title={folio.name} countLabel={folioPiecesLabel(folio.piece_count)} selected={selected} />
         </Link>
         <button
           type="button"
@@ -444,7 +479,12 @@ function MobileFolios({
 function FolioTile({ folio }: { folio: Folio }) {
   const { renameFolioAction, deleteFolioAction } = useFolio();
   const [menuOpen, setMenuOpen] = useState(false);
-  const coverSrc = folio.cover_photo_id == null ? `__missing-folio-cover-${folio.id}` : getPhotoThumbnailUrl(folio.cover_photo_id, 700);
+  const pieces = useQuery({
+    queryKey: ["folio-cover-pieces", folio.id],
+    queryFn: () => fetchFolioPieces(folio.id, 3, 0),
+    staleTime: 15000,
+  });
+  const ids = coverIds(folio, pieces.data?.photos);
 
   const rename = () => {
     const next = window.prompt("Rename folio", folio.name);
@@ -465,30 +505,14 @@ function FolioTile({ folio }: { folio: Folio }) {
 
   return (
     <figure style={{ margin: 0, position: "relative" }}>
-      <Link
+      <Hov
+        as={Link}
         to={`/folios/${folio.id}`}
-        style={{
-          display: "block",
-          position: "relative",
-          aspectRatio: "1 / 1",
-          overflow: "hidden",
-          background: "var(--surface)",
-          boxShadow: "0 1px 8px var(--shadow)",
-          color: "inherit",
-          textDecoration: "none",
-        }}
+        style={{ display: "block", color: "inherit", textDecoration: "none", transition: "transform .2s ease" }}
+        hover={{ transform: "translateY(-4px)" }}
       >
-        <OkfImage
-          src={coverSrc}
-          alt={folio.name}
-          title={folio.name}
-          artist={folioPiecesLabel(folio.piece_count)}
-          imgStyle={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", zIndex: 1 }}
-          matteStyle={TILE_MATTE}
-          matteTitleStyle={{ fontFamily: "var(--serif)", fontStyle: "italic", fontSize: 17, lineHeight: 1.2, color: "var(--ink)" }}
-          matteArtistStyle={{ fontFamily: "var(--sans)", fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: "var(--muted)" }}
-        />
-      </Link>
+        <FolioCover ids={ids} title={folio.name} countLabel={folioPiecesLabel(folio.piece_count)} />
+      </Hov>
 
       <div style={{ position: "absolute", top: 9, right: 9, zIndex: 4 }}>
         <Hov
@@ -537,11 +561,11 @@ function FolioTile({ folio }: { folio: Folio }) {
         ) : null}
       </div>
 
-      <figcaption style={{ padding: "11px 2px 0" }}>
+      <figcaption style={{ padding: "24px 2px 0", display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
         <Link to={`/folios/${folio.id}`} style={{ color: "inherit", textDecoration: "none" }}>
-          <div style={{ fontFamily: "var(--serif)", fontSize: 17, lineHeight: 1.2, color: "var(--ink)" }}>{folio.name}</div>
+          <div style={{ fontFamily: "var(--serif)", fontWeight: 400, fontSize: 21, lineHeight: 1.1, color: "var(--ink)" }}>{folio.name}</div>
         </Link>
-        <div style={{ fontFamily: "var(--sans)", fontSize: 12.5, color: "var(--muted)", marginTop: 4 }}>{folioPiecesLabel(folio.piece_count)}</div>
+        <div style={{ fontFamily: "var(--sans)", fontSize: 12.5, color: "var(--muted)", whiteSpace: "nowrap", paddingTop: 2 }}>{folioPiecesLabel(folio.piece_count)}</div>
       </figcaption>
     </figure>
   );
@@ -616,7 +640,7 @@ export default function Folios() {
             </div>
           </div>
         ) : (
-          <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(166px, 1fr))", gap: 13 }}>
+          <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: "40px 34px" }}>
             {folios.map((folio) => (
               <FolioTile key={folio.id} folio={folio} />
             ))}
