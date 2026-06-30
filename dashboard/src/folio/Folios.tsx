@@ -45,10 +45,8 @@ const MOBILE_SHEET_BUTTON: CSSProperties = {
 };
 
 function coverIds(folio: Folio, photos?: Photo[]): number[] {
-  const ids = photos?.map((photo) => photo.ID) ?? [];
-  if (folio.cover_photo_id && !ids.includes(folio.cover_photo_id)) {
-    ids.unshift(folio.cover_photo_id);
-  }
+  const ids = photos?.map((photo) => photo.ID).filter((id) => id !== folio.cover_photo_id) ?? [];
+  if (folio.cover_photo_id) ids.unshift(folio.cover_photo_id);
   return ids.slice(0, 3);
 }
 
