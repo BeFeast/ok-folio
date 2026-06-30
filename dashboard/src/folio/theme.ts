@@ -8,8 +8,8 @@ export type ResolvedThemeName = "light" | "dark";
 export type InfoPanelMode = "pinned" | "remember" | "hidden";
 
 export const SANS =
-  "'Hanken Grotesk', system-ui, -apple-system, 'Segoe UI', sans-serif";
-export const SERIF = "'Spectral', Georgia, 'Times New Roman', serif";
+  "'Instrument Sans', system-ui, -apple-system, 'Segoe UI', sans-serif";
+export const SERIF = "'Newsreader', Georgia, 'Times New Roman', serif";
 
 export const TOKENS: Record<ResolvedThemeName, Record<string, string>> = {
   light: {
