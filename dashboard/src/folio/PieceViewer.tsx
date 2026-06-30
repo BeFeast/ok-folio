@@ -82,19 +82,27 @@ const EDITED_MARK: CSSProperties = {
 };
 const META_KEY: CSSProperties = { fontFamily: "var(--sans)", fontSize: 11, color: "rgba(251,246,238,0.52)" };
 const META_VAL: CSSProperties = { fontFamily: "var(--sans)", fontSize: 13, color: "rgba(251,246,238,0.78)", marginTop: 2 };
-const MOBILE_CHROME: CSSProperties = {
+const VIEWER_CHROME_BUTTON: CSSProperties = {
   appearance: "none",
   border: "1px solid rgba(251,246,238,0.12)",
   background: "rgba(20,14,10,.4)",
   backdropFilter: "blur(14px)",
   WebkitBackdropFilter: "blur(14px)",
   color: "#FBF6EE",
-  minWidth: 44,
+  width: 44,
   height: 44,
   borderRadius: 999,
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
+  padding: 0,
+  flex: "none",
+};
+const MOBILE_CHROME: CSSProperties = { ...VIEWER_CHROME_BUTTON, minWidth: 44 };
+const VIEWER_CHROME_ACTIVE: CSSProperties = {
+  borderColor: "rgba(220,138,112,0.5)",
+  background: "rgba(220,138,112,0.16)",
+  color: "#FBF6EE",
 };
 const MOBILE_SHEET_ROW: CSSProperties = {
   display: "grid",
@@ -139,6 +147,25 @@ function ShareIcon() {
       <path d="M12 16 V4" />
       <path d="M8 8 L12 4 L16 8" />
       <path d="M5 13 V19 H19 V13" />
+    </svg>
+  );
+}
+
+function InfoIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="8.2" />
+      <path d="M12 10.8 V16" />
+      <path d="M12 8 H12.01" />
+    </svg>
+  );
+}
+
+function PencilIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4.5 19.5 L8.8 18.6 L18.6 8.8 C19.4 8 19.4 6.8 18.6 6 L18 5.4 C17.2 4.6 16 4.6 15.2 5.4 L5.4 15.2 L4.5 19.5 Z" />
+      <path d="M13.8 6.8 L17.2 10.2" />
     </svg>
   );
 }
@@ -294,11 +321,11 @@ export default function PieceViewer() {
   }, [addPieceToFolioAction]);
 
   const startEditing = useCallback(() => {
-    if (!selected) return;
+    if (!selected || editing) return;
     setEditDraft({ title: selected.t, artist: selected.a === "Unknown" ? "" : selected.a, date: selected.editDate, keywords: selected.keywords });
     setKeywordDraft("");
     setEditing(true);
-  }, [selected]);
+  }, [editing, selected]);
 
   const addKeyword = useCallback(() => {
     const value = keywordDraft.trim();
@@ -526,9 +553,11 @@ export default function PieceViewer() {
     <button
       type="button"
       onClick={startEditing}
-      style={{ minHeight: 38, borderRadius: 99, border: "1px solid rgba(251,246,238,0.18)", background: "rgba(251,246,238,0.07)", color: "#FBF6EE", padding: "0 14px", fontFamily: "var(--sans)", fontSize: 13, fontWeight: 800, cursor: "pointer" }}
+      aria-label="Edit metadata"
+      title="Edit"
+      style={{ ...VIEWER_CHROME_BUTTON, width: 40, height: 40, cursor: "pointer", background: "rgba(251,246,238,0.06)" }}
     >
-      Edit
+      <PencilIcon />
     </button>
   );
 
@@ -601,7 +630,7 @@ export default function PieceViewer() {
             top: "calc(env(safe-area-inset-top) + 12px)",
             zIndex: 12,
             display: "grid",
-            gridTemplateColumns: "44px minmax(0, 1fr) auto 44px",
+            gridTemplateColumns: "44px minmax(0, 1fr) auto",
             alignItems: "center",
             gap: 12,
             opacity: chromeVisible ? 1 : 0,
@@ -641,43 +670,45 @@ export default function PieceViewer() {
           >
             {selIndex >= 0 ? `${selIndex + 1} / ${selCount}` : ""}
           </div>
-          <button
-            type="button"
-            onClick={(e) => {
-              stop(e);
-              togglePanel();
-              showChrome();
-            }}
-            aria-label={panelOpen ? "Hide info" : "Show info"}
-            aria-pressed={panelOpen}
-            style={{
-              ...MOBILE_CHROME,
-              minWidth: 76,
-              padding: "0 13px",
-              gap: 6,
-              cursor: "pointer",
-              background: panelOpen ? "#C75D49" : MOBILE_CHROME.background,
-              color: panelOpen ? "#16130E" : "#FBF6EE",
-              borderColor: panelOpen ? "rgba(199,93,73,.78)" : "rgba(251,246,238,0.12)",
-              fontFamily: "var(--sans)",
-              fontSize: 13,
-              fontWeight: 800,
-            }}
-          >
-            <span aria-hidden="true">ⓘ</span>
-            Info
-          </button>
-          <button
-            onClick={(e) => {
-              stop(e);
-              toggleFav(p.id);
-              showChrome();
-            }}
-            aria-label={fav ? "Remove favorite" : "Favorite"}
-            style={{ ...MOBILE_CHROME, cursor: "pointer" }}
-          >
-            <HeartIcon size={20} fill={fav ? "#C75D49" : "transparent"} stroke={fav ? "#C75D49" : "#FBF6EE"} strokeWidth={1.7} />
-          </button>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, justifySelf: "end" }}>
+            <button
+              type="button"
+              onClick={(e) => {
+                stop(e);
+                togglePanel();
+                showChrome();
+              }}
+              aria-label={panelOpen ? "Hide info" : "Show info"}
+              aria-pressed={panelOpen}
+              style={{ ...MOBILE_CHROME, ...(panelOpen ? VIEWER_CHROME_ACTIVE : null), cursor: "pointer" }}
+            >
+              <InfoIcon />
+            </button>
+            <button
+              type="button"
+              onClick={(e) => {
+                stop(e);
+                setPanelOpen(true);
+                startEditing();
+                showChrome();
+              }}
+              aria-label="Edit metadata"
+              style={{ ...MOBILE_CHROME, ...(editing ? VIEWER_CHROME_ACTIVE : null), cursor: "pointer" }}
+            >
+              <PencilIcon />
+            </button>
+            <button
+              onClick={(e) => {
+                stop(e);
+                toggleFav(p.id);
+                showChrome();
+              }}
+              aria-label={fav ? "Remove favorite" : "Favorite"}
+              style={{ ...MOBILE_CHROME, cursor: "pointer" }}
+            >
+              <HeartIcon size={20} fill={fav ? "#DC8A70" : "transparent"} stroke={fav ? "#DC8A70" : "#FBF6EE"} strokeWidth={1.7} />
+            </button>
+          </div>
         </div>
 
         <button
@@ -954,34 +985,71 @@ export default function PieceViewer() {
         />
       </div>
 
-      <button
-        onClick={(e) => {
-          stop(e);
-          closePiece();
-        }}
-        aria-label="Close"
+      <div
+        onClick={stop}
         style={{
           position: "absolute",
           top: 22,
           right: 24,
           zIndex: 8,
-          appearance: "none",
-          cursor: "pointer",
-          width: 42,
-          height: 42,
-          borderRadius: 99,
-          border: 0,
-          background: "rgba(251,246,238,0.12)",
-          backdropFilter: "blur(6px)",
-          WebkitBackdropFilter: "blur(6px)",
-          color: "#FBF6EE",
           display: "flex",
           alignItems: "center",
-          justifyContent: "center",
+          gap: 8,
         }}
       >
-        <CloseIcon />
-      </button>
+        <button
+          type="button"
+          onClick={togglePanel}
+          aria-label={panelOpen ? "Hide info" : "Show info"}
+          aria-pressed={panelOpen}
+          title={pinnedDesktop ? "Info panel pinned in Settings" : panelOpen ? "Hide info" : "Show info"}
+          style={{
+            ...VIEWER_CHROME_BUTTON,
+            width: 42,
+            height: 42,
+            ...(panelOpen ? VIEWER_CHROME_ACTIVE : null),
+            cursor: pinnedDesktop ? "default" : "pointer",
+          }}
+        >
+          <InfoIcon />
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setPanelOpen(true);
+            startEditing();
+          }}
+          aria-label="Edit metadata"
+          title="Edit"
+          style={{
+            ...VIEWER_CHROME_BUTTON,
+            width: 42,
+            height: 42,
+            ...(editing ? VIEWER_CHROME_ACTIVE : null),
+            cursor: "pointer",
+          }}
+        >
+          <PencilIcon />
+        </button>
+        <button
+          type="button"
+          onClick={() => toggleFav(p.id)}
+          aria-label={fav ? "Remove favorite" : "Favorite"}
+          title={fav ? "Remove favorite" : "Favorite"}
+          style={{ ...VIEWER_CHROME_BUTTON, width: 42, height: 42, cursor: "pointer" }}
+        >
+          <HeartIcon size={19} fill={fav ? "#DC8A70" : "transparent"} stroke={fav ? "#DC8A70" : "#FBF6EE"} strokeWidth={1.6} />
+        </button>
+        <button
+          type="button"
+          onClick={closePiece}
+          aria-label="Close"
+          title="Close"
+          style={{ ...VIEWER_CHROME_BUTTON, width: 42, height: 42, cursor: "pointer" }}
+        >
+          <CloseIcon />
+        </button>
+      </div>
 
       <button
         onClick={(e) => {
@@ -1059,43 +1127,6 @@ export default function PieceViewer() {
         {selIndex >= 0 ? `${selIndex + 1} / ${selCount}` : ""}
       </div>
 
-      <button
-        onClick={(e) => {
-          stop(e);
-          togglePanel();
-        }}
-        aria-label={panelOpen ? "Hide info" : "Show info"}
-        aria-pressed={panelOpen}
-        title={pinnedDesktop ? "Info panel pinned in Settings" : panelOpen ? "Hide info" : "Show info"}
-        style={{
-          position: "absolute",
-          top: 22,
-          right: 76,
-          zIndex: 8,
-          appearance: "none",
-          cursor: pinnedDesktop ? "default" : "pointer",
-          minWidth: 88,
-          height: 42,
-          padding: "0 16px",
-          borderRadius: 99,
-          border: panelOpen ? "1px solid rgba(199,93,73,0.78)" : "1px solid rgba(251,246,238,0.12)",
-          background: panelOpen ? "#C75D49" : "rgba(251,246,238,0.12)",
-          backdropFilter: "blur(6px)",
-          WebkitBackdropFilter: "blur(6px)",
-          color: panelOpen ? "#16130E" : "#FBF6EE",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: 7,
-          fontFamily: "var(--sans)",
-          fontSize: 13,
-          fontWeight: 800,
-        }}
-      >
-        <span aria-hidden="true">ⓘ</span>
-        Info
-      </button>
-
       <div
         onClick={stop}
         style={{
@@ -1126,20 +1157,13 @@ export default function PieceViewer() {
             {!editing ? renderEditButton() : null}
             <button
               onClick={() => toggleFav(p.id)}
-              aria-label="Favorite"
+              aria-label={fav ? "Remove favorite" : "Favorite"}
               style={{
-                flex: "none",
-                appearance: "none",
-                cursor: "pointer",
+                ...VIEWER_CHROME_BUTTON,
                 width: 40,
                 height: 40,
-                borderRadius: 99,
-                border: "1px solid rgba(251,246,238,0.22)",
+                cursor: "pointer",
                 background: "rgba(251,246,238,0.06)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                color: "#FBF6EE",
               }}
             >
               <HeartIcon size={19} fill={fav ? "#DC8A70" : "transparent"} stroke={fav ? "#DC8A70" : "#FBF6EE"} strokeWidth={1.6} />
