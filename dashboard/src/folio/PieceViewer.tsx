@@ -82,6 +82,8 @@ const EDITED_MARK: CSSProperties = {
 };
 const META_KEY: CSSProperties = { fontFamily: "var(--sans)", fontSize: 11, color: "rgba(251,246,238,0.52)" };
 const META_VAL: CSSProperties = { fontFamily: "var(--sans)", fontSize: 13, color: "rgba(251,246,238,0.78)", marginTop: 2 };
+const VIEWER_CHROME_SIZE = 42;
+const MOBILE_CHROME_SIZE = 44;
 const VIEWER_CHROME_BUTTON: CSSProperties = {
   appearance: "none",
   border: "1px solid rgba(251,246,238,0.12)",
@@ -89,8 +91,8 @@ const VIEWER_CHROME_BUTTON: CSSProperties = {
   backdropFilter: "blur(14px)",
   WebkitBackdropFilter: "blur(14px)",
   color: "#FBF6EE",
-  width: 44,
-  height: 44,
+  width: VIEWER_CHROME_SIZE,
+  height: VIEWER_CHROME_SIZE,
   borderRadius: 999,
   display: "flex",
   alignItems: "center",
@@ -98,7 +100,7 @@ const VIEWER_CHROME_BUTTON: CSSProperties = {
   padding: 0,
   flex: "none",
 };
-const MOBILE_CHROME: CSSProperties = { ...VIEWER_CHROME_BUTTON, minWidth: 44 };
+const MOBILE_CHROME: CSSProperties = { ...VIEWER_CHROME_BUTTON, width: MOBILE_CHROME_SIZE, height: MOBILE_CHROME_SIZE, minWidth: MOBILE_CHROME_SIZE };
 const VIEWER_CHROME_ACTIVE: CSSProperties = {
   borderColor: "rgba(220,138,112,0.5)",
   background: "rgba(220,138,112,0.16)",
@@ -215,7 +217,7 @@ export default function PieceViewer() {
     infoPanelRememberedOpen,
     setInfoPanelRememberedOpen,
   } = useFolio();
-  const { isMobile } = useViewport();
+  const { isMobile, width: viewportWidth } = useViewport();
   const reducedMotion = useReducedMotion();
 
   useEffect(() => {
@@ -555,13 +557,20 @@ export default function PieceViewer() {
       onClick={startEditing}
       aria-label="Edit metadata"
       title="Edit"
-      style={{ ...VIEWER_CHROME_BUTTON, width: 40, height: 40, cursor: "pointer", background: "rgba(251,246,238,0.06)" }}
+      style={{ ...VIEWER_CHROME_BUTTON, cursor: "pointer", background: "rgba(251,246,238,0.06)" }}
     >
       <PencilIcon />
     </button>
   );
 
   if (isMobile) {
+    const compactMobileChrome = viewportWidth > 0 && viewportWidth <= 360;
+    const mobileChromeInset = compactMobileChrome ? 12 : 16;
+    const mobileChromeGap = compactMobileChrome ? 6 : 8;
+    const mobileChromeButton: CSSProperties = compactMobileChrome
+      ? { ...MOBILE_CHROME, width: 40, height: 40, minWidth: 40 }
+      : MOBILE_CHROME;
+
     return (
       <div
         style={{
@@ -625,35 +634,25 @@ export default function PieceViewer() {
         <div
           style={{
             position: "absolute",
-            left: 16,
-            right: 16,
+            left: mobileChromeInset,
+            right: mobileChromeInset,
             top: "calc(env(safe-area-inset-top) + 12px)",
             zIndex: 12,
-            display: "grid",
-            gridTemplateColumns: "44px minmax(0, 1fr) auto",
+            display: "flex",
             alignItems: "center",
-            gap: 12,
+            justifyContent: "space-between",
+            gap: 8,
+            minWidth: 0,
             opacity: chromeVisible ? 1 : 0,
             transform: chromeVisible ? "translateY(0)" : "translateY(-8px)",
             transition: reducedMotion ? "opacity .16s ease" : "opacity .22s ease, transform .22s ease",
             pointerEvents: chromeVisible ? "auto" : "none",
           }}
         >
-          <button
-            onClick={(e) => {
-              stop(e);
-              closePiece();
-            }}
-            aria-label="Close"
-            style={{ ...MOBILE_CHROME, cursor: "pointer" }}
-          >
-            <CloseIcon />
-          </button>
           <div
             style={{
-              justifySelf: "center",
               minHeight: 36,
-              padding: "0 14px",
+              padding: "0 12px",
               borderRadius: 999,
               background: "rgba(20,14,10,.4)",
               backdropFilter: "blur(14px)",
@@ -666,11 +665,17 @@ export default function PieceViewer() {
               fontSize: 12,
               fontWeight: 600,
               color: "rgba(251,246,238,.86)",
+              flex: "1 1 auto",
+              minWidth: 0,
+              maxWidth: compactMobileChrome ? 92 : 120,
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
             }}
           >
             {selIndex >= 0 ? `${selIndex + 1} / ${selCount}` : ""}
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, justifySelf: "end" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: mobileChromeGap, flex: "0 0 auto" }}>
             <button
               type="button"
               onClick={(e) => {
@@ -680,7 +685,7 @@ export default function PieceViewer() {
               }}
               aria-label={panelOpen ? "Hide info" : "Show info"}
               aria-pressed={panelOpen}
-              style={{ ...MOBILE_CHROME, ...(panelOpen ? VIEWER_CHROME_ACTIVE : null), cursor: "pointer" }}
+              style={{ ...mobileChromeButton, ...(panelOpen ? VIEWER_CHROME_ACTIVE : null), cursor: "pointer" }}
             >
               <InfoIcon />
             </button>
@@ -693,7 +698,7 @@ export default function PieceViewer() {
                 showChrome();
               }}
               aria-label="Edit metadata"
-              style={{ ...MOBILE_CHROME, ...(editing ? VIEWER_CHROME_ACTIVE : null), cursor: "pointer" }}
+              style={{ ...mobileChromeButton, ...(editing ? VIEWER_CHROME_ACTIVE : null), cursor: "pointer" }}
             >
               <PencilIcon />
             </button>
@@ -704,9 +709,19 @@ export default function PieceViewer() {
                 showChrome();
               }}
               aria-label={fav ? "Remove favorite" : "Favorite"}
-              style={{ ...MOBILE_CHROME, cursor: "pointer" }}
+              style={{ ...mobileChromeButton, cursor: "pointer" }}
             >
               <HeartIcon size={20} fill={fav ? "#DC8A70" : "transparent"} stroke={fav ? "#DC8A70" : "#FBF6EE"} strokeWidth={1.7} />
+            </button>
+            <button
+              onClick={(e) => {
+                stop(e);
+                closePiece();
+              }}
+              aria-label="Close"
+              style={{ ...mobileChromeButton, cursor: "pointer" }}
+            >
+              <CloseIcon />
             </button>
           </div>
         </div>
@@ -1005,8 +1020,6 @@ export default function PieceViewer() {
           title={pinnedDesktop ? "Info panel pinned in Settings" : panelOpen ? "Hide info" : "Show info"}
           style={{
             ...VIEWER_CHROME_BUTTON,
-            width: 42,
-            height: 42,
             ...(panelOpen ? VIEWER_CHROME_ACTIVE : null),
             cursor: pinnedDesktop ? "default" : "pointer",
           }}
@@ -1023,8 +1036,6 @@ export default function PieceViewer() {
           title="Edit"
           style={{
             ...VIEWER_CHROME_BUTTON,
-            width: 42,
-            height: 42,
             ...(editing ? VIEWER_CHROME_ACTIVE : null),
             cursor: "pointer",
           }}
@@ -1036,7 +1047,7 @@ export default function PieceViewer() {
           onClick={() => toggleFav(p.id)}
           aria-label={fav ? "Remove favorite" : "Favorite"}
           title={fav ? "Remove favorite" : "Favorite"}
-          style={{ ...VIEWER_CHROME_BUTTON, width: 42, height: 42, cursor: "pointer" }}
+          style={{ ...VIEWER_CHROME_BUTTON, cursor: "pointer" }}
         >
           <HeartIcon size={19} fill={fav ? "#DC8A70" : "transparent"} stroke={fav ? "#DC8A70" : "#FBF6EE"} strokeWidth={1.6} />
         </button>
@@ -1045,7 +1056,7 @@ export default function PieceViewer() {
           onClick={closePiece}
           aria-label="Close"
           title="Close"
-          style={{ ...VIEWER_CHROME_BUTTON, width: 42, height: 42, cursor: "pointer" }}
+          style={{ ...VIEWER_CHROME_BUTTON, cursor: "pointer" }}
         >
           <CloseIcon />
         </button>
@@ -1160,8 +1171,6 @@ export default function PieceViewer() {
               aria-label={fav ? "Remove favorite" : "Favorite"}
               style={{
                 ...VIEWER_CHROME_BUTTON,
-                width: 40,
-                height: 40,
                 cursor: "pointer",
                 background: "rgba(251,246,238,0.06)",
               }}
