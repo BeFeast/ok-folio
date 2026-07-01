@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { dismissInboxItem, fetchFolios, fetchInbox, fetchInboxCounts, getPhotoThumbnailUrl } from "../api";
+import { fetchFolios, fetchInbox, fetchInboxCounts, getPhotoThumbnailUrl, skipInboxItem } from "../api";
 import type { InboxItem } from "../types";
 import { useFolio } from "./context";
 import { useViewport } from "./useViewport";
@@ -226,7 +226,7 @@ function InboxRow({ item }: { item: InboxItem }) {
           <div style={{ marginTop: 10, fontFamily: "var(--sans)", fontSize: 12.5, color: "var(--muted)" }}>{sourceLabel}</div>
         ) : null}
       </div>
-      <div style={{ flex: "0 0 220px", display: "flex", flexDirection: "column", alignItems: "stretch", gap: 8 }}>
+      <div style={{ flex: "0 0 250px", display: "flex", flexDirection: "column", alignItems: "stretch", gap: 8 }}>
         {coverPhotoId != null ? (
           <div style={{ display: "flex", gap: 7 }}>
             <select
@@ -268,21 +268,22 @@ function InboxRow({ item }: { item: InboxItem }) {
                 fontFamily: "var(--sans)",
                 fontSize: 12.5,
                 fontWeight: 500,
-                padding: "9px 11px",
+                padding: "9px 12px",
                 borderRadius: 99,
                 border: 0,
                 background: "var(--accent)",
                 color: "var(--on-accent)",
+                whiteSpace: "nowrap",
               }}
               hover={canMove ? { filter: "brightness(1.06)" } : undefined}
             >
-              Add
+              Add to folio
             </Hov>
           </div>
         ) : null}
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
           <ActionButton onClick={() => keepInboxAction(item.id)}>Keep</ActionButton>
-          <ActionButton onClick={() => skipInboxAction(item.id)}>Skip</ActionButton>
+          <ActionButton onClick={() => skipInboxAction(item.id)}>Dismiss</ActionButton>
         </div>
       </div>
     </div>
@@ -391,15 +392,22 @@ function PlaceholderGlyph() {
 
 function MobileInboxRow({ item, onDismiss }: { item: InboxItem; onDismiss: (item: InboxItem) => void }) {
   const navigate = useNavigate();
+  const { keepInboxAction, moveInboxToFolioAction } = useFolio();
+  const folios = useQuery({ queryKey: ["folios"], queryFn: fetchFolios });
   const [dragX, setDragX] = useState(0);
+  const [selectedFolio, setSelectedFolio] = useState("");
   const touchStart = useRef<number | null>(null);
   const title = item.title.trim() || "Untitled piece";
   const artist = item.artist.trim() || "Unknown artist";
   const source = item.source_url.trim();
   const sourceLink = sourceURL(source);
   const status = displayStatus(item);
+  const revealing = dragX < -4;
   const revealed = dragX < -42;
   const translateX = revealed ? -92 : Math.min(0, Math.max(-92, dragX));
+  const coverPhotoId = item.cover_photo_id;
+  const folioId = Number(selectedFolio);
+  const canMove = coverPhotoId != null && Number.isFinite(folioId) && folioId > 0;
 
   const finishTouch = () => {
     if (dragX < -74) {
@@ -420,7 +428,7 @@ function MobileInboxRow({ item, onDismiss }: { item: InboxItem; onDismiss: (item
           inset: "0 0 0 auto",
           width: 96,
           border: 0,
-          background: "var(--danger, #c0392b)",
+          background: revealing || revealed ? "var(--danger, #c0392b)" : "transparent",
           color: "#fff",
           fontFamily: "var(--sans)",
           fontSize: 12,
@@ -447,12 +455,15 @@ function MobileInboxRow({ item, onDismiss }: { item: InboxItem; onDismiss: (item
         onTouchCancel={finishTouch}
         style={{
           position: "relative",
+          zIndex: 1,
+          width: "100%",
+          boxSizing: "border-box",
           transform: `translateX(${translateX}px)`,
           transition: touchStart.current == null ? "transform .18s ease" : undefined,
           display: "grid",
           gridTemplateColumns: "54px minmax(0, 1fr)",
           gap: 13,
-          padding: "14px 42px 15px 14px",
+          padding: "14px 14px 15px",
           border: "1px solid var(--line)",
           borderRadius: 14,
           background: "var(--surface)",
@@ -530,29 +541,99 @@ function MobileInboxRow({ item, onDismiss }: { item: InboxItem; onDismiss: (item
             </button>
           )}
         </div>
-        <button
-          type="button"
-          onClick={() => onDismiss(item)}
-          aria-label={`Dismiss ${title}`}
+        <div
           style={{
-            position: "absolute",
-            top: 9,
-            right: 9,
-            width: 32,
-            height: 32,
-            border: 0,
-            borderRadius: 99,
-            background: "transparent",
-            color: "var(--muted)",
+            gridColumn: "1 / -1",
             display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
+            flexDirection: "column",
+            gap: 9,
+            paddingTop: 3,
           }}
         >
-          <CloseIcon size={16} />
-        </button>
+          {coverPhotoId != null ? (
+            <div style={{ display: "flex", gap: 8 }}>
+              <select
+                value={selectedFolio}
+                onChange={(event) => setSelectedFolio(event.target.value)}
+                aria-label={`Choose folio for ${title}`}
+                style={{
+                  minWidth: 0,
+                  flex: 1,
+                  border: "1px solid var(--line)",
+                  borderRadius: 99,
+                  background: "var(--surface)",
+                  color: "var(--graphite)",
+                  fontFamily: "var(--sans)",
+                  fontSize: 12.5,
+                  padding: "9px 10px",
+                }}
+              >
+                <option value="">Folio</option>
+                {(folios.data?.folios ?? []).map((folio) => (
+                  <option key={folio.id} value={folio.id}>
+                    {folio.name}
+                  </option>
+                ))}
+              </select>
+              <MobileActionButton
+                tone="accent"
+                disabled={!canMove}
+                onClick={() => {
+                  if (canMove) {
+                    moveInboxToFolioAction(item.id, folioId, coverPhotoId);
+                  }
+                }}
+              >
+                Add to folio
+              </MobileActionButton>
+            </div>
+          ) : null}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+            <MobileActionButton onClick={() => keepInboxAction(item.id)}>Keep</MobileActionButton>
+            <MobileActionButton onClick={() => onDismiss(item)}>Dismiss</MobileActionButton>
+          </div>
+        </div>
       </article>
     </div>
+  );
+}
+
+function MobileActionButton({
+  children,
+  disabled,
+  onClick,
+  tone = "secondary",
+}: {
+  children: string;
+  disabled?: boolean;
+  onClick: () => void;
+  tone?: "accent" | "secondary";
+}) {
+  const accent = tone === "accent";
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      style={{
+        minHeight: 38,
+        minWidth: accent ? 108 : undefined,
+        padding: "0 12px",
+        appearance: "none",
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.55 : 1,
+        fontFamily: "var(--sans)",
+        fontSize: 12.5,
+        fontWeight: 700,
+        borderRadius: 99,
+        border: accent ? 0 : "1px solid var(--line)",
+        background: accent ? "var(--accent)" : "var(--surface-2)",
+        color: accent ? "var(--on-accent)" : "var(--graphite)",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {children}
+    </button>
   );
 }
 
@@ -616,7 +697,7 @@ export default function Inbox() {
       window.clearTimeout(dismissTimers.current[item.id]);
       delete dismissTimers.current[item.id];
     }
-    dismissInboxItem(item.id)
+    skipInboxItem(item.id)
       .then(() => {
         void queryClient.invalidateQueries({ queryKey: ["inbox"] });
         void queryClient.invalidateQueries({ queryKey: ["inbox-counts"] });
