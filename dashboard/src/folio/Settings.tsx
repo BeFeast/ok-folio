@@ -1,6 +1,6 @@
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
-import { createConnectorSource, deleteConnectorSource, fetchConnectorSources, updateConnectorSource } from "../api";
-import type { ConnectorSourceSetting } from "../types";
+import { createConnectorSource, deleteConnectorSource, fetchConnectorSources, fetchConnectorStatus, updateConnectorSource } from "../api";
+import type { ConnectorSourceSetting, ConnectorSourceStatus } from "../types";
 import { useStorageEstimate } from "../hooks/useStorageEstimate";
 import { useFolio, formatBytes } from "./context";
 import DestinationControls, { destinationGateMessage } from "./DestinationControls";
@@ -97,6 +97,7 @@ function Row({ title, desc, children }: { title: string; desc: string; children:
 export default function Settings() {
   const { theme, setTheme, mode, setMode, infoPanelMode, setInfoPanelMode, totalPhotos, totalSizeBytes } = useFolio();
   const { isMobile } = useViewport();
+  const currentHost = typeof window !== "undefined" ? window.location.host : "Current address";
 
   const [reduceMotion, setReduceMotion] = useLocalPref<boolean>("okfolio-reduce-motion", false);
   const [autoCovers, setAutoCovers] = useLocalPref<boolean>("okfolio-auto-covers", true);
@@ -113,6 +114,7 @@ export default function Settings() {
   const [editSourceChatID, setEditSourceChatID] = useState("");
   const [editSourceTargetFolioId, setEditSourceTargetFolioId] = useState<number | null>(null);
   const [editSourceShowInLibrary, setEditSourceShowInLibrary] = useState(true);
+  const [runtimeTelegramSources, setRuntimeTelegramSources] = useState<ConnectorSourceStatus[]>([]);
   const [sourceBusy, setSourceBusy] = useState(false);
   const [sourceError, setSourceError] = useState("");
   const storageEstimate = useStorageEstimate();
@@ -130,8 +132,12 @@ export default function Settings() {
   }, [reduceMotion]);
 
   const reloadSources = async () => {
-    const response = await fetchConnectorSources("telegram");
-    setSources(response.sources);
+    const [settingsResponse, statusResponse] = await Promise.all([
+      fetchConnectorSources("telegram"),
+      fetchConnectorStatus(),
+    ]);
+    setSources(settingsResponse.sources);
+    setRuntimeTelegramSources(statusResponse.connectors.find((connector) => connector.id === "telegram")?.sources ?? []);
   };
 
   useEffect(() => {
@@ -279,6 +285,30 @@ export default function Settings() {
     </div>
   );
 
+  const sourceMatchesManaged = (source: ConnectorSourceStatus) =>
+    sources.some((managed) => {
+      const label = managed.label.trim();
+      const chatID = managed.chat_id.trim();
+      return (
+        (chatID !== "" && (source.id.includes(chatID) || source.display_name.includes(chatID))) ||
+        (label !== "" && source.display_name === label)
+      );
+    });
+  const hasManagedTelegramSources = sources.length > 0;
+  const unmanagedTelegramSources = runtimeTelegramSources.filter((source) => {
+    if (sourceMatchesManaged(source)) return false;
+    // Telegram runtime status is grouped by piece provenance URL/channel, while
+    // Settings stores chat IDs. When managed rows exist, an unmatched runtime row
+    // may be the same source and should not be reported as unmanaged.
+    return !hasManagedTelegramSources;
+  });
+  const telegramSourceSummary =
+    sources.length > 0
+      ? `${sources.length} managed${unmanagedTelegramSources.length > 0 ? `, ${unmanagedTelegramSources.length} runtime-managed` : ""}`
+      : unmanagedTelegramSources.length > 0
+        ? `${unmanagedTelegramSources.length} runtime-managed`
+        : "No sources";
+
   if (isMobile) {
     return (
       <div>
@@ -290,6 +320,7 @@ export default function Settings() {
               <button type="button" onClick={() => setTheme("dark")} style={mobileSegment(theme === "dark")}>Dark</button>
               <button type="button" onClick={() => setTheme("auto")} style={mobileSegment(theme === "auto")}>Auto</button>
             </div>
+            {mobileRow("Reduce motion", "Calmer transitions throughout.", <Switch on={reduceMotion} onClick={() => setReduceMotion(!reduceMotion)} />)}
             {mobileRow(
               "Default gallery mode",
               mode.charAt(0).toUpperCase() + mode.slice(1),
@@ -318,7 +349,35 @@ export default function Settings() {
           <div>
             {mobileRow("Offline cache (size)", offlineCacheDetail, <span style={{ fontFamily: "var(--sans)", fontSize: 13, color: "var(--graphite)", whiteSpace: "nowrap" }}>{offlineCacheSize}</span>)}
             {mobileRow("Sync over cellular", "Stored on this device.", <Switch on={syncCellular} onClick={() => setSyncCellular(!syncCellular)} />)}
-            {mobileRow("Server address", "Self-hosted LAN endpoint.", <span style={{ fontFamily: "var(--sans)", fontSize: 13, color: "var(--graphite)" }}>folio.oklabs.uk</span>)}
+            {mobileRow("App address", "Current self-hosted address.", <span style={{ fontFamily: "var(--sans)", fontSize: 13, color: "var(--graphite)", overflowWrap: "anywhere", textAlign: "right" }}>{currentHost}</span>)}
+          </div>
+
+          <h2 style={{ ...SECTION, margin: "28px 0 8px", letterSpacing: "0.06em" }}>Connectors</h2>
+          <div>
+            {mobileRow(
+              "Telegram sources",
+              unmanagedTelegramSources.length > 0
+                ? "Some Telegram activity is runtime-managed outside Settings."
+                : "Managed sources can be edited on desktop.",
+              <span style={{ fontFamily: "var(--sans)", fontSize: 13, color: "var(--graphite)", whiteSpace: "nowrap" }}>{telegramSourceSummary}</span>,
+            )}
+          </div>
+
+          <h2 style={{ ...SECTION, margin: "28px 0 8px", letterSpacing: "0.06em" }}>Folios</h2>
+          <div>
+            {mobileRow(
+              "Folio name",
+              "Shown across this instance.",
+              <Hov
+                as="input"
+                value={folioName}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setFolioName(e.target.value)}
+                style={{ appearance: "none", fontFamily: "var(--serif)", fontSize: 15, color: "var(--ink)", textAlign: "right", border: 0, borderBottom: "1px solid var(--line-2)", background: "transparent", outline: "none", padding: "4px 2px", width: 130 }}
+                focus={{ borderColor: "var(--accent)" }}
+              />,
+            )}
+            {mobileRow("Auto-select covers", "Choose a fitting cover until you set one yourself.", <Switch on={autoCovers} onClick={() => setAutoCovers(!autoCovers)} />)}
+            {mobileRow("Suggest folios", "Quietly group related pieces.", <Switch on={suggestFolios} onClick={() => setSuggestFolios(!suggestFolios)} />)}
           </div>
 
           <footer style={{ padding: "34px 0 10px", display: "flex", alignItems: "center", gap: 11, color: "var(--muted)" }}>
@@ -339,8 +398,9 @@ export default function Settings() {
         <h2 style={{ ...SECTION, margin: "34px 0 4px" }}>Appearance</h2>
         <Row title="Theme" desc="Light editorial paper, or dark gallery viewing.">
           <div style={{ display: "flex", alignItems: "center", gap: 3, padding: 4, border: "1px solid var(--line)", borderRadius: 99, background: "var(--surface)", flex: "none" }}>
-            <button onClick={() => setTheme("light")} style={seg(theme !== "dark")}>Light</button>
-            <button onClick={() => setTheme("dark")} style={seg(theme === "dark")}>Dark</button>
+            <button type="button" onClick={() => setTheme("light")} style={seg(theme === "light")}>Light</button>
+            <button type="button" onClick={() => setTheme("dark")} style={seg(theme === "dark")}>Dark</button>
+            <button type="button" onClick={() => setTheme("auto")} style={seg(theme === "auto")}>Auto</button>
           </div>
         </Row>
         <Row title="Info panel" desc="Choose how the viewer keeps details visible while browsing pieces.">
@@ -364,10 +424,10 @@ export default function Settings() {
             focus={{ borderColor: "var(--accent)" }}
           />
         </Row>
-        <Row title="Address" desc="Self-hosted, on your own machine.">
+        <Row title="Address" desc="Current self-hosted address.">
           <div style={{ fontFamily: "var(--sans)", fontSize: 13.5, color: "var(--graphite)", display: "flex", alignItems: "center", gap: 8 }}>
             <span style={{ width: 6, height: 6, borderRadius: 99, background: "var(--accent)" }} />
-            folio.oklabs.uk
+            <span style={{ overflowWrap: "anywhere" }}>{currentHost}</span>
           </div>
         </Row>
         <Row title="Storage" desc="Where your pieces live.">
@@ -384,7 +444,9 @@ export default function Settings() {
         <h2 style={SECTION}>Connectors</h2>
         <div style={{ padding: "18px 0", borderBottom: "1px solid var(--line)" }}>
           <div style={{ ...ROW_TITLE, marginBottom: 5 }}>Telegram sources</div>
-          <div style={{ ...ROW_DESC, marginBottom: 16 }}>Enabled chat IDs are polled by the connector without redeploying.</div>
+          <div style={{ ...ROW_DESC, marginBottom: 16 }}>
+            Enabled chat IDs are polled by the connector. Runtime-managed sources are shown below when they are not managed here.
+          </div>
           <div style={{ display: "grid", gridTemplateColumns: "minmax(150px, 1fr) minmax(180px, 1.2fr) auto", gap: 10, alignItems: "end" }}>
             <Hov
               as="input"
@@ -504,6 +566,21 @@ export default function Settings() {
                     </button>
                   </div>
                 )}
+              </div>
+            ))}
+            {unmanagedTelegramSources.map((source) => (
+              <div key={source.id || source.display_name} style={{ padding: "11px 0", borderTop: "1px solid var(--line)" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 12, alignItems: "center" }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontFamily: "var(--sans)", fontSize: 13.5, color: "var(--ink)", overflowWrap: "anywhere" }}>{source.display_name || "Telegram source"}</div>
+                    <div style={{ ...ROW_DESC, overflowWrap: "anywhere" }}>
+                      Runtime-managed · {source.counts.downloaded.toLocaleString()} kept{source.counts.failed ? ` · ${source.counts.failed.toLocaleString()} failed` : ""}
+                    </div>
+                  </div>
+                  <span style={{ fontFamily: "var(--sans)", fontSize: 12.5, color: "var(--muted)", border: "1px solid var(--line)", borderRadius: 99, padding: "6px 10px", whiteSpace: "nowrap" }}>
+                    Unmanaged
+                  </span>
+                </div>
               </div>
             ))}
           </div>
