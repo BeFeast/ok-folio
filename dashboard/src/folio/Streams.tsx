@@ -18,10 +18,12 @@ import type {
   WebGalleryPaginationConfig,
 } from "../types";
 import DestinationControls, { destinationGateMessage } from "./DestinationControls";
-import { DotsIcon, OutlineButton, PageHeader, PlusIcon } from "./ui";
+import { ConfirmationDialog, DotsIcon, OutlineButton, PageHeader, PlusIcon } from "./ui";
 import { useViewport } from "./useViewport";
 
 type EditorMode = { kind: "create" } | { kind: "edit"; source: ConnectorSourceSetting };
+
+type StreamNotice = { tone: "guidance" | "error"; message: string };
 
 type WebGalleryForm = {
   label: string;
@@ -422,6 +424,49 @@ const smallButtonStyle: CSSProperties = {
   cursor: "pointer",
 };
 
+function StreamNoticeBanner({ notice, onDismiss }: { notice: StreamNotice; onDismiss: () => void }) {
+  return (
+    <div
+      role={notice.tone === "error" ? "alert" : "status"}
+      style={{
+        display: "flex",
+        alignItems: "start",
+        justifyContent: "space-between",
+        gap: 12,
+        padding: "12px 14px",
+        borderRadius: 6,
+        border: notice.tone === "error" ? "1px solid var(--accent-line)" : "1px solid var(--line)",
+        background: notice.tone === "error" ? "var(--accent-soft)" : "var(--surface-2)",
+        color: notice.tone === "error" ? "var(--accent)" : "var(--graphite)",
+        fontFamily: "var(--sans)",
+        fontSize: 13,
+        lineHeight: 1.45,
+      }}
+    >
+      <span>{notice.message}</span>
+      <button
+        type="button"
+        onClick={onDismiss}
+        aria-label="Dismiss streams notice"
+        style={{
+          flex: "none",
+          appearance: "none",
+          border: 0,
+          background: "transparent",
+          color: "inherit",
+          cursor: "pointer",
+          fontFamily: "var(--sans)",
+          fontSize: 18,
+          lineHeight: 1,
+          padding: "0 2px",
+        }}
+      >
+        ×
+      </button>
+    </div>
+  );
+}
+
 function StreamRow({
   s,
   settings,
@@ -813,6 +858,8 @@ export default function Streams() {
   const [busyConnectors, setBusyConnectors] = useState<Record<string, boolean>>({});
   const [editor, setEditor] = useState<EditorMode | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [notice, setNotice] = useState<StreamNotice | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<ConnectorSourceSetting | null>(null);
   const { data, isLoading, isError } = useQuery({
     queryKey: ["folio-connectors"],
     queryFn: fetchConnectorStatus,
@@ -836,7 +883,7 @@ export default function Streams() {
     const enabled = sources.some((source) => source.enabled);
     const nextEnabled = !enabled;
     if (connector.id === "webgallery" && nextEnabled) {
-      window.alert("Open a web gallery source, run Test, then save it enabled.");
+      setNotice({ tone: "guidance", message: "Open a web gallery source, run Test, then save it enabled." });
       return;
     }
     const previous = queryClient.getQueryData<ConnectorSourcesResponse>(["connector-sources"]);
@@ -864,7 +911,7 @@ export default function Streams() {
       .catch(() => {
         if (previous) queryClient.setQueryData(["connector-sources"], previous);
         reload();
-        window.alert("Some stream sources could not be updated. The source list was refreshed.");
+        setNotice({ tone: "error", message: "Some stream sources could not be updated. The source list was refreshed." });
       })
       .finally(() => {
         setBusyConnectors((current) => {
@@ -893,7 +940,7 @@ export default function Streams() {
       .then(reload)
       .catch(() => {
         reload();
-        window.alert("The stream source could not be updated.");
+        setNotice({ tone: "error", message: "The stream source could not be updated." });
       })
       .finally(() => {
         setBusyConnectors((current) => {
@@ -905,22 +952,42 @@ export default function Streams() {
   };
 
   const removeSource = (source: ConnectorSourceSetting) => {
-    if (!window.confirm(`Delete ${sourceTitle(source)}?`)) return;
-    setBusyConnectors((current) => ({ ...current, [source.type]: true }));
-    deleteConnectorSource(source.id)
-      .then(reload)
-      .catch(() => {
-        reload();
-        window.alert("The stream source could not be deleted.");
-      })
-      .finally(() => {
-        setBusyConnectors((current) => {
-          const next = { ...current };
-          delete next[source.type];
-          return next;
-        });
-      });
+    setDeleteTarget(source);
   };
+
+  const confirmRemoveSource = async (source: ConnectorSourceSetting) => {
+    setBusyConnectors((current) => ({ ...current, [source.type]: true }));
+    try {
+      await deleteConnectorSource(source.id);
+      reload();
+    } catch {
+      reload();
+      setNotice({ tone: "error", message: "The stream source could not be deleted." });
+    } finally {
+      setBusyConnectors((current) => {
+        const next = { ...current };
+        delete next[source.type];
+        return next;
+      });
+    }
+  };
+
+  const confirmation = deleteTarget ? (
+    <ConfirmationDialog
+      eyebrow="Delete source"
+      title={`Delete ${sourceTitle(deleteTarget)}?`}
+      description="This stream source will stop gathering pieces. Pieces already in your gallery stay where they are."
+      confirmLabel="Delete"
+      busyLabel="Deleting"
+      destructive
+      onCancel={() => setDeleteTarget(null)}
+      onConfirm={async () => {
+        const source = deleteTarget;
+        setDeleteTarget(null);
+        await confirmRemoveSource(source);
+      }}
+    />
+  ) : null;
 
   const addAction = (
     <div style={{ position: "relative" }}>
@@ -968,6 +1035,7 @@ export default function Streams() {
             <PlusIcon size={18} />
           </button>
         </div>
+        {notice ? <div style={{ marginTop: 14 }}><StreamNoticeBanner notice={notice} onDismiss={() => setNotice(null)} /></div> : null}
         <section style={{ padding: "18px 0 0" }}>
           {isError ? (
             <div style={{ padding: "60px 0", fontFamily: "var(--serif)", fontSize: 20, color: "var(--graphite)" }}>
@@ -999,6 +1067,7 @@ export default function Streams() {
           onDelete={removeSource}
         />
         {editor ? <WebGalleryEditor mode={editor} isMobile={isMobile} busy={webGalleryBusy} onClose={() => setEditor(null)} onSaved={() => { setEditor(null); reload(); }} /> : null}
+        {confirmation}
       </div>
     );
   }
@@ -1012,6 +1081,7 @@ export default function Streams() {
         action={addAction}
       />
       <section style={{ maxWidth: 920, padding: "34px 0 0", display: "flex", flexDirection: "column", gap: 12 }}>
+        {notice ? <StreamNoticeBanner notice={notice} onDismiss={() => setNotice(null)} /> : null}
         {isError ? (
           <div style={{ padding: "60px 0", fontFamily: "var(--serif)", fontStyle: "italic", fontSize: 20, color: "var(--graphite)" }}>
             The streams could not be reached.
@@ -1042,6 +1112,7 @@ export default function Streams() {
         </p>
       </section>
       {editor ? <WebGalleryEditor mode={editor} isMobile={isMobile} busy={webGalleryBusy} onClose={() => setEditor(null)} onSaved={() => { setEditor(null); reload(); }} /> : null}
+      {confirmation}
     </div>
   );
 }

@@ -231,6 +231,65 @@ for (const theme of ["light", "dark"] as Theme[]) {
       await page.keyboard.press("Escape");
       await expect(viewer).toBeHidden();
     });
+
+    test("folio delete uses the styled confirmation dialog", async ({ page }, testInfo) => {
+      test.skip(/mobile/i.test(testInfo.project.name), "mobile folios already use the action sheet confirmation path");
+      let deleteCalls = 0;
+      page.on("dialog", (dialog) => {
+        throw new Error(`Unexpected native dialog: ${dialog.message()}`);
+      });
+      await page.route("**/api/v1/folios/1", async (route) => {
+        if (route.request().method() !== "DELETE") {
+          await route.fallback();
+          return;
+        }
+        deleteCalls += 1;
+        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true }) });
+      });
+
+      await page.goto("/folios");
+      await page.getByRole("button", { name: "Actions for Reference Walls" }).click();
+      await page.getByRole("button", { name: "Delete" }).click();
+      await expect(page.getByRole("dialog", { name: /Delete "Reference Walls"/ })).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(page.getByRole("dialog", { name: /Delete "Reference Walls"/ })).toBeHidden();
+      expect(deleteCalls).toBe(0);
+
+      await page.getByRole("button", { name: "Actions for Reference Walls" }).click();
+      await page.getByRole("button", { name: "Delete" }).click();
+      await expect(page.getByRole("dialog", { name: /Delete "Reference Walls"/ })).toBeVisible();
+      await page.keyboard.press("Enter");
+      await expect.poll(() => deleteCalls).toBe(1);
+      await expect(page.getByRole("status").filter({ hasText: "Folio deleted" })).toBeVisible();
+    });
+
+    test("stream source delete uses confirmation and inline error text", async ({ page }) => {
+      let deleteCalls = 0;
+      page.on("dialog", (dialog) => {
+        throw new Error(`Unexpected native dialog: ${dialog.message()}`);
+      });
+      await page.route("**/api/v1/settings/connector-sources/32", async (route) => {
+        if (route.request().method() !== "DELETE") {
+          await route.fallback();
+          return;
+        }
+        deleteCalls += 1;
+        await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "Fixture delete failure" }) });
+      });
+
+      await page.goto("/streams");
+      await page.getByRole("button", { name: "Delete" }).first().click();
+      await expect(page.getByRole("dialog", { name: /Delete Daily image board/ })).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(page.getByRole("dialog", { name: /Delete Daily image board/ })).toBeHidden();
+      expect(deleteCalls).toBe(0);
+
+      await page.getByRole("button", { name: "Delete" }).first().click();
+      await expect(page.getByRole("dialog", { name: /Delete Daily image board/ })).toBeVisible();
+      await page.keyboard.press("Enter");
+      await expect.poll(() => deleteCalls).toBe(1);
+      await expect(page.getByRole("alert").filter({ hasText: "The stream source could not be deleted." })).toBeVisible();
+    });
   });
 }
 

@@ -2,6 +2,7 @@ import { useState, type CSSProperties } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { backfillConnectorSource, createFolio, fetchFolios } from "../api";
 import type { ConnectorSourceBackfillResult, FoliosResponse } from "../types";
+import { ConfirmationDialog } from "./ui";
 
 type Props = {
   targetFolioId: number | null;
@@ -101,6 +102,7 @@ export default function DestinationControls({
   const [creating, setCreating] = useState(false);
   const [backfillStatus, setBackfillStatus] = useState("");
   const [backfilling, setBackfilling] = useState(false);
+  const [confirmBackfillOpen, setConfirmBackfillOpen] = useState(false);
   const folioList = folios.data?.folios ?? [];
   const selectedFolio = folioList.find((folio) => folio.id === targetFolioId);
   const gateMessage = destinationGateMessage(targetFolioId, showInLibrary);
@@ -128,9 +130,8 @@ export default function DestinationControls({
     }
   };
 
-  const backfill = async () => {
+  const runBackfill = async () => {
     if (!sourceId || backfillDisabled) return;
-    if (!window.confirm("Backfill existing pieces for this source into the saved destination?")) return;
     setBackfillStatus("Backfilling...");
     setBackfilling(true);
     try {
@@ -150,6 +151,11 @@ export default function DestinationControls({
     } finally {
       setBackfilling(false);
     }
+  };
+
+  const requestBackfill = () => {
+    if (backfillDisabled) return;
+    setConfirmBackfillOpen(true);
   };
 
   return (
@@ -237,13 +243,27 @@ export default function DestinationControls({
       </div>
 
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-        <button type="button" onClick={backfill} disabled={backfillDisabled} style={{ ...buttonStyle, opacity: backfillDisabled ? 0.55 : 1, cursor: backfillDisabled ? "not-allowed" : "pointer" }}>
+        <button type="button" onClick={requestBackfill} disabled={backfillDisabled} style={{ ...buttonStyle, opacity: backfillDisabled ? 0.55 : 1, cursor: backfillDisabled ? "not-allowed" : "pointer" }}>
           {backfilling ? "Backfilling..." : "Backfill existing"}
         </button>
         <div style={{ flex: 1, minWidth: 180, fontFamily: "var(--sans)", fontSize: 12.5, color: backfillStatus.includes("failed") || backfillStatus.includes("Failed") ? "var(--accent)" : "var(--muted)", lineHeight: 1.45 }}>
           {backfillStatus || (canBackfill ? "Uses the saved destination." : backfillBlockedMessage || "Save a target folio before backfill.")}
         </div>
       </div>
+      {confirmBackfillOpen ? (
+        <ConfirmationDialog
+          eyebrow="Backfill"
+          title="Backfill this source?"
+          description="Existing pieces from this source will be added to the saved destination. New stream routing stays unchanged."
+          confirmLabel="Backfill"
+          busyLabel="Backfilling"
+          onCancel={() => setConfirmBackfillOpen(false)}
+          onConfirm={async () => {
+            setConfirmBackfillOpen(false);
+            await runBackfill();
+          }}
+        />
+      ) : null}
     </section>
   );
 }
