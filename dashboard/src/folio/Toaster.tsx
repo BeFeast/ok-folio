@@ -42,7 +42,7 @@ function glyph(status: ToastStatus) {
 }
 
 const CARD: CSSProperties = {
-  pointerEvents: "auto",
+  pointerEvents: "none",
   display: "flex",
   alignItems: "center",
   gap: 12,
@@ -86,9 +86,7 @@ export default function Toaster() {
           <div
             key={t.id}
             role="status"
-            onClick={() => dismissable && dismissToast(t.id)}
-            title={dismissable ? "Dismiss" : undefined}
-            style={{ ...CARD, width: isMobile ? "100%" : undefined, cursor: dismissable ? "pointer" : "default" }}
+            style={{ ...CARD, width: isMobile ? "100%" : undefined }}
           >
             <span
               style={{
@@ -121,6 +119,33 @@ export default function Toaster() {
                 </div>
               ) : null}
             </div>
+            {dismissable ? (
+              <button
+                type="button"
+                aria-label="Dismiss notification"
+                onClick={() => dismissToast(t.id)}
+                style={{
+                  pointerEvents: "auto",
+                  appearance: "none",
+                  flex: "none",
+                  width: 26,
+                  height: 26,
+                  borderRadius: 99,
+                  border: "1px solid var(--line)",
+                  background: "transparent",
+                  color: "var(--muted)",
+                  cursor: "pointer",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  padding: 0,
+                }}
+              >
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+                  <path d="M3 3l6 6M9 3 3 9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                </svg>
+              </button>
+            ) : null}
           </div>
         );
       })}
