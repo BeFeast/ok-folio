@@ -90,6 +90,76 @@ for (const theme of ["light", "dark"] as Theme[]) {
       });
     }
 
+    test("gallery favorite controls stay hidden until desktop hover or mobile tap", async ({ page }, testInfo) => {
+      await page.goto("/");
+      await expect(page.locator("body")).toContainText(/Gallery|Recently gathered|Red Room Study/);
+      await page.evaluate(() => document.fonts.ready);
+      await page.waitForLoadState("networkidle");
+
+      const favoriteControls = galleryFavoriteControls(page);
+      const isMobile = testInfo.project.name.includes("mobile");
+      const controlCount = await favoriteControls.count();
+      if (isMobile && controlCount === 0) {
+        return;
+      }
+      expect(controlCount).toBeGreaterThan(0);
+      await expectFavoriteControlsHidden(favoriteControls);
+
+      const firstControl = favoriteControls.first();
+      if (isMobile) {
+        await firstControl.dispatchEvent("pointerdown", { bubbles: true, pointerId: 1, pointerType: "touch", isPrimary: true });
+        await expect
+          .poll(() => firstControl.evaluate((node) => Number.parseFloat(getComputedStyle(node).opacity)))
+          .toBeGreaterThan(0.95);
+        await expect.poll(() => firstControl.evaluate((node) => getComputedStyle(node).backgroundColor)).not.toBe("rgba(0, 0, 0, 0)");
+        await firstControl.dispatchEvent("pointerup", { bubbles: true, pointerId: 1, pointerType: "touch", isPrimary: true });
+        await expect.poll(() => firstControl.evaluate((node) => Number.parseFloat(getComputedStyle(node).opacity))).toBeLessThan(0.1);
+        return;
+      }
+
+      const box = await firstControl.boundingBox();
+      expect(box).not.toBeNull();
+      await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+      await expect.poll(() => firstControl.evaluate((node) => Number.parseFloat(getComputedStyle(node).opacity))).toBeGreaterThan(0.95);
+      await expect.poll(() => firstControl.evaluate((node) => getComputedStyle(node).backgroundColor)).toBe("rgba(0, 0, 0, 0)");
+    });
+
+    test("gallery favorite controls support touch tablet tap state", async ({ browser }, testInfo) => {
+      test.skip(testInfo.project.name.includes("mobile"), "touch tablet state is covered from the desktop browser project");
+
+      const context = await browser.newContext({
+        baseURL: "http://127.0.0.1:4173",
+        viewport: { width: 900, height: 700 },
+        deviceScaleFactor: 1,
+        hasTouch: true,
+        isMobile: false,
+      });
+      const page = await context.newPage();
+      try {
+        await installDesignQaFixtures(page);
+        await page.addInitScript((themeName) => {
+          window.localStorage.setItem("okfolio-theme", themeName);
+          window.localStorage.setItem("okfolio-info-panel-mode", "remember");
+        }, theme);
+        await page.goto("/");
+        await expect(page.locator("body")).toContainText(/Gallery|Recently gathered|Red Room Study/);
+        await page.waitForLoadState("networkidle");
+
+        const favoriteControls = galleryFavoriteControls(page);
+        await expect.poll(() => favoriteControls.count()).toBeGreaterThan(0);
+        await expectFavoriteControlsHidden(favoriteControls);
+
+        const firstControl = favoriteControls.first();
+        await firstControl.dispatchEvent("pointerdown", { bubbles: true, pointerId: 1, pointerType: "touch", isPrimary: true });
+        await expect.poll(() => firstControl.evaluate((node) => Number.parseFloat(getComputedStyle(node).opacity))).toBeGreaterThan(0.95);
+        await expect.poll(() => firstControl.evaluate((node) => getComputedStyle(node).backgroundColor)).not.toBe("rgba(0, 0, 0, 0)");
+        await firstControl.dispatchEvent("pointerup", { bubbles: true, pointerId: 1, pointerType: "touch", isPrimary: true });
+        await expect.poll(() => firstControl.evaluate((node) => Number.parseFloat(getComputedStyle(node).opacity))).toBeLessThan(0.1);
+      } finally {
+        await context.close();
+      }
+    });
+
     test("folio add pieces sends a serialized batch and one summary toast", async ({ page }) => {
       const postStarts: number[] = [];
       let inFlight = 0;
@@ -224,6 +294,24 @@ async function createAddFailureToasts(page: Page, count: number) {
     await expect(page.getByRole("status").filter({ hasText: /add selected pieces/i })).toHaveCount(index + 1);
     await closeAddPiecesPicker(page);
     await expect(page.getByRole("dialog")).toBeHidden();
+  }
+}
+
+function galleryFavoriteControls(page: Page) {
+  return page.locator('figure button[aria-label="Favorite"], figure button[aria-label="Remove favorite"]');
+}
+
+async function expectFavoriteControlsHidden(controls: ReturnType<typeof galleryFavoriteControls>) {
+  const states = await controls.evaluateAll((nodes) =>
+    nodes.map((node) => ({
+      opacity: Number.parseFloat(getComputedStyle(node).opacity),
+      background: getComputedStyle(node).backgroundColor,
+    })),
+  );
+  expect(states.length).toBeGreaterThan(0);
+  for (const state of states) {
+    expect(state.opacity).toBeLessThan(0.1);
+    expect(state.background).toBe("rgba(0, 0, 0, 0)");
   }
 }
 
