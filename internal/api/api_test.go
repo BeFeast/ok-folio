@@ -103,18 +103,31 @@ func safeShutdown(server *Server) {
 	time.Sleep(100 * time.Millisecond) // Give workers time to stop
 }
 
-func TestIsDashboardRouteIncludesPieceDetail(t *testing.T) {
-	if !isDashboardRoute("/pieces/123") {
-		t.Fatalf("Expected piece detail route to fall back to dashboard index")
+func TestIsDashboardRoute(t *testing.T) {
+	tests := []struct {
+		path string
+		want bool
+	}{
+		{path: "/", want: true},
+		{path: "/folios", want: true},
+		{path: "/folios/123", want: true},
+		{path: "/inbox", want: true},
+		{path: "/streams", want: true},
+		{path: "/settings", want: true},
+		{path: "/operations", want: true},
+		{path: "/pieces/123", want: true},
+		{path: "/runs/123", want: true},
+		{path: "/api/v1/inbox", want: false},
+		{path: "/health", want: false},
+		{path: "/unknown", want: false},
 	}
-}
 
-func TestIsDashboardRouteIncludesFolios(t *testing.T) {
-	if !isDashboardRoute("/folios") {
-		t.Fatalf("Expected folios route to fall back to dashboard index")
-	}
-	if !isDashboardRoute("/folios/123") {
-		t.Fatalf("Expected folio detail route to fall back to dashboard index")
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			if got := isDashboardRoute(tt.path); got != tt.want {
+				t.Fatalf("isDashboardRoute(%q) = %v, want %v", tt.path, got, tt.want)
+			}
+		})
 	}
 }
 
