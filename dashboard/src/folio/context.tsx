@@ -510,9 +510,9 @@ export function FolioProvider({ children }: { children: ReactNode }) {
   const resolveInboxAction = useCallback(
     (inboxItemId: number, action: "keep" | "skip", request: (id: number) => Promise<void>) => {
       const id = ++toastSeq;
-      const verb = action === "keep" ? "Keeping" : "Skipping";
-      const done = action === "keep" ? "Inbox item kept" : "Inbox item skipped";
-      const failed = action === "keep" ? "Couldn’t keep inbox item" : "Couldn’t skip inbox item";
+      const verb = action === "keep" ? "Keeping" : "Dismissing";
+      const done = action === "keep" ? "Inbox item kept" : "Inbox item dismissed";
+      const failed = action === "keep" ? "Couldn’t keep inbox item" : "Couldn’t dismiss inbox item";
       setToasts((prev) => [...prev, { id, status: "loading", title: `${verb} inbox item` }]);
       request(inboxItemId)
         .then(() => {
