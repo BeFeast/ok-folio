@@ -61,6 +61,8 @@ node_modules/
 dashboard/node_modules/
 dashboard/dist/
 dashboard/.vite/
+dashboard/playwright-report/
+dashboard/test-results/
 
 # OS / editor
 .DS_Store

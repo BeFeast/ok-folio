@@ -356,6 +356,9 @@ export default function AddPieceModal() {
 
   return (
     <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Add a piece"
       onClick={resetAndClose}
       style={{
         position: "fixed",
