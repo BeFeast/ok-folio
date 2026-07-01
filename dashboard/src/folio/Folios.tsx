@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { fetchFolioPieces, fetchFolios, getPhotoThumbnailUrl } from "../api";
@@ -638,23 +638,167 @@ function MenuButton({ children, onClick }: { children: ReactNode; onClick: () =>
   );
 }
 
+function NewFolioModal({
+  onClose,
+  onCreate,
+}: {
+  onClose: () => void;
+  onCreate: (name: string) => void;
+}) {
+  const [name, setName] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+  const trimmed = name.trim();
+
+  useEffect(() => {
+    inputRef.current?.focus();
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+      }
+    };
+
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!trimmed) return;
+    onCreate(trimmed);
+    onClose();
+  };
+
+  return (
+    <div
+      role="presentation"
+      onMouseDown={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 140,
+        background: "rgba(18,15,10,0.58)",
+        backdropFilter: "blur(7px)",
+        WebkitBackdropFilter: "blur(7px)",
+        display: "grid",
+        placeItems: "center",
+        padding: 22,
+      }}
+    >
+      <form
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="new-folio-title"
+        onSubmit={submit}
+        onMouseDown={(event) => event.stopPropagation()}
+        style={{
+          width: "min(380px, calc(100vw - 44px))",
+          borderRadius: 15,
+          background: "var(--surface)",
+          color: "var(--ink)",
+          boxShadow: "0 24px 70px rgba(0,0,0,0.3)",
+          padding: "26px 24px 22px",
+        }}
+      >
+        <div
+          style={{
+            fontFamily: "var(--sans)",
+            fontSize: 11,
+            letterSpacing: "0.16em",
+            textTransform: "uppercase",
+            color: "var(--accent)",
+          }}
+        >
+          NEW FOLIO
+        </div>
+        <h2
+          id="new-folio-title"
+          style={{
+            fontFamily: "var(--serif)",
+            fontWeight: 300,
+            fontSize: 24,
+            lineHeight: 1.12,
+            color: "var(--ink)",
+            margin: "8px 0 0",
+          }}
+        >
+          Name your folio
+        </h2>
+        <input
+          ref={inputRef}
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+          placeholder="e.g. Reference – hands"
+          aria-label="Folio name"
+          style={{
+            width: "100%",
+            appearance: "none",
+            fontFamily: "var(--serif)",
+            fontSize: 22,
+            color: "var(--ink)",
+            border: 0,
+            borderBottom: "1.5px solid var(--line-2)",
+            background: "transparent",
+            outline: "none",
+            padding: "14px 0 10px",
+            marginTop: 14,
+          }}
+        />
+        <div style={{ display: "flex", gap: 11, marginTop: 22 }}>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              flex: "none",
+              appearance: "none",
+              cursor: "pointer",
+              height: 50,
+              padding: "0 56px",
+              borderRadius: 13,
+              border: "1px solid var(--line-2)",
+              background: "transparent",
+              color: "var(--ink)",
+              fontFamily: "var(--sans)",
+              fontSize: 15,
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={!trimmed}
+            style={{
+              flex: 1,
+              appearance: "none",
+              cursor: trimmed ? "pointer" : "default",
+              height: 50,
+              borderRadius: 13,
+              border: 0,
+              background: trimmed ? "var(--accent)" : "var(--line)",
+              color: trimmed ? "var(--on-accent)" : "var(--muted)",
+              fontFamily: "var(--sans)",
+              fontSize: 15,
+              fontWeight: 500,
+            }}
+          >
+            Create
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 export default function Folios() {
   const { createFolioAction } = useFolio();
   const { isMobile } = useViewport();
+  const [createOpen, setCreateOpen] = useState(false);
   const { data, isLoading, isError } = useQuery({
     queryKey: ["folios"],
     queryFn: fetchFolios,
   });
   const folios = data?.folios ?? [];
-
-  const create = () => {
-    const next = window.prompt("Name this folio");
-    if (!next) return;
-    const name = next.trim();
-    if (name) {
-      createFolioAction(name);
-    }
-  };
 
   if (isMobile) {
     return <MobileFolios folios={folios} isLoading={isLoading} isError={isError} />;
@@ -666,7 +810,7 @@ export default function Folios() {
         eyebrow="Folios"
         title="Curated groups"
         subcopy="Folios gather pieces by a thread you choose. Covers chosen for you, yours to change."
-        action={<OutlineButton onClick={create}>New folio</OutlineButton>}
+        action={<OutlineButton onClick={() => setCreateOpen(true)}>New folio</OutlineButton>}
       />
       <section style={{ padding: "46px 0 0" }}>
         {isError ? (
@@ -690,6 +834,14 @@ export default function Folios() {
           </section>
         )}
       </section>
+      {createOpen ? (
+        <NewFolioModal
+          onClose={() => setCreateOpen(false)}
+          onCreate={(name) => {
+            createFolioAction(name);
+          }}
+        />
+      ) : null}
     </div>
   );
 }
