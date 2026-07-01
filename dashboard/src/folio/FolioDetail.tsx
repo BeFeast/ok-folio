@@ -466,6 +466,9 @@ function AddPiecesPicker({
       }}
     >
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Add pieces"
         onClick={(e) => e.stopPropagation()}
         style={{ width: "min(1040px, 95vw)", maxHeight: "90vh", overflow: "auto", background: "var(--surface)", boxShadow: "0 50px 130px rgba(0,0,0,0.5)" }}
       >
@@ -806,7 +809,7 @@ export default function FolioDetail() {
       return loaded < lastPage.total ? loaded : undefined;
     },
   });
-  const photos = piecesQuery.data?.pages.flatMap((page) => page.photos) ?? [];
+  const photos = useMemo(() => piecesQuery.data?.pages.flatMap((page) => page.photos) ?? [], [piecesQuery.data]);
   const pieces = useMemo(() => photos.map(mapPhoto), [photos]);
   const existingIds = useMemo(() => new Set(photos.map((photo) => photo.ID)), [photos]);
   const total = piecesQuery.data?.pages[0]?.total ?? folio?.piece_count ?? pieces.length;

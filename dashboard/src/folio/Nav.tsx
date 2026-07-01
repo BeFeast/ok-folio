@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState, type ReactNode } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { useFolio } from "./context";
 import { useViewport } from "./useViewport";
 import { BrandMark, CloseIcon, Hov, MoonIcon, PlusIcon, SearchIcon, SlidersIcon } from "./ui";
@@ -116,7 +116,6 @@ function IconButton({
 }
 
 export default function Nav() {
-  const navigate = useNavigate();
   const location = useLocation();
   const { query, setQuery, toggleTheme, openAdd, openView, inboxCount } = useFolio();
   const { isMobile } = useViewport();
@@ -294,10 +293,9 @@ export default function Nav() {
             const active = isActive(n.path);
             const color = active ? "var(--accent)" : inactiveTab;
             return (
-              <button
+              <Link
                 key={n.path}
-                type="button"
-                onClick={() => navigate(n.path)}
+                to={n.path}
                 aria-current={active ? "page" : undefined}
                 style={{
                   appearance: "none",
@@ -317,6 +315,7 @@ export default function Nav() {
                   fontSize: 10,
                   fontWeight: active ? 600 : 500,
                   lineHeight: 1.05,
+                  textDecoration: "none",
                 }}
               >
                 <span style={{ position: "relative", display: "inline-flex", alignItems: "center", justifyContent: "center", height: 24 }}>
@@ -348,7 +347,7 @@ export default function Nav() {
                   ) : null}
                 </span>
                 <span style={{ overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%" }}>{n.label}</span>
-              </button>
+              </Link>
             );
           })}
         </nav>
@@ -358,6 +357,7 @@ export default function Nav() {
 
   return (
     <nav
+      aria-label="Primary"
       style={{
         position: "sticky",
         top: 0,
@@ -373,9 +373,10 @@ export default function Nav() {
         borderBottom: "1px solid var(--line)",
       }}
     >
-      <div
-        onClick={() => navigate("/")}
-        style={{ display: "flex", alignItems: "center", gap: 11, cursor: "pointer" }}
+      <Link
+        to="/"
+        aria-label="OK Folio home"
+        style={{ display: "flex", alignItems: "center", gap: 11, cursor: "pointer", textDecoration: "none" }}
       >
         <BrandMark />
         <span
@@ -390,16 +391,16 @@ export default function Nav() {
           <span style={{ color: "var(--graphite)", fontWeight: 500 }}>OK</span>
           <span style={{ color: "var(--ink)", fontWeight: 500 }}>Folio</span>
         </span>
-      </div>
+      </Link>
 
       <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
         {items.map((n) => {
           const active = isActive(n.path);
           return (
             <Hov
-              as="button"
+              as={Link}
               key={n.path}
-              onClick={() => navigate(n.path)}
+              to={n.path}
               style={{
                 appearance: "none",
                 background: "transparent",
@@ -411,6 +412,7 @@ export default function Nav() {
                 color: active ? "var(--ink)" : "var(--graphite)",
                 position: "relative",
                 letterSpacing: "0.1px",
+                textDecoration: "none",
               }}
               hover={active ? undefined : { color: "var(--ink)" }}
             >

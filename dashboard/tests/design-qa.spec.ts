@@ -16,6 +16,13 @@ type Surface = {
 };
 
 const screenshotRoot = path.join(process.cwd(), "test-results", "design-qa");
+const primaryRoutes = [
+  { label: "Gallery", path: "/", expectText: /Recently gathered|Red Room Study/ },
+  { label: "Folios", path: "/folios", expectText: /New folio|Reference Walls/ },
+  { label: "Inbox", path: "/inbox", expectText: /Keep|Dismiss|Add to folio/ },
+  { label: "Streams", path: "/streams", expectText: /Telegram|Web Gallery/ },
+  { label: "Settings", path: "/settings", expectText: /Appearance|Preferences|Theme/ },
+];
 
 const surfaces: Surface[] = [
   { name: "gallery", path: "/", expectText: /Gallery|Recently gathered|Red Room Study/, minImages: 4 },
@@ -120,6 +127,72 @@ for (const theme of ["light", "dark"] as Theme[]) {
       await expect(page.getByRole("status").filter({ hasText: /Adding piece to folio|Couldn’t add piece to folio/ })).toHaveCount(0);
     });
   });
+}
+
+test.describe("folio detail primary navigation", () => {
+  test.beforeEach(async ({ page }) => {
+    await installDesignQaFixtures(page);
+  });
+
+  test("routes from a direct folio detail URL in normal mode", async ({ page }) => {
+    await page.goto("/folios/1");
+    await expect(page.locator("body")).toContainText(/Reference Walls|Add pieces/);
+
+    await expectPrimaryNavTargets(page);
+
+    await page.goto("/folios/1");
+    await clickPrimaryNav(page, "Gallery");
+    await expectPathname(page, "/");
+    await page.goBack();
+    await expectPathname(page, "/folios/1");
+    await expect(page.locator("body")).toContainText(/Reference Walls|Add pieces/);
+    await page.goForward();
+    await expectPathname(page, "/");
+  });
+
+  test("routes from folio detail selection mode", async ({ page }) => {
+    await page.goto("/folios/1");
+    await page.getByRole("button", { name: /select/i }).first().click();
+    await expect(page.locator("body")).toContainText(/selected|Done/i);
+
+    await expectPrimaryNavTargets(page);
+  });
+
+  test("routes after opening and closing the folio add-pieces picker", async ({ page }) => {
+    await page.goto("/folios/1");
+    await page.getByRole("button", { name: /^Add pieces$/i }).first().click();
+    await expect(page.getByRole("dialog")).toBeVisible();
+    await closeAddPiecesPicker(page);
+
+    await expectPathname(page, "/folios/1");
+    await expectPrimaryNavTargets(page);
+  });
+});
+
+async function expectPrimaryNavTargets(page: Page) {
+  for (const route of primaryRoutes) {
+    await page.goto("/folios/1");
+    await clickPrimaryNav(page, route.label);
+    await expectPathname(page, route.path);
+    await expect(page.locator("body")).toContainText(route.expectText);
+  }
+}
+
+async function expectPathname(page: Page, pathname: string) {
+  await expect.poll(() => new URL(page.url()).pathname).toBe(pathname);
+}
+
+async function clickPrimaryNav(page: Page, label: string) {
+  await page.getByRole("navigation", { name: "Primary" }).getByRole("link", { name: label }).click();
+}
+
+async function closeAddPiecesPicker(page: Page) {
+  const cancel = page.getByRole("button", { name: "Cancel" });
+  if (await cancel.count()) {
+    await cancel.first().click();
+    return;
+  }
+  await page.getByRole("button", { name: "Close" }).click();
 }
 
 async function assertFirstPaintDensity(page: Page, minImages: number, minImageCoverage = 0.08) {

@@ -72,6 +72,10 @@ export default function Toaster() {
         display: "flex",
         flexDirection: "column",
         gap: 10,
+        maxHeight: isMobile
+          ? "calc(100dvh - var(--safe-top) - var(--mobile-tab-height) - var(--safe-bottom) - 104px)"
+          : "calc(100dvh - 96px)",
+        overflowY: "auto",
         pointerEvents: "none",
         alignItems: isMobile ? "center" : undefined,
       }}

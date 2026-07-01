@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
 
 import { FolioProvider } from "./folio/context";
 import Nav from "./folio/Nav";
@@ -40,6 +40,7 @@ const queryClient = new QueryClient({
 
 function FolioShell() {
   const { isMobile } = useViewport();
+  const location = useLocation();
 
   return (
     <div
@@ -63,7 +64,7 @@ function FolioShell() {
             : "0 30px 110px",
         }}
       >
-        <Routes>
+        <Routes key={location.pathname}>
           <Route path="/" element={<Gallery />} />
           <Route path="/folios" element={<Folios />} />
           <Route path="/folios/:id" element={<FolioDetail />} />
