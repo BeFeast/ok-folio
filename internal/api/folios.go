@@ -183,8 +183,13 @@ func (s *Server) handleAddFolioPiece(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusNotFound, "Photo not found")
 		return
 	}
-	if err := s.db.AddPieceToFolio(folioID, input.PhotoID); err != nil {
+	added, err := s.db.AddPieceToFolioIfMissing(folioID, input.PhotoID)
+	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, "Failed to add piece to folio")
+		return
+	}
+	if !added {
+		s.writeJSON(w, http.StatusOK, map[string]bool{"added": false, "duplicate": true})
 		return
 	}
 	s.writeJSON(w, http.StatusCreated, map[string]bool{"added": true})

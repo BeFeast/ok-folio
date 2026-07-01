@@ -289,6 +289,7 @@ interface FolioContextValue {
   changeFolioCoverAction: (id: number, photoId: number | null) => void;
   deleteFolioAction: (id: number) => Promise<boolean>;
   addPieceToFolioAction: (folioId: number, photoId: number) => void;
+  addPiecesToFolioAction: (folioId: number, photoIds: number[], existingIds?: Set<number>) => Promise<boolean>;
   removePieceFromFolioAction: (folioId: number, photoId: number) => void;
   editPieceMetadata: (id: number, input: PieceMetadataPatch) => Promise<boolean>;
   bulkEditPieces: (input: BulkMetadataEdit) => Promise<boolean>;
@@ -717,6 +718,90 @@ export function FolioProvider({ children }: { children: ReactNode }) {
     [queryClient],
   );
 
+  const addPiecesToFolioAction = useCallback(
+    async (folioId: number, photoIds: number[], existingIds?: Set<number>) => {
+      const uniquePhotoIds = Array.from(new Set(photoIds)).filter((photoId) => photoId > 0);
+      const skipped = existingIds ? uniquePhotoIds.filter((photoId) => existingIds.has(photoId)).length : 0;
+      const pendingPhotoIds = existingIds ? uniquePhotoIds.filter((photoId) => !existingIds.has(photoId)) : uniquePhotoIds;
+
+      if (uniquePhotoIds.length === 0) {
+        return false;
+      }
+      if (pendingPhotoIds.length === 0) {
+        const id = ++toastSeq;
+        setToasts((prev) => [...prev, { id, status: "success", title: "Pieces already in folio", detail: `${skipped.toLocaleString()} skipped` }]);
+        window.setTimeout(() => {
+          setToasts((prev) => prev.filter((t) => t.id !== id));
+        }, 2800);
+        return true;
+      }
+
+      const id = ++toastSeq;
+      setToasts((prev) => [
+        ...prev,
+        {
+          id,
+          status: "loading",
+          title: `Adding ${pendingPhotoIds.length.toLocaleString()} ${pendingPhotoIds.length === 1 ? "piece" : "pieces"} to folio`,
+          detail: skipped ? `${skipped.toLocaleString()} already in folio` : undefined,
+        },
+      ]);
+
+      let added = 0;
+      let error: unknown;
+      for (const photoId of pendingPhotoIds) {
+        try {
+          await addPieceToFolio(folioId, photoId);
+          added += 1;
+        } catch (err) {
+          error = err;
+          break;
+        }
+      }
+
+      if (error) {
+        const notAdded = pendingPhotoIds.length - added;
+        const parts = [
+          added ? `${added.toLocaleString()} added` : "",
+          skipped ? `${skipped.toLocaleString()} already in folio` : "",
+          `${notAdded.toLocaleString()} not added`,
+          error instanceof Error ? error.message : "",
+        ].filter(Boolean);
+        setToasts((prev) =>
+          prev.map((t) =>
+            t.id === id
+              ? { ...t, status: "error", title: "Couldn’t add selected pieces", detail: parts.join(". ") }
+              : t,
+          ),
+        );
+        if (added > 0) {
+          void queryClient.invalidateQueries({ queryKey: ["folio-pieces", folioId] });
+          void queryClient.invalidateQueries({ queryKey: ["folios"] });
+        }
+        return false;
+      }
+
+      const parts = [
+        `${added.toLocaleString()} ${added === 1 ? "piece" : "pieces"} added`,
+        skipped ? `${skipped.toLocaleString()} already in folio` : "",
+      ].filter(Boolean);
+      setToasts((prev) =>
+        prev.map((t) =>
+          t.id === id
+            ? { ...t, status: "success", title: "Pieces added to folio", detail: parts.join(". ") }
+            : t,
+        ),
+      );
+      window.setTimeout(() => {
+        setToasts((prev) => prev.filter((t) => t.id !== id));
+      }, 2800);
+      void queryClient.invalidateQueries({ queryKey: ["folio-pieces", folioId] });
+      void queryClient.invalidateQueries({ queryKey: ["folios"] });
+      return true;
+    },
+    [queryClient],
+  );
+
   const removePieceFromFolioAction = useCallback(
     (folioId: number, photoId: number) => {
       const id = ++toastSeq;
@@ -1039,6 +1124,7 @@ export function FolioProvider({ children }: { children: ReactNode }) {
     changeFolioCoverAction,
     deleteFolioAction,
     addPieceToFolioAction,
+    addPiecesToFolioAction,
     removePieceFromFolioAction,
     editPieceMetadata,
     bulkEditPieces,

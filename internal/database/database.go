@@ -1608,16 +1608,22 @@ func (db *DB) decorateFolio(folio *Folio) error {
 }
 
 func (db *DB) AddPieceToFolio(folioID, photoID uint64) error {
+	_, err := db.AddPieceToFolioIfMissing(folioID, photoID)
+	return err
+}
+
+func (db *DB) AddPieceToFolioIfMissing(folioID, photoID uint64) (bool, error) {
 	if folioID == 0 {
-		return fmt.Errorf("folio ID is required")
+		return false, fmt.Errorf("folio ID is required")
 	}
 	if photoID == 0 {
-		return fmt.Errorf("photo ID is required")
+		return false, fmt.Errorf("photo ID is required")
 	}
-	return db.Clauses(clause.OnConflict{DoNothing: true}).Create(&FolioPiece{
+	result := db.Clauses(clause.OnConflict{DoNothing: true}).Create(&FolioPiece{
 		FolioID: folioID,
 		PhotoID: photoID,
-	}).Error
+	})
+	return result.RowsAffected > 0, result.Error
 }
 
 type ConnectorSourceBackfillResult struct {
