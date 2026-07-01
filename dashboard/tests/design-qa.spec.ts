@@ -151,27 +151,47 @@ test.describe("folio detail primary navigation", () => {
   });
 
   test("routes from folio detail selection mode", async ({ page }) => {
-    await page.goto("/folios/1");
-    await page.getByRole("button", { name: /select/i }).first().click();
-    await expect(page.locator("body")).toContainText(/selected|Done/i);
-
-    await expectPrimaryNavTargets(page);
+    await expectPrimaryNavTargets(page, async () => {
+      await page.getByRole("button", { name: /select/i }).first().click();
+      await expect(page.locator("body")).toContainText(/selected|Done/i);
+    });
   });
 
   test("routes after opening and closing the folio add-pieces picker", async ({ page }) => {
-    await page.goto("/folios/1");
-    await page.getByRole("button", { name: /^Add pieces$/i }).first().click();
-    await expect(page.getByRole("dialog")).toBeVisible();
-    await closeAddPiecesPicker(page);
+    await expectPrimaryNavTargets(page, async () => {
+      await page.getByRole("button", { name: /^Add pieces$/i }).first().click();
+      await expect(page.getByRole("dialog")).toBeVisible();
+      await closeAddPiecesPicker(page);
+      await expect(page.getByRole("dialog")).toBeHidden();
+      await expectPathname(page, "/folios/1");
+    });
+  });
 
-    await expectPathname(page, "/folios/1");
-    await expectPrimaryNavTargets(page);
+  test("routes with persistent folio error toasts visible", async ({ page }) => {
+    await page.route("**/api/v1/folios/1/pieces", async (route) => {
+      if (route.request().method() !== "POST") {
+        await route.fallback();
+        return;
+      }
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Fixture add failure" }),
+      });
+    });
+
+    await expectPrimaryNavTargets(page, async () => {
+      await createAddFailureToasts(page, 3);
+      await expect(page.getByRole("status").filter({ hasText: /add selected pieces/i })).toHaveCount(3);
+    });
   });
 });
 
-async function expectPrimaryNavTargets(page: Page) {
+async function expectPrimaryNavTargets(page: Page, setup?: () => Promise<void>) {
   for (const route of primaryRoutes) {
     await page.goto("/folios/1");
+    await expect(page.locator("body")).toContainText(/Reference Walls|Add pieces/);
+    await setup?.();
     await clickPrimaryNav(page, route.label);
     await expectPathname(page, route.path);
     await expect(page.locator("body")).toContainText(route.expectText);
@@ -193,6 +213,18 @@ async function closeAddPiecesPicker(page: Page) {
     return;
   }
   await page.getByRole("button", { name: "Close" }).click();
+}
+
+async function createAddFailureToasts(page: Page, count: number) {
+  for (let index = 0; index < count; index += 1) {
+    await page.getByRole("button", { name: /^Add pieces$/i }).first().click();
+    await expect(page.getByRole("dialog")).toBeVisible();
+    await page.getByRole("button", { name: /Catalog Fragment/i }).click();
+    await page.getByRole("button", { name: /^Add (1 piece|pieces)$/i }).last().click();
+    await expect(page.getByRole("status").filter({ hasText: /add selected pieces/i })).toHaveCount(index + 1);
+    await closeAddPiecesPicker(page);
+    await expect(page.getByRole("dialog")).toBeHidden();
+  }
 }
 
 async function assertFirstPaintDensity(page: Page, minImages: number, minImageCoverage = 0.08) {
