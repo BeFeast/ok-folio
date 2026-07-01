@@ -234,6 +234,8 @@ function MobileFolioSheet({
 }) {
   const { createFolioAction, renameFolioAction, changeFolioCoverAction, deleteFolioAction } = useFolio();
   const [name, setName] = useState(state.mode === "rename" ? state.folio.name : "");
+  const [nameError, setNameError] = useState("");
+  const [isSubmittingName, setIsSubmittingName] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const coverPieces = useQuery({
     queryKey: ["folio-cover-sheet-pieces", state.mode === "cover" ? state.folio.id : 0],
@@ -243,18 +245,38 @@ function MobileFolioSheet({
 
   useEffect(() => {
     setName(state.mode === "rename" ? state.folio.name : "");
+    setNameError("");
+    setIsSubmittingName(false);
     setConfirmDelete(false);
   }, [state]);
 
-  const submitName = () => {
+  const submitName = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
     const trimmed = name.trim();
-    if (!trimmed) return;
+    if (!trimmed || isSubmittingName) return;
+    setNameError("");
+    setIsSubmittingName(true);
+
     if (state.mode === "create") {
-      void createFolioAction(trimmed);
+      const created = await createFolioAction(trimmed);
+      if (created) {
+        onClose();
+        return;
+      }
+      setNameError("Folio could not be created. Try again.");
     } else if (state.mode === "rename" && trimmed !== state.folio.name) {
-      renameFolioAction(state.folio.id, trimmed);
+      const renamed = await renameFolioAction(state.folio.id, trimmed);
+      if (renamed) {
+        onClose();
+        return;
+      }
+      setNameError("Folio could not be renamed. Try again.");
+    } else {
+      onClose();
+      return;
     }
-    onClose();
+
+    setIsSubmittingName(false);
   };
 
   return (
@@ -285,12 +307,14 @@ function MobileFolioSheet({
           </div>
 
           {state.mode === "create" || state.mode === "rename" ? (
-            <div style={{ padding: "0 18px 18px" }}>
+            <form onSubmit={submitName} style={{ padding: "0 18px 18px" }}>
               <input
                 value={name}
                 onChange={(event) => setName(event.target.value)}
                 autoFocus
+                disabled={isSubmittingName}
                 placeholder="Folio name"
+                aria-describedby={nameError ? "mobile-folio-name-error" : undefined}
                 style={{
                   width: "100%",
                   height: 50,
@@ -302,17 +326,22 @@ function MobileFolioSheet({
                   padding: "0 13px",
                   fontFamily: "var(--sans)",
                   fontSize: 15,
+                  opacity: isSubmittingName ? 0.72 : 1,
                 }}
               />
+              {nameError ? (
+                <div id="mobile-folio-name-error" role="alert" style={{ marginTop: 9, fontFamily: "var(--sans)", fontSize: 12.5, color: "var(--danger, #C0392B)" }}>
+                  {nameError}
+                </div>
+              ) : null}
               <button
-                type="button"
-                onClick={submitName}
-                disabled={!name.trim()}
-                style={{ marginTop: 12, width: "100%", height: 52, borderRadius: 13, border: 0, background: "var(--accent)", color: "var(--on-accent)", fontFamily: "var(--sans)", fontSize: 15, fontWeight: 700, opacity: name.trim() ? 1 : 0.55 }}
+                type="submit"
+                disabled={!name.trim() || isSubmittingName}
+                style={{ marginTop: 12, width: "100%", height: 52, borderRadius: 13, border: 0, background: "var(--accent)", color: "var(--on-accent)", fontFamily: "var(--sans)", fontSize: 15, fontWeight: 700, opacity: name.trim() && !isSubmittingName ? 1 : 0.55 }}
               >
-                {state.mode === "create" ? "Create folio" : "Rename"}
+                {isSubmittingName ? (state.mode === "create" ? "Creating" : "Renaming") : state.mode === "create" ? "Create folio" : "Rename"}
               </button>
-            </div>
+            </form>
           ) : state.mode === "cover" ? (
             <div style={{ padding: "0 14px 18px" }}>
               {coverPieces.isLoading ? (
@@ -462,8 +491,8 @@ function MobileFolios({
   );
 }
 
-function FolioTile({ folio }: { folio: Folio }) {
-  const { renameFolioAction, changeFolioCoverAction, deleteFolioAction } = useFolio();
+function FolioTile({ folio, onRename }: { folio: Folio; onRename: (folio: Folio) => void }) {
+  const { changeFolioCoverAction, deleteFolioAction } = useFolio();
   const [menuOpen, setMenuOpen] = useState<"actions" | "cover" | null>(null);
   const pieces = useQuery({
     queryKey: ["folio-cover-pieces", folio.id],
@@ -477,13 +506,8 @@ function FolioTile({ folio }: { folio: Folio }) {
   });
 
   const rename = () => {
-    const next = window.prompt("Rename folio", folio.name);
-    if (!next) return;
-    const name = next.trim();
-    if (name && name !== folio.name) {
-      renameFolioAction(folio.id, name);
-    }
     setMenuOpen(null);
+    onRename(folio);
   };
 
   const changeCover = (photoId: number) => {
@@ -638,20 +662,28 @@ function MenuButton({ children, onClick }: { children: ReactNode; onClick: () =>
   );
 }
 
-function NewFolioModal({
+function FolioNameModal({
+  mode,
+  initialName = "",
   onClose,
-  onCreate,
+  onSubmitName,
 }: {
+  mode: "create" | "rename";
+  initialName?: string;
   onClose: () => void;
-  onCreate: (name: string) => Promise<boolean>;
+  onSubmitName: (name: string) => Promise<boolean>;
 }) {
-  const [name, setName] = useState("");
+  const [name, setName] = useState(initialName);
+  const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const trimmed = name.trim();
+  const isRename = mode === "rename";
+  const unchanged = isRename && trimmed === initialName.trim();
 
   useEffect(() => {
     inputRef.current?.focus();
+    inputRef.current?.select();
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -667,14 +699,20 @@ function NewFolioModal({
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!trimmed || isSubmitting) return;
-
-    setIsSubmitting(true);
-    const created = await onCreate(trimmed).catch(() => false);
-    if (created) {
+    if (unchanged) {
       onClose();
       return;
     }
 
+    setError("");
+    setIsSubmitting(true);
+    const saved = await onSubmitName(trimmed).catch(() => false);
+    if (saved) {
+      onClose();
+      return;
+    }
+
+    setError(isRename ? "Folio could not be renamed. Try again." : "Folio could not be created. Try again.");
     setIsSubmitting(false);
     window.requestAnimationFrame(() => inputRef.current?.focus());
   };
@@ -701,6 +739,7 @@ function NewFolioModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="new-folio-title"
+        aria-describedby={error ? "folio-name-error" : undefined}
         onSubmit={submit}
         style={{
           width: "min(380px, calc(100vw - 44px))",
@@ -720,7 +759,7 @@ function NewFolioModal({
             color: "var(--accent)",
           }}
         >
-          NEW FOLIO
+          {isRename ? "RENAME FOLIO" : "NEW FOLIO"}
         </div>
         <h2
           id="new-folio-title"
@@ -733,7 +772,7 @@ function NewFolioModal({
             margin: "8px 0 0",
           }}
         >
-          Name your folio
+          {isRename ? "Rename folio" : "Name your folio"}
         </h2>
         <input
           ref={inputRef}
@@ -757,6 +796,11 @@ function NewFolioModal({
             marginTop: 14,
           }}
         />
+        {error ? (
+          <div id="folio-name-error" role="alert" style={{ marginTop: 12, fontFamily: "var(--sans)", fontSize: 13, color: "var(--danger, #C0392B)" }}>
+            {error}
+          </div>
+        ) : null}
         <div style={{ display: "flex", gap: 11, marginTop: 22 }}>
           <button
             type="button"
@@ -795,7 +839,7 @@ function NewFolioModal({
               fontWeight: 500,
             }}
           >
-            {isSubmitting ? "Creating" : "Create"}
+            {isSubmitting ? (isRename ? "Renaming" : "Creating") : isRename ? "Rename" : "Create"}
           </button>
         </div>
       </form>
@@ -804,9 +848,10 @@ function NewFolioModal({
 }
 
 export default function Folios() {
-  const { createFolioAction } = useFolio();
+  const { createFolioAction, renameFolioAction } = useFolio();
   const { isMobile } = useViewport();
   const [createOpen, setCreateOpen] = useState(false);
+  const [renameTarget, setRenameTarget] = useState<Folio | null>(null);
   const { data, isLoading, isError } = useQuery({
     queryKey: ["folios"],
     queryFn: fetchFolios,
@@ -842,16 +887,27 @@ export default function Folios() {
         ) : (
           <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 250px), 1fr))", gap: "40px 34px" }}>
             {folios.map((folio) => (
-              <FolioTile key={folio.id} folio={folio} />
+              <FolioTile key={folio.id} folio={folio} onRename={setRenameTarget} />
             ))}
           </section>
         )}
       </section>
       {createOpen ? (
-        <NewFolioModal
+        <FolioNameModal
+          mode="create"
           onClose={() => setCreateOpen(false)}
-          onCreate={(name) => {
+          onSubmitName={(name) => {
             return createFolioAction(name);
+          }}
+        />
+      ) : null}
+      {renameTarget ? (
+        <FolioNameModal
+          mode="rename"
+          initialName={renameTarget.name}
+          onClose={() => setRenameTarget(null)}
+          onSubmitName={(name) => {
+            return renameFolioAction(renameTarget.id, name);
           }}
         />
       ) : null}

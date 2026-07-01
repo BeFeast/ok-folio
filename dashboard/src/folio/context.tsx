@@ -285,7 +285,7 @@ interface FolioContextValue {
   skipInboxAction: (id: number) => void;
   moveInboxToFolioAction: (id: number, folioId: number, photoId?: number) => void;
   createFolioAction: (name: string) => Promise<boolean>;
-  renameFolioAction: (id: number, name: string) => void;
+  renameFolioAction: (id: number, name: string) => Promise<boolean>;
   changeFolioCoverAction: (id: number, photoId: number | null) => void;
   deleteFolioAction: (id: number) => Promise<boolean>;
   addPieceToFolioAction: (folioId: number, photoId: number) => void;
@@ -607,7 +607,7 @@ export function FolioProvider({ children }: { children: ReactNode }) {
       const id = ++toastSeq;
       const label = name.trim();
       setToasts((prev) => [...prev, { id, status: "loading", title: "Renaming folio", detail: label }]);
-      updateFolio(folioId, { name: label })
+      return updateFolio(folioId, { name: label })
         .then(() => {
           setToasts((prev) =>
             prev.map((t) => (t.id === id ? { ...t, status: "success", title: "Folio renamed", detail: label } : t)),
@@ -616,6 +616,7 @@ export function FolioProvider({ children }: { children: ReactNode }) {
             setToasts((prev) => prev.filter((t) => t.id !== id));
           }, 2800);
           void queryClient.invalidateQueries({ queryKey: ["folios"] });
+          return true;
         })
         .catch((err: unknown) => {
           setToasts((prev) =>
@@ -625,6 +626,7 @@ export function FolioProvider({ children }: { children: ReactNode }) {
                 : t,
             ),
           );
+          return false;
         });
     },
     [queryClient],
