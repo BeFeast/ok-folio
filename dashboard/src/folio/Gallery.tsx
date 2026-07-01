@@ -751,19 +751,59 @@ function MobileGalleryHeader() {
   );
 }
 
-function Heart({ id, size = 15, top, right, dim = 31 }: { id: number; size?: number; top: number; right: number; dim?: number }) {
+function hasTouchLikePointer() {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
+  return window.matchMedia("(pointer: coarse)").matches || window.matchMedia("(hover: none)").matches;
+}
+
+function Heart({
+  id,
+  size = 15,
+  top,
+  right,
+  dim = 31,
+  reveal = false,
+}: {
+  id: number;
+  size?: number;
+  top: number;
+  right: number;
+  dim?: number;
+  reveal?: boolean;
+}) {
   const { isFav, toggleFav } = useFolio();
+  const { isMobile } = useViewport();
   const [hover, setHover] = useState(false);
+  const [focus, setFocus] = useState(false);
+  const [pressed, setPressed] = useState(false);
   const fav = isFav(id);
+  const touchLike = isMobile || hasTouchLikePointer();
+  const showDesktop = !touchLike && (reveal || hover || focus);
+  const showMobileTap = touchLike && (pressed || focus);
+  const visible = showDesktop || showMobileTap;
   return (
     <button
-      aria-label={fav ? "Saved" : "Favorite"}
+      aria-label={fav ? "Remove favorite" : "Favorite"}
       onClick={(e) => {
         e.stopPropagation();
         toggleFav(id);
       }}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
+      onFocus={() => setFocus(true)}
+      onBlur={() => {
+        setFocus(false);
+        setPressed(false);
+      }}
+      onPointerDown={(e) => {
+        e.stopPropagation();
+        setPressed(true);
+      }}
+      onPointerUp={(e) => {
+        e.stopPropagation();
+        setPressed(false);
+      }}
+      onPointerCancel={() => setPressed(false)}
       style={{
         position: "absolute",
         top,
@@ -778,13 +818,16 @@ function Heart({ id, size = 15, top, right, dim = 31 }: { id: number; size?: num
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        background: "color-mix(in srgb, var(--surface) 64%, transparent)",
-        backdropFilter: "blur(5px)",
-        WebkitBackdropFilter: "blur(5px)",
-        boxShadow: "0 1px 5px var(--shadow)",
-        color: "var(--graphite)",
-        transform: hover ? "scale(1.12)" : "none",
-        transition: "transform .15s ease",
+        opacity: visible ? 1 : 0,
+        pointerEvents: touchLike || visible ? "auto" : "none",
+        background: showMobileTap ? "color-mix(in srgb, var(--surface) 78%, transparent)" : "transparent",
+        backdropFilter: showMobileTap ? "blur(5px)" : "none",
+        WebkitBackdropFilter: showMobileTap ? "blur(5px)" : "none",
+        boxShadow: showMobileTap ? "0 1px 6px var(--shadow)" : "none",
+        color: fav ? "var(--accent)" : showDesktop ? "#FBF6EE" : "var(--graphite)",
+        filter: showDesktop ? "drop-shadow(0 1px 2px rgba(12,10,7,.55))" : "none",
+        transform: hover || pressed ? "scale(1.08)" : "none",
+        transition: "opacity .16s ease, transform .15s ease, background .15s ease",
       }}
     >
       <HeartIcon size={size} fill={fav ? "var(--accent)" : "transparent"} stroke={fav ? "var(--accent)" : "currentColor"} />
@@ -1007,6 +1050,7 @@ function FeaturePiece({ piece }: { piece: PieceVM }) {
 
 function MagazineCard({ piece }: { piece: PieceVM }) {
   const { openPiece } = useFolio();
+  const [hover, setHover] = useState(false);
   const matte: CSSProperties = {
     flexDirection: "column",
     alignItems: "center",
@@ -1022,6 +1066,8 @@ function MagazineCard({ piece }: { piece: PieceVM }) {
   return (
     <figure
       onClick={() => openPiece(piece.id)}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
       style={{
         breakInside: "avoid",
         margin: "0 0 26px",
@@ -1031,7 +1077,7 @@ function MagazineCard({ piece }: { piece: PieceVM }) {
         boxShadow: "0 1px 14px var(--shadow)",
       }}
     >
-      <Heart id={piece.id} top={11} right={11} dim={31} size={15} />
+      <Heart id={piece.id} top={11} right={11} dim={31} size={15} reveal={hover} />
       <OkfImage
         src={getPhotoThumbnailUrl(piece.id, 700)}
         alt={piece.t}
@@ -1108,7 +1154,7 @@ function LibraryTile({ piece }: { piece: PieceVM }) {
         matteTitleStyle={{ fontFamily: "var(--serif)", fontStyle: "italic", fontSize: 14, lineHeight: 1.2, color: "var(--ink)" }}
         matteArtistStyle={{ fontFamily: "var(--sans)", fontSize: 9.5, letterSpacing: "0.12em", textTransform: "uppercase", color: "var(--muted)" }}
       />
-      <Heart id={piece.id} top={9} right={9} dim={28} size={13} />
+      <Heart id={piece.id} top={9} right={9} dim={28} size={13} reveal={hover} />
       <figcaption
         style={{
           position: "absolute",
