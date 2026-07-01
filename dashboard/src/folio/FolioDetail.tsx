@@ -320,9 +320,10 @@ function AddPiecesPicker({
   existingIds: Set<number>;
   onClose: () => void;
 }) {
-  const { addPieceToFolioAction } = useFolio();
+  const { addPiecesToFolioAction } = useFolio();
   const { isMobile } = useViewport();
   const [selected, setSelected] = useState<Set<number>>(() => new Set());
+  const [adding, setAdding] = useState(false);
   const catalog = useInfiniteQuery({
     queryKey: ["folio-piece-picker", folioId],
     queryFn: ({ pageParam }) => fetchGalleryCatalog(PICKER_PAGE_SIZE, pageParam as number, {}),
@@ -335,6 +336,7 @@ function AddPiecesPicker({
   const photos = catalog.data?.pages.flatMap((page) => page.photos) ?? [];
 
   const toggle = (photoId: number) => {
+    if (adding) return;
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(photoId)) {
@@ -346,9 +348,17 @@ function AddPiecesPicker({
     });
   };
 
-  const addSelected = () => {
-    selected.forEach((photoId) => addPieceToFolioAction(folioId, photoId));
-    onClose();
+  const addSelected = async () => {
+    if (adding || selected.size === 0) return;
+    setAdding(true);
+    try {
+      const added = await addPiecesToFolioAction(folioId, Array.from(selected), existingIds);
+      if (added) {
+        onClose();
+      }
+    } finally {
+      setAdding(false);
+    }
   };
 
   if (isMobile) {
@@ -368,14 +378,14 @@ function AddPiecesPicker({
         }}
       >
         <header style={{ height: 48, display: "grid", gridTemplateColumns: "68px 1fr 68px", alignItems: "center", gap: 8 }}>
-          <button type="button" onClick={onClose} style={{ border: 0, background: "transparent", color: "var(--accent)", fontFamily: "var(--sans)", fontSize: 14, fontWeight: 700, textAlign: "left", padding: 0 }}>
+          <button type="button" onClick={onClose} disabled={adding} style={{ border: 0, background: "transparent", color: "var(--accent)", fontFamily: "var(--sans)", fontSize: 14, fontWeight: 700, textAlign: "left", padding: 0, opacity: adding ? 0.6 : 1 }}>
             Cancel
           </button>
           <div style={{ textAlign: "center", minWidth: 0 }}>
             <div style={{ fontFamily: "var(--serif)", fontSize: 20, lineHeight: 1.05, color: "var(--ink)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>Add to {folioName ?? "folio"}</div>
           </div>
-          <button type="button" onClick={addSelected} disabled={selected.size === 0} style={{ border: 0, background: "transparent", color: selected.size ? "var(--accent)" : "var(--muted)", fontFamily: "var(--sans)", fontSize: 14, fontWeight: 700, textAlign: "right", padding: 0 }}>
-            Done
+          <button type="button" onClick={() => void addSelected()} disabled={selected.size === 0 || adding} style={{ border: 0, background: "transparent", color: selected.size && !adding ? "var(--accent)" : "var(--muted)", fontFamily: "var(--sans)", fontSize: 14, fontWeight: 700, textAlign: "right", padding: 0 }}>
+            {adding ? "Adding" : "Done"}
           </button>
         </header>
 
@@ -395,7 +405,7 @@ function AddPiecesPicker({
                   key={photo.ID}
                   photo={photo}
                   selected={selected.has(photo.ID)}
-                  disabled={existingIds.has(photo.ID)}
+                  disabled={existingIds.has(photo.ID) || adding}
                   onToggle={() => toggle(photo.ID)}
                 />
               ))}
@@ -406,7 +416,7 @@ function AddPiecesPicker({
               <button
                 type="button"
                 onClick={() => void catalog.fetchNextPage()}
-                disabled={catalog.isFetchingNextPage}
+                disabled={catalog.isFetchingNextPage || adding}
                 style={{ height: 40, borderRadius: 99, border: "1px solid var(--line-2)", background: "var(--surface)", color: "var(--ink)", fontFamily: "var(--sans)", fontSize: 13, fontWeight: 600, padding: "0 16px" }}
               >
                 {catalog.isFetchingNextPage ? "Loading..." : "Load more"}
@@ -428,11 +438,11 @@ function AddPiecesPicker({
         >
           <button
             type="button"
-            onClick={addSelected}
-            disabled={selected.size === 0}
-            style={{ width: "100%", height: 52, borderRadius: 14, border: 0, background: "var(--accent)", color: "var(--on-accent)", fontFamily: "var(--sans)", fontSize: 15, fontWeight: 800, opacity: selected.size ? 1 : 0.55, boxShadow: selected.size ? "0 8px 20px rgba(124,36,32,.3)" : "none" }}
+            onClick={() => void addSelected()}
+            disabled={selected.size === 0 || adding}
+            style={{ width: "100%", height: 52, borderRadius: 14, border: 0, background: "var(--accent)", color: "var(--on-accent)", fontFamily: "var(--sans)", fontSize: 15, fontWeight: 800, opacity: selected.size && !adding ? 1 : 0.55, boxShadow: selected.size && !adding ? "0 8px 20px rgba(124,36,32,.3)" : "none" }}
           >
-            Add {selected.size.toLocaleString()} {selected.size === 1 ? "piece" : "pieces"}
+            {adding ? "Adding..." : `Add ${selected.size.toLocaleString()} ${selected.size === 1 ? "piece" : "pieces"}`}
           </button>
         </div>
       </div>
@@ -468,7 +478,8 @@ function AddPiecesPicker({
             as="button"
             onClick={onClose}
             aria-label="Close"
-            style={{ appearance: "none", cursor: "pointer", width: 34, height: 34, borderRadius: 99, border: "1px solid var(--line)", background: "transparent", color: "var(--muted)", display: "flex", alignItems: "center", justifyContent: "center" }}
+            disabled={adding}
+            style={{ appearance: "none", cursor: adding ? "not-allowed" : "pointer", width: 34, height: 34, borderRadius: 99, border: "1px solid var(--line)", background: "transparent", color: "var(--muted)", display: "flex", alignItems: "center", justifyContent: "center", opacity: adding ? 0.6 : 1 }}
             hover={{ color: "var(--ink)", borderColor: "var(--line-2)" }}
           >
             <CloseIcon size={15} />
@@ -489,7 +500,7 @@ function AddPiecesPicker({
                   key={photo.ID}
                   photo={photo}
                   selected={selected.has(photo.ID)}
-                  disabled={existingIds.has(photo.ID)}
+                  disabled={existingIds.has(photo.ID) || adding}
                   onToggle={() => toggle(photo.ID)}
                 />
               ))}
@@ -500,8 +511,8 @@ function AddPiecesPicker({
               <Hov
                 as="button"
                 onClick={() => void catalog.fetchNextPage()}
-                disabled={catalog.isFetchingNextPage}
-                style={{ appearance: "none", cursor: catalog.isFetchingNextPage ? "wait" : "pointer", fontFamily: "var(--sans)", fontSize: 13, padding: "10px 18px", borderRadius: 99, border: "1px solid var(--line-2)", background: "var(--surface)", color: "var(--ink)" }}
+                disabled={catalog.isFetchingNextPage || adding}
+                style={{ appearance: "none", cursor: catalog.isFetchingNextPage || adding ? "wait" : "pointer", fontFamily: "var(--sans)", fontSize: 13, padding: "10px 18px", borderRadius: 99, border: "1px solid var(--line-2)", background: "var(--surface)", color: "var(--ink)" }}
                 hover={{ borderColor: "var(--accent-line)", color: "var(--accent)" }}
               >
                 {catalog.isFetchingNextPage ? "Loading..." : "Load more"}
@@ -518,19 +529,20 @@ function AddPiecesPicker({
             <Hov
               as="button"
               onClick={onClose}
-              style={{ appearance: "none", cursor: "pointer", fontFamily: "var(--sans)", fontSize: 13.5, padding: "10px 18px", borderRadius: 99, border: 0, background: "transparent", color: "var(--muted)" }}
+              disabled={adding}
+              style={{ appearance: "none", cursor: adding ? "not-allowed" : "pointer", fontFamily: "var(--sans)", fontSize: 13.5, padding: "10px 18px", borderRadius: 99, border: 0, background: "transparent", color: "var(--muted)", opacity: adding ? 0.6 : 1 }}
               hover={{ color: "var(--ink)" }}
             >
               Cancel
             </Hov>
             <Hov
               as="button"
-              onClick={addSelected}
-              disabled={selected.size === 0}
-              style={{ appearance: "none", cursor: selected.size === 0 ? "not-allowed" : "pointer", opacity: selected.size === 0 ? 0.6 : 1, fontFamily: "var(--sans)", fontSize: 13.5, fontWeight: 500, padding: "10px 22px", borderRadius: 99, border: 0, background: "var(--accent)", color: "var(--on-accent)" }}
+              onClick={() => void addSelected()}
+              disabled={selected.size === 0 || adding}
+              style={{ appearance: "none", cursor: selected.size === 0 || adding ? "not-allowed" : "pointer", opacity: selected.size === 0 || adding ? 0.6 : 1, fontFamily: "var(--sans)", fontSize: 13.5, fontWeight: 500, padding: "10px 22px", borderRadius: 99, border: 0, background: "var(--accent)", color: "var(--on-accent)" }}
               hover={{ filter: "brightness(1.06)" }}
             >
-              Add pieces
+              {adding ? "Adding..." : "Add pieces"}
             </Hov>
           </div>
         </div>

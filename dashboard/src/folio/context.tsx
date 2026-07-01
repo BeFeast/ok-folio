@@ -81,6 +81,7 @@ export interface PieceVM {
 }
 
 const PAGE_SIZE = 120;
+const FOLIO_BULK_ADD_INTERVAL_MS = 125;
 
 /* ---- mapping helpers ---- */
 
@@ -137,6 +138,22 @@ function absoluteAdded(value: string): string {
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return "";
   return d.toLocaleString(undefined, { dateStyle: "long", timeStyle: "short" });
+}
+
+function uniquePositiveIds(ids: number[]): number[] {
+  return Array.from(new Set(ids.filter((id) => Number.isFinite(id) && id > 0)));
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function addedPiecesDetail(result: AddPiecesToFolioResult): string {
+  const parts: string[] = [];
+  if (result.added > 0) parts.push(`${result.added.toLocaleString()} added`);
+  if (result.duplicate > 0) parts.push(`${result.duplicate.toLocaleString()} already in folio`);
+  if (result.failed > 0) parts.push(`${result.failed.toLocaleString()} failed`);
+  return parts.join(" · ");
 }
 
 function formatMetadataDate(value: string | null): string {
@@ -225,6 +242,13 @@ export interface Toast {
   title: string;
   detail?: string;
 }
+
+export interface AddPiecesToFolioResult {
+  requested: number;
+  added: number;
+  duplicate: number;
+  failed: number;
+}
 let toastSeq = 0;
 
 interface FolioContextValue {
@@ -289,6 +313,7 @@ interface FolioContextValue {
   changeFolioCoverAction: (id: number, photoId: number | null) => void;
   deleteFolioAction: (id: number) => Promise<boolean>;
   addPieceToFolioAction: (folioId: number, photoId: number) => void;
+  addPiecesToFolioAction: (folioId: number, photoIds: number[], existingIds?: Set<number>) => Promise<boolean>;
   removePieceFromFolioAction: (folioId: number, photoId: number) => void;
   editPieceMetadata: (id: number, input: PieceMetadataPatch) => Promise<boolean>;
   bulkEditPieces: (input: BulkMetadataEdit) => Promise<boolean>;
@@ -694,9 +719,9 @@ export function FolioProvider({ children }: { children: ReactNode }) {
       const id = ++toastSeq;
       setToasts((prev) => [...prev, { id, status: "loading", title: "Adding piece to folio" }]);
       addPieceToFolio(folioId, photoId)
-        .then(() => {
+        .then((result) => {
           setToasts((prev) =>
-            prev.map((t) => (t.id === id ? { ...t, status: "success", title: "Piece added to folio" } : t)),
+            prev.map((t) => (t.id === id ? { ...t, status: "success", title: result.added ? "Piece added to folio" : "Piece already in folio" } : t)),
           );
           window.setTimeout(() => {
             setToasts((prev) => prev.filter((t) => t.id !== id));
@@ -713,6 +738,88 @@ export function FolioProvider({ children }: { children: ReactNode }) {
             ),
           );
         });
+    },
+    [queryClient],
+  );
+
+  const addPiecesToFolioAction = useCallback(
+    async (folioId: number, photoIds: number[], existingIds?: Set<number>): Promise<boolean> => {
+      const uniqueIds = uniquePositiveIds(photoIds);
+      const pendingIds = existingIds ? uniqueIds.filter((photoId) => !existingIds.has(photoId)) : uniqueIds;
+      const initialDuplicateCount = uniqueIds.length - pendingIds.length;
+      const result: AddPiecesToFolioResult = {
+        requested: uniqueIds.length,
+        added: 0,
+        duplicate: initialDuplicateCount,
+        failed: 0,
+      };
+
+      if (uniqueIds.length === 0) {
+        return false;
+      }
+
+      const toastId = ++toastSeq;
+      const loadingTitle = pendingIds.length === 1 ? "Adding piece to folio" : `Adding ${pendingIds.length.toLocaleString()} pieces to folio`;
+
+      if (pendingIds.length === 0) {
+        setToasts((prev) => [...prev, { id: toastId, status: "success", title: "Pieces already in folio", detail: addedPiecesDetail(result) }]);
+        window.setTimeout(() => {
+          setToasts((prev) => prev.filter((toast) => toast.id !== toastId));
+        }, 2800);
+        return true;
+      }
+
+      setToasts((prev) => [...prev, { id: toastId, status: "loading", title: loadingTitle, detail: result.duplicate > 0 ? addedPiecesDetail(result) : undefined }]);
+
+      let error: unknown;
+      for (let index = 0; index < pendingIds.length; index += 1) {
+        try {
+          const addedResult = await addPieceToFolio(folioId, pendingIds[index]);
+          if (addedResult.added) {
+            result.added += 1;
+          } else {
+            result.duplicate += 1;
+          }
+        } catch (err) {
+          error = err;
+          result.failed = pendingIds.length - result.added - (result.duplicate - initialDuplicateCount);
+          break;
+        }
+        if (index < pendingIds.length - 1) {
+          await wait(FOLIO_BULK_ADD_INTERVAL_MS);
+        }
+      }
+
+      if (error) {
+        const detail = [addedPiecesDetail(result), error instanceof Error ? error.message : ""].filter(Boolean).join(". ");
+        setToasts((prev) =>
+          prev.map((toast) =>
+            toast.id === toastId
+              ? { ...toast, status: "error", title: "Couldn’t add selected pieces", detail: detail || "No pieces were added" }
+              : toast,
+          ),
+        );
+        if (result.added > 0) {
+          void queryClient.invalidateQueries({ queryKey: ["folio-pieces", folioId] });
+          void queryClient.invalidateQueries({ queryKey: ["folios"] });
+        }
+        return false;
+      }
+
+      const title = result.added > 0 ? `Added ${result.added.toLocaleString()} ${result.added === 1 ? "piece" : "pieces"} to folio` : "Pieces already in folio";
+      setToasts((prev) =>
+        prev.map((toast) =>
+          toast.id === toastId
+            ? { ...toast, status: "success", title, detail: result.duplicate > 0 ? addedPiecesDetail(result) : undefined }
+            : toast,
+        ),
+      );
+      window.setTimeout(() => {
+        setToasts((prev) => prev.filter((toast) => toast.id !== toastId));
+      }, 2800);
+      void queryClient.invalidateQueries({ queryKey: ["folio-pieces", folioId] });
+      void queryClient.invalidateQueries({ queryKey: ["folios"] });
+      return true;
     },
     [queryClient],
   );
@@ -1039,6 +1146,7 @@ export function FolioProvider({ children }: { children: ReactNode }) {
     changeFolioCoverAction,
     deleteFolioAction,
     addPieceToFolioAction,
+    addPiecesToFolioAction,
     removePieceFromFolioAction,
     editPieceMetadata,
     bulkEditPieces,

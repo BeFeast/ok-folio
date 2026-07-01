@@ -707,8 +707,15 @@ func TestFolioPiecesAPI(t *testing.T) {
 	req = httptest.NewRequest(http.MethodPost, folioPath+"/pieces", bytes.NewBufferString(`{"photo_id":`+strconv.FormatUint(first.ID, 10)+`}`))
 	w = httptest.NewRecorder()
 	server.router.ServeHTTP(w, req)
-	if w.Code != http.StatusCreated || !strings.Contains(w.Body.String(), `"added":true`) {
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"added":false`) || !strings.Contains(w.Body.String(), `"duplicate":true`) {
 		t.Fatalf("duplicate add status=%d body=%q", w.Code, w.Body.String())
+	}
+	var duplicateMembershipCount int64
+	if err := db.Model(&database.FolioPiece{}).Where("folio_id = ?", folio.ID).Count(&duplicateMembershipCount).Error; err != nil {
+		t.Fatalf("count duplicate folio memberships: %v", err)
+	}
+	if duplicateMembershipCount != 2 {
+		t.Fatalf("expected duplicate add to keep 2 memberships, got %d", duplicateMembershipCount)
 	}
 
 	req = httptest.NewRequest(http.MethodGet, folioPath+"/pieces?limit=1&offset=0", nil)
