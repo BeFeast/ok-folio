@@ -153,6 +153,16 @@ function ShareIcon() {
   );
 }
 
+function AddToFolioIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4.8 7.2 H10.2 L12 9 H19.2 V18.6 H4.8 Z" />
+      <path d="M12 12.4 V16.2" />
+      <path d="M10.1 14.3 H13.9" />
+    </svg>
+  );
+}
+
 function InfoIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
@@ -244,7 +254,7 @@ export default function PieceViewer() {
   const lastTouchDeltaRef = useRef({ x: 0, y: 0 });
   const suppressClickRef = useRef(false);
   const chromeTimerRef = useRef<number | null>(null);
-  const folios = useQuery({ queryKey: ["folios"], queryFn: fetchFolios, enabled: !!selected && isMobile });
+  const folios = useQuery({ queryKey: ["folios"], queryFn: fetchFolios, enabled: !!selected });
 
   const pinnedDesktop = infoPanelMode === "pinned" && !isMobile;
   const panelOpen = pinnedDesktop
@@ -562,6 +572,60 @@ export default function PieceViewer() {
       <PencilIcon />
     </button>
   );
+  const renderFolioPicker = (style: CSSProperties) => (
+    <div
+      role="menu"
+      aria-label="Choose folio"
+      onClick={(e) => e.stopPropagation()}
+      style={style}
+    >
+      {folios.isLoading ? (
+        <div style={{ minHeight: 48, display: "flex", alignItems: "center", padding: "0 12px", fontFamily: "var(--sans)", fontSize: 13, color: "rgba(236,230,218,.62)" }}>
+          Loading folios...
+        </div>
+      ) : folios.isError ? (
+        <div style={{ minHeight: 48, display: "flex", alignItems: "center", padding: "0 12px", fontFamily: "var(--sans)", fontSize: 13, color: "rgba(236,230,218,.62)" }}>
+          Folios unavailable
+        </div>
+      ) : (folios.data?.folios ?? []).length === 0 ? (
+        <div style={{ minHeight: 48, display: "flex", alignItems: "center", padding: "0 12px", fontFamily: "var(--sans)", fontSize: 13, color: "rgba(236,230,218,.62)" }}>
+          No folios yet
+        </div>
+      ) : (
+        (folios.data?.folios ?? []).map((folio) => (
+          <button
+            key={folio.id}
+            type="button"
+            role="menuitem"
+            onClick={() => handleAddToFolio(folio.id, p.id)}
+            style={{
+              appearance: "none",
+              width: "100%",
+              minHeight: 48,
+              border: 0,
+              borderRadius: 11,
+              background: "transparent",
+              color: "#ECE6DA",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 12,
+              padding: "0 12px",
+              fontFamily: "var(--sans)",
+              fontSize: 14,
+              textAlign: "left",
+              cursor: "pointer",
+            }}
+          >
+            <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{folio.name}</span>
+            <span style={{ flex: "none", fontSize: 12, color: "rgba(236,230,218,.48)" }}>
+              {folio.piece_count.toLocaleString()}
+            </span>
+          </button>
+        ))
+      )}
+    </div>
+  );
 
   if (isMobile) {
     const compactMobileChrome = viewportWidth > 0 && viewportWidth <= 360;
@@ -842,12 +906,8 @@ export default function PieceViewer() {
             ) : null}
           </div>
 
-          {folioPickerOpen ? (
-            <div
-              role="menu"
-              aria-label="Choose folio"
-              onClick={(e) => e.stopPropagation()}
-              style={{
+          {folioPickerOpen
+            ? renderFolioPicker({
                 position: "absolute",
                 left: 18,
                 right: 18,
@@ -862,54 +922,8 @@ export default function PieceViewer() {
                 boxShadow: "0 20px 70px rgba(0,0,0,.42)",
                 backdropFilter: "blur(14px)",
                 WebkitBackdropFilter: "blur(14px)",
-              }}
-            >
-              {folios.isLoading ? (
-                <div style={{ minHeight: 48, display: "flex", alignItems: "center", padding: "0 12px", fontFamily: "var(--sans)", fontSize: 13, color: "rgba(236,230,218,.62)" }}>
-                  Loading folios...
-                </div>
-              ) : folios.isError ? (
-                <div style={{ minHeight: 48, display: "flex", alignItems: "center", padding: "0 12px", fontFamily: "var(--sans)", fontSize: 13, color: "rgba(236,230,218,.62)" }}>
-                  Folios unavailable
-                </div>
-              ) : (folios.data?.folios ?? []).length === 0 ? (
-                <div style={{ minHeight: 48, display: "flex", alignItems: "center", padding: "0 12px", fontFamily: "var(--sans)", fontSize: 13, color: "rgba(236,230,218,.62)" }}>
-                  No folios yet
-                </div>
-              ) : (
-                (folios.data?.folios ?? []).map((folio) => (
-                  <button
-                    key={folio.id}
-                    type="button"
-                    role="menuitem"
-                    onClick={() => handleAddToFolio(folio.id, p.id)}
-                    style={{
-                      appearance: "none",
-                      width: "100%",
-                      minHeight: 48,
-                      border: 0,
-                      borderRadius: 11,
-                      background: "transparent",
-                      color: "#ECE6DA",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      gap: 12,
-                      padding: "0 12px",
-                      fontFamily: "var(--sans)",
-                      fontSize: 14,
-                      textAlign: "left",
-                    }}
-                  >
-                    <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{folio.name}</span>
-                    <span style={{ flex: "none", fontSize: 12, color: "rgba(236,230,218,.48)" }}>
-                      {folio.piece_count.toLocaleString()}
-                    </span>
-                  </button>
-                ))
-              )}
-            </div>
-          ) : null}
+              })
+            : null}
 
           <div
             style={{
@@ -1014,6 +1028,29 @@ export default function PieceViewer() {
       >
         <button
           type="button"
+          onClick={() => setFolioPickerOpen((open) => !open)}
+          aria-label="Add to folio"
+          aria-expanded={folioPickerOpen}
+          title="Add to folio"
+          style={{
+            ...VIEWER_CHROME_BUTTON,
+            ...(folioPickerOpen ? VIEWER_CHROME_ACTIVE : null),
+            cursor: "pointer",
+          }}
+        >
+          <AddToFolioIcon />
+        </button>
+        <button
+          type="button"
+          onClick={handleShare}
+          aria-label="Share or copy link"
+          title="Share or copy link"
+          style={{ ...VIEWER_CHROME_BUTTON, cursor: "pointer" }}
+        >
+          <ShareIcon />
+        </button>
+        <button
+          type="button"
           onClick={togglePanel}
           aria-label={panelOpen ? "Hide info" : "Show info"}
           aria-pressed={panelOpen}
@@ -1060,6 +1097,23 @@ export default function PieceViewer() {
         >
           <CloseIcon />
         </button>
+        {folioPickerOpen
+          ? renderFolioPicker({
+              position: "absolute",
+              top: 52,
+              right: 0,
+              width: 270,
+              maxHeight: "min(50vh, 340px)",
+              overflowY: "auto",
+              padding: 8,
+              borderRadius: 16,
+              border: "1px solid rgba(236,230,218,.14)",
+              background: "rgba(22,19,16,.94)",
+              boxShadow: "0 20px 70px rgba(0,0,0,.42)",
+              backdropFilter: "blur(14px)",
+              WebkitBackdropFilter: "blur(14px)",
+            })
+          : null}
       </div>
 
       <button
