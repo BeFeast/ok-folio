@@ -264,7 +264,12 @@ export async function deleteFolio(id: number): Promise<void> {
   await clearOfflineCaches();
 }
 
-export async function addPieceToFolio(folioId: number, photoId: number): Promise<void> {
+export type AddPieceToFolioResult = {
+  added: boolean;
+  duplicate?: boolean;
+};
+
+export async function addPieceToFolio(folioId: number, photoId: number): Promise<AddPieceToFolioResult> {
   const response = await fetch(`${API_BASE}/folios/${folioId}/pieces`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -274,7 +279,9 @@ export async function addPieceToFolio(folioId: number, photoId: number): Promise
     const data = await response.json().catch(() => ({}));
     throw new Error(data.error || "Failed to add piece to folio");
   }
+  const result = await response.json();
   await clearOfflineCaches();
+  return result;
 }
 
 export async function removePieceFromFolio(folioId: number, photoId: number): Promise<void> {

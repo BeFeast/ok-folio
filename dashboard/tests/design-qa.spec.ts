@@ -82,6 +82,43 @@ for (const theme of ["light", "dark"] as Theme[]) {
         });
       });
     }
+
+    test("folio add pieces sends a serialized batch and one summary toast", async ({ page }) => {
+      const postStarts: number[] = [];
+      let inFlight = 0;
+      let maxInFlight = 0;
+
+      await page.route("**/api/v1/folios/1/pieces", async (route) => {
+        if (route.request().method() !== "POST") {
+          await route.fallback();
+          return;
+        }
+        postStarts.push(Date.now());
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 40));
+        inFlight -= 1;
+        const body = route.request().postDataJSON() as { photo_id?: number };
+        await route.fulfill({
+          status: 201,
+          contentType: "application/json",
+          body: JSON.stringify(body.photo_id === 108 ? { added: false, duplicate: true } : { added: true }),
+        });
+      });
+
+      await page.goto("/folios/1");
+      await page.getByRole("button", { name: "Add pieces" }).first().click();
+      await page.getByRole("button", { name: /Catalog Fragment/i }).click();
+      await page.getByRole("button", { name: /Evening Proof/i }).click();
+      await page.getByRole("button", { name: /Studio Shelf/i }).click();
+      await page.getByRole("button", { name: /^Add (3 pieces|pieces)$/ }).last().click();
+
+      await expect(page.getByRole("status").filter({ hasText: /Added 2 pieces to folio/ })).toHaveCount(1);
+      await expect(page.getByRole("status").filter({ hasText: /2 added · 1 already in folio/ })).toHaveCount(1);
+      await expect.poll(() => postStarts.length).toBe(3);
+      expect(maxInFlight, "bulk add requests should be serialized").toBe(1);
+      await expect(page.getByRole("status").filter({ hasText: /Adding piece to folio|Couldn’t add piece to folio/ })).toHaveCount(0);
+    });
   });
 }
 

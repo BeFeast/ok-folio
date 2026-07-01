@@ -336,6 +336,7 @@ function AddPiecesPicker({
   const photos = catalog.data?.pages.flatMap((page) => page.photos) ?? [];
 
   const toggle = (photoId: number) => {
+    if (adding) return;
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(photoId)) {
@@ -350,10 +351,13 @@ function AddPiecesPicker({
   const addSelected = async () => {
     if (adding || selected.size === 0) return;
     setAdding(true);
-    const added = await addPiecesToFolioAction(folioId, Array.from(selected), existingIds);
-    setAdding(false);
-    if (added) {
-      onClose();
+    try {
+      const added = await addPiecesToFolioAction(folioId, Array.from(selected), existingIds);
+      if (added) {
+        onClose();
+      }
+    } finally {
+      setAdding(false);
     }
   };
 
@@ -374,7 +378,7 @@ function AddPiecesPicker({
         }}
       >
         <header style={{ height: 48, display: "grid", gridTemplateColumns: "68px 1fr 68px", alignItems: "center", gap: 8 }}>
-          <button type="button" onClick={onClose} style={{ border: 0, background: "transparent", color: "var(--accent)", fontFamily: "var(--sans)", fontSize: 14, fontWeight: 700, textAlign: "left", padding: 0 }}>
+          <button type="button" onClick={onClose} disabled={adding} style={{ border: 0, background: "transparent", color: "var(--accent)", fontFamily: "var(--sans)", fontSize: 14, fontWeight: 700, textAlign: "left", padding: 0, opacity: adding ? 0.6 : 1 }}>
             Cancel
           </button>
           <div style={{ textAlign: "center", minWidth: 0 }}>
@@ -474,7 +478,8 @@ function AddPiecesPicker({
             as="button"
             onClick={onClose}
             aria-label="Close"
-            style={{ appearance: "none", cursor: "pointer", width: 34, height: 34, borderRadius: 99, border: "1px solid var(--line)", background: "transparent", color: "var(--muted)", display: "flex", alignItems: "center", justifyContent: "center" }}
+            disabled={adding}
+            style={{ appearance: "none", cursor: adding ? "not-allowed" : "pointer", width: 34, height: 34, borderRadius: 99, border: "1px solid var(--line)", background: "transparent", color: "var(--muted)", display: "flex", alignItems: "center", justifyContent: "center", opacity: adding ? 0.6 : 1 }}
             hover={{ color: "var(--ink)", borderColor: "var(--line-2)" }}
           >
             <CloseIcon size={15} />
@@ -525,7 +530,7 @@ function AddPiecesPicker({
               as="button"
               onClick={onClose}
               disabled={adding}
-              style={{ appearance: "none", cursor: "pointer", fontFamily: "var(--sans)", fontSize: 13.5, padding: "10px 18px", borderRadius: 99, border: 0, background: "transparent", color: "var(--muted)" }}
+              style={{ appearance: "none", cursor: adding ? "not-allowed" : "pointer", fontFamily: "var(--sans)", fontSize: 13.5, padding: "10px 18px", borderRadius: 99, border: 0, background: "transparent", color: "var(--muted)", opacity: adding ? 0.6 : 1 }}
               hover={{ color: "var(--ink)" }}
             >
               Cancel
