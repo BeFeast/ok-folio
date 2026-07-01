@@ -196,6 +196,41 @@ for (const theme of ["light", "dark"] as Theme[]) {
       expect(maxInFlight, "bulk add requests should be serialized").toBe(1);
       await expect(page.getByRole("status").filter({ hasText: /Adding piece to folio|Couldn’t add piece to folio/ })).toHaveCount(0);
     });
+
+    test("viewer edit mode keeps one chrome cluster and Escape exits edit first", async ({ page }, testInfo) => {
+      await page.goto("/");
+      await expect(page.locator("body")).toContainText(/Gallery|Recently gathered|Red Room Study/);
+      await page.locator("figure").filter({ has: page.locator("img") }).first().click();
+      const viewer = page.getByRole("dialog", { name: "Piece viewer" });
+      await expect(viewer.getByLabel("Close")).toBeVisible();
+
+      await viewer.getByLabel("Edit metadata").click();
+      await expect(viewer.getByLabel("Title")).toBeVisible();
+      await expect(viewer.getByRole("button", { name: "Edit metadata" })).toHaveCount(1);
+      await expect(viewer.getByRole("button", { name: "Show info" }).or(viewer.getByRole("button", { name: "Hide info" }))).toHaveCount(1);
+      await expect(viewer.getByRole("button", { name: "Close" })).toHaveCount(1);
+      await expect(viewer.getByRole("button", { name: /^(Favorite|Remove favorite)$/ })).toHaveCount(1);
+
+      const title = viewer.getByLabel("Title");
+      await title.focus();
+      await page.keyboard.press("ArrowRight");
+      await expect(viewer).toContainText("1 / 12");
+
+      const outDir = path.join(screenshotRoot, testInfo.project.name, theme);
+      mkdirSync(outDir, { recursive: true });
+      await page.screenshot({
+        path: path.join(outDir, "viewer-edit-mode.png"),
+        animations: "disabled",
+      });
+
+      await page.keyboard.press("Escape");
+      await expect(viewer.getByLabel("Title")).toBeHidden();
+      await expect(viewer.getByLabel("Close")).toBeVisible();
+      await expect(viewer).toContainText("Red Room Study");
+
+      await page.keyboard.press("Escape");
+      await expect(viewer).toBeHidden();
+    });
   });
 }
 

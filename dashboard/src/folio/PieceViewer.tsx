@@ -135,6 +135,13 @@ function stop(e: React.MouseEvent) {
   e.stopPropagation();
 }
 
+function isTextEntryTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  const tagName = target.tagName.toLowerCase();
+  return tagName === "input" || tagName === "textarea" || tagName === "select";
+}
+
 function UpChevronIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
@@ -230,17 +237,6 @@ export default function PieceViewer() {
   const { isMobile, width: viewportWidth } = useViewport();
   const reducedMotion = useReducedMotion();
 
-  useEffect(() => {
-    if (!selected) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") closePiece();
-      else if (e.key === "ArrowLeft") stepPiece(-1);
-      else if (e.key === "ArrowRight") stepPiece(1);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [selected, closePiece, stepPiece]);
-
   const [transientPanelOpen, setTransientPanelOpen] = useState(false);
   const [mobilePinnedOpen, setMobilePinnedOpen] = useState(true);
   const [chromeVisible, setChromeVisible] = useState(true);
@@ -255,6 +251,11 @@ export default function PieceViewer() {
   const suppressClickRef = useRef(false);
   const chromeTimerRef = useRef<number | null>(null);
   const folios = useQuery({ queryKey: ["folios"], queryFn: fetchFolios, enabled: !!selected });
+
+  const cancelEditing = useCallback(() => {
+    setEditing(false);
+    setKeywordDraft("");
+  }, []);
 
   const pinnedDesktop = infoPanelMode === "pinned" && !isMobile;
   const panelOpen = pinnedDesktop
@@ -315,6 +316,26 @@ export default function PieceViewer() {
       if (chromeTimerRef.current != null) window.clearTimeout(chromeTimerRef.current);
     };
   }, [selected, isMobile, showChrome]);
+
+  useEffect(() => {
+    if (!selected) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (editing) {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          e.stopPropagation();
+          cancelEditing();
+        }
+        return;
+      }
+      if (isTextEntryTarget(e.target)) return;
+      if (e.key === "Escape") closePiece();
+      else if (e.key === "ArrowLeft") stepPiece(-1);
+      else if (e.key === "ArrowRight") stepPiece(1);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [cancelEditing, closePiece, editing, selected, stepPiece]);
 
   const handleShare = useCallback(() => {
     if (!selected) return;
@@ -541,10 +562,7 @@ export default function PieceViewer() {
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 4 }}>
         <button
           type="button"
-          onClick={() => {
-            setEditing(false);
-            setKeywordDraft("");
-          }}
+          onClick={cancelEditing}
           disabled={savingEdit}
           style={{ minHeight: 46, borderRadius: 12, border: "1px solid rgba(251,246,238,0.18)", background: "transparent", color: "#FBF6EE", fontFamily: "var(--sans)", fontSize: 14, fontWeight: 800, cursor: savingEdit ? "wait" : "pointer" }}
         >
@@ -560,17 +578,6 @@ export default function PieceViewer() {
         </button>
       </div>
     </div>
-  );
-  const renderEditButton = () => (
-    <button
-      type="button"
-      onClick={startEditing}
-      aria-label="Edit metadata"
-      title="Edit"
-      style={{ ...VIEWER_CHROME_BUTTON, cursor: "pointer", background: "rgba(251,246,238,0.06)" }}
-    >
-      <PencilIcon />
-    </button>
   );
   const renderFolioPicker = (style: CSSProperties) => (
     <div
@@ -637,6 +644,9 @@ export default function PieceViewer() {
 
     return (
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Piece viewer"
         style={{
           position: "fixed",
           inset: 0,
@@ -676,6 +686,7 @@ export default function PieceViewer() {
               width: "100vw",
               height: "100vh",
               objectFit: "contain",
+              objectPosition: editing ? "center 18%" : "center center",
               userSelect: "none",
               WebkitUserSelect: "none",
             }}
@@ -842,8 +853,7 @@ export default function PieceViewer() {
         ) : null}
 
         <section
-          role="dialog"
-          aria-modal="true"
+          role="region"
           aria-label="Piece details"
           onClick={(e) => e.stopPropagation()}
           onTouchStart={onSheetTouchStart}
@@ -854,7 +864,7 @@ export default function PieceViewer() {
             right: 0,
             bottom: 0,
             zIndex: 10,
-            maxHeight: "min(82vh, 720px)",
+            maxHeight: editing ? "min(72vh, 620px)" : "min(82vh, 720px)",
             display: "flex",
             flexDirection: "column",
             borderRadius: "24px 24px 0 0",
@@ -868,11 +878,10 @@ export default function PieceViewer() {
             touchAction: "pan-y",
           }}
         >
-          <div style={{ flex: 1, overflowY: "auto", padding: "10px 22px 112px" }}>
+          <div style={{ flex: 1, overflowY: "auto", padding: editing ? "10px 22px 28px" : "10px 22px 112px" }}>
             <div style={{ width: 46, height: 5, borderRadius: 99, background: "rgba(236,230,218,.28)", margin: "0 auto 20px" }} />
             <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 14 }}>
               <div style={{ minWidth: 0, flex: 1 }}>{editing ? renderEditForm() : renderReadTitle()}</div>
-              {!editing ? renderEditButton() : null}
             </div>
 
             <div style={{ marginTop: 20 }}>
@@ -925,53 +934,55 @@ export default function PieceViewer() {
               })
             : null}
 
-          <div
-            style={{
-              position: "absolute",
-              left: 0,
-              right: 0,
-              bottom: 0,
-              padding: "12px 18px calc(env(safe-area-inset-bottom) + 14px)",
-              display: "grid",
-              gridTemplateColumns: "1fr 48px 48px",
-              gap: 10,
-              background: "linear-gradient(to top, #161310 76%, rgba(22,19,16,0))",
-            }}
-          >
-            <button
-              type="button"
-              aria-expanded={folioPickerOpen}
-              onClick={(e) => {
-                e.stopPropagation();
-                setFolioPickerOpen((open) => !open);
-              }}
+          {!editing ? (
+            <div
               style={{
-                appearance: "none",
-                border: 0,
-                borderRadius: 13,
-                minHeight: 52,
-                background: "#C75D49",
-                color: "#16130E",
-                fontFamily: "var(--sans)",
-                fontSize: 14.5,
-                fontWeight: 700,
-                cursor: "pointer",
+                position: "absolute",
+                left: 0,
+                right: 0,
+                bottom: 0,
+                padding: "12px 18px calc(env(safe-area-inset-bottom) + 14px)",
+                display: "grid",
+                gridTemplateColumns: "1fr 48px 48px",
+                gap: 10,
+                background: "linear-gradient(to top, #161310 76%, rgba(22,19,16,0))",
               }}
             >
-              Add to folio
-            </button>
-            <button type="button" onClick={handleShare} aria-label="Share" style={{ ...MOBILE_CHROME, height: 52, borderRadius: 13 }}>
-              <ShareIcon />
-            </button>
-            <button
-              type="button"
-              onClick={() => toggleFav(p.id)}
-              aria-label={fav ? "Remove favorite" : "Favorite"}
-              style={{ ...MOBILE_CHROME, height: 52, borderRadius: 13 }}
-            >
-              <HeartIcon size={20} fill={fav ? "#C75D49" : "transparent"} stroke={fav ? "#C75D49" : "#FBF6EE"} strokeWidth={1.7} />
-            </button>
-          </div>
+              <button
+                type="button"
+                aria-expanded={folioPickerOpen}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setFolioPickerOpen((open) => !open);
+                }}
+                style={{
+                  appearance: "none",
+                  border: 0,
+                  borderRadius: 13,
+                  minHeight: 52,
+                  background: "#C75D49",
+                  color: "#16130E",
+                  fontFamily: "var(--sans)",
+                  fontSize: 14.5,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                }}
+              >
+                Add to folio
+              </button>
+              <button type="button" onClick={handleShare} aria-label="Share" style={{ ...MOBILE_CHROME, height: 52, borderRadius: 13 }}>
+                <ShareIcon />
+              </button>
+              <button
+                type="button"
+                onClick={() => toggleFav(p.id)}
+                aria-label={fav ? "Remove favorite" : "Favorite"}
+                style={{ ...MOBILE_CHROME, height: 52, borderRadius: 13 }}
+              >
+                <HeartIcon size={20} fill={fav ? "#C75D49" : "transparent"} stroke={fav ? "#C75D49" : "#FBF6EE"} strokeWidth={1.7} />
+              </button>
+            </div>
+          ) : null}
         </section>
       </div>
     );
@@ -979,6 +990,9 @@ export default function PieceViewer() {
 
   return (
     <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Piece viewer"
       onClick={closePiece}
       style={{
         position: "fixed",
@@ -1217,20 +1231,6 @@ export default function PieceViewer() {
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, paddingRight: 44 }}>
           <div style={{ fontFamily: "var(--sans)", fontSize: 11, letterSpacing: "0.18em", textTransform: "uppercase", color: "#DC8A70", paddingTop: 6 }}>
             {eyebrow}
-          </div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center", flex: "none" }}>
-            {!editing ? renderEditButton() : null}
-            <button
-              onClick={() => toggleFav(p.id)}
-              aria-label={fav ? "Remove favorite" : "Favorite"}
-              style={{
-                ...VIEWER_CHROME_BUTTON,
-                cursor: "pointer",
-                background: "rgba(251,246,238,0.06)",
-              }}
-            >
-              <HeartIcon size={19} fill={fav ? "#DC8A70" : "transparent"} stroke={fav ? "#DC8A70" : "#FBF6EE"} strokeWidth={1.6} />
-            </button>
           </div>
         </div>
         {editing ? (
