@@ -840,7 +840,7 @@ export default function Folios() {
             </div>
           </div>
         ) : (
-          <section style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: "40px 34px" }}>
+          <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 250px), 1fr))", gap: "40px 34px" }}>
             {folios.map((folio) => (
               <FolioTile key={folio.id} folio={folio} />
             ))}
