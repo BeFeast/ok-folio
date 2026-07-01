@@ -250,7 +250,7 @@ function MobileFolioSheet({
     const trimmed = name.trim();
     if (!trimmed) return;
     if (state.mode === "create") {
-      createFolioAction(trimmed);
+      void createFolioAction(trimmed);
     } else if (state.mode === "rename" && trimmed !== state.folio.name) {
       renameFolioAction(state.folio.id, trimmed);
     }
@@ -643,9 +643,10 @@ function NewFolioModal({
   onCreate,
 }: {
   onClose: () => void;
-  onCreate: (name: string) => void;
+  onCreate: (name: string) => Promise<boolean>;
 }) {
   const [name, setName] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const trimmed = name.trim();
 
@@ -663,17 +664,27 @@ function NewFolioModal({
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [onClose]);
 
-  const submit = (event: FormEvent<HTMLFormElement>) => {
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!trimmed) return;
-    onCreate(trimmed);
-    onClose();
+    if (!trimmed || isSubmitting) return;
+
+    setIsSubmitting(true);
+    const created = await onCreate(trimmed).catch(() => false);
+    if (created) {
+      onClose();
+      return;
+    }
+
+    setIsSubmitting(false);
+    window.requestAnimationFrame(() => inputRef.current?.focus());
   };
 
   return (
     <div
       role="presentation"
-      onMouseDown={onClose}
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
       style={{
         position: "fixed",
         inset: 0,
@@ -691,7 +702,6 @@ function NewFolioModal({
         aria-modal="true"
         aria-labelledby="new-folio-title"
         onSubmit={submit}
-        onMouseDown={(event) => event.stopPropagation()}
         style={{
           width: "min(380px, calc(100vw - 44px))",
           borderRadius: 15,
@@ -729,6 +739,7 @@ function NewFolioModal({
           ref={inputRef}
           value={name}
           onChange={(event) => setName(event.target.value)}
+          disabled={isSubmitting}
           placeholder="e.g. Reference – hands"
           aria-label="Folio name"
           style={{
@@ -741,6 +752,7 @@ function NewFolioModal({
             borderBottom: "1.5px solid var(--line-2)",
             background: "transparent",
             outline: "none",
+            opacity: isSubmitting ? 0.72 : 1,
             padding: "14px 0 10px",
             marginTop: 14,
           }}
@@ -749,16 +761,17 @@ function NewFolioModal({
           <button
             type="button"
             onClick={onClose}
+            disabled={isSubmitting}
             style={{
               flex: "none",
               appearance: "none",
-              cursor: "pointer",
+              cursor: isSubmitting ? "default" : "pointer",
               height: 50,
               padding: "0 56px",
               borderRadius: 13,
               border: "1px solid var(--line-2)",
               background: "transparent",
-              color: "var(--ink)",
+              color: isSubmitting ? "var(--muted)" : "var(--ink)",
               fontFamily: "var(--sans)",
               fontSize: 15,
             }}
@@ -767,22 +780,22 @@ function NewFolioModal({
           </button>
           <button
             type="submit"
-            disabled={!trimmed}
+            disabled={!trimmed || isSubmitting}
             style={{
               flex: 1,
               appearance: "none",
-              cursor: trimmed ? "pointer" : "default",
+              cursor: trimmed && !isSubmitting ? "pointer" : "default",
               height: 50,
               borderRadius: 13,
               border: 0,
-              background: trimmed ? "var(--accent)" : "var(--line)",
-              color: trimmed ? "var(--on-accent)" : "var(--muted)",
+              background: trimmed && !isSubmitting ? "var(--accent)" : "var(--line)",
+              color: trimmed && !isSubmitting ? "var(--on-accent)" : "var(--muted)",
               fontFamily: "var(--sans)",
               fontSize: 15,
               fontWeight: 500,
             }}
           >
-            Create
+            {isSubmitting ? "Creating" : "Create"}
           </button>
         </div>
       </form>
@@ -838,7 +851,7 @@ export default function Folios() {
         <NewFolioModal
           onClose={() => setCreateOpen(false)}
           onCreate={(name) => {
-            createFolioAction(name);
+            return createFolioAction(name);
           }}
         />
       ) : null}
