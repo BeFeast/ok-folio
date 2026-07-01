@@ -111,6 +111,8 @@ func TestIsDashboardRoute(t *testing.T) {
 		{path: "/", want: true},
 		{path: "/folios", want: true},
 		{path: "/folios/123", want: true},
+		{path: "/artists", want: true},
+		{path: "/artists/alice", want: true},
 		{path: "/inbox", want: true},
 		{path: "/streams", want: true},
 		{path: "/settings", want: true},
