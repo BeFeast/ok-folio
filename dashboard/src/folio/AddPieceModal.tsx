@@ -75,7 +75,7 @@ export default function AddPieceModal() {
   const fileRef = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
-  const [sourceMode, setSourceMode] = useState<"library" | "camera" | "url">("library");
+  const [sourceMode, setSourceMode] = useState<"library" | "camera">("library");
   const [title, setTitle] = useState("");
   const [source, setSource] = useState("");
   const [artist, setArtist] = useState("");
@@ -104,6 +104,7 @@ export default function AddPieceModal() {
     setDate("");
     setNotes("");
     setError("");
+    setSourceMode("library");
     if (fileRef.current) fileRef.current.value = "";
     if (cameraRef.current) cameraRef.current.value = "";
     closeAdd();
@@ -156,7 +157,7 @@ export default function AddPieceModal() {
     color: "var(--faint)",
     marginBottom: 7,
   };
-  const sourceButton = (mode: "library" | "camera" | "url", label: string, glyph: string, onClick: () => void) => {
+  const sourceButton = (mode: "library" | "camera", label: string, glyph: string, onClick: () => void) => {
     const active = sourceMode === mode;
     return (
       <button
@@ -243,7 +244,7 @@ export default function AddPieceModal() {
             <h2 style={{ margin: "8px 0 18px", fontFamily: "var(--serif)", fontSize: 28, fontWeight: 500, lineHeight: 1, color: "var(--ink)" }}>
               Add a piece
             </h2>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 9 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 9 }}>
               {sourceButton("library", "Library", "▧", () => {
                 setSourceMode("library");
                 fileRef.current?.click();
@@ -251,10 +252,6 @@ export default function AddPieceModal() {
               {sourceButton("camera", "Camera", "○", () => {
                 setSourceMode("camera");
                 cameraRef.current?.click();
-              })}
-              {sourceButton("url", "URL", "↗", () => {
-                setSourceMode("url");
-                setTimeout(() => document.getElementById("okf-mobile-source")?.focus(), 0);
               })}
             </div>
             <button
