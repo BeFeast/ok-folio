@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { fetchFolioPieces, fetchFolios, getPhotoThumbnailUrl } from "../api";
 import type { Folio, Photo } from "../types";
 import { mapPhoto, useFolio } from "./context";
-import { BrandMark, DotsIcon, Hov, OkfImage, OutlineButton, PageHeader, PlusIcon } from "./ui";
+import { BrandMark, ConfirmationDialog, DotsIcon, Hov, OkfImage, OutlineButton, PageHeader, PlusIcon } from "./ui";
 import { useViewport } from "./useViewport";
 
 const TILE_MATTE: CSSProperties = {
@@ -494,6 +494,7 @@ function MobileFolios({
 function FolioTile({ folio, onRename }: { folio: Folio; onRename: (folio: Folio) => void }) {
   const { changeFolioCoverAction, deleteFolioAction } = useFolio();
   const [menuOpen, setMenuOpen] = useState<"actions" | "cover" | null>(null);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const pieces = useQuery({
     queryKey: ["folio-cover-pieces", folio.id],
     queryFn: () => fetchFolioPieces(folio.id, 3, 0),
@@ -516,10 +517,8 @@ function FolioTile({ folio, onRename }: { folio: Folio; onRename: (folio: Folio)
   };
 
   const remove = () => {
-    if (window.confirm(`Delete "${folio.name}"? Pieces stay in your gallery.`)) {
-      deleteFolioAction(folio.id);
-    }
     setMenuOpen(null);
+    setDeleteOpen(true);
   };
 
   return (
@@ -627,6 +626,21 @@ function FolioTile({ folio, onRename }: { folio: Folio; onRename: (folio: Folio)
           </div>
         ) : null}
       </div>
+      {deleteOpen ? (
+        <ConfirmationDialog
+          eyebrow="Delete folio"
+          title={`Delete "${folio.name}"?`}
+          description="The folio will be removed, but its pieces stay in your gallery."
+          confirmLabel="Delete"
+          busyLabel="Deleting"
+          destructive
+          onCancel={() => setDeleteOpen(false)}
+          onConfirm={async () => {
+            setDeleteOpen(false);
+            await deleteFolioAction(folio.id);
+          }}
+        />
+      ) : null}
 
       <figcaption style={{ padding: "11px 2px 0" }}>
         <Link to={`/folios/${folio.id}`} style={{ color: "inherit", textDecoration: "none" }}>

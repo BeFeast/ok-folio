@@ -4,9 +4,12 @@
 // verbatim keeps the implementation pixel-faithful to the source.
 
 import {
+  useEffect,
+  useRef,
   useState,
   type CSSProperties,
   type ElementType,
+  type FormEvent,
   type ReactNode,
 } from "react";
 
@@ -49,6 +52,187 @@ export function Hov({
     >
       {children}
     </Tag>
+  );
+}
+
+export function ConfirmationDialog({
+  eyebrow,
+  title,
+  description,
+  confirmLabel,
+  cancelLabel = "Cancel",
+  destructive = false,
+  busyLabel,
+  onCancel,
+  onConfirm,
+}: {
+  eyebrow?: string;
+  title: string;
+  description: ReactNode;
+  confirmLabel: string;
+  cancelLabel?: string;
+  destructive?: boolean;
+  busyLabel?: string;
+  onCancel: () => void;
+  onConfirm: () => void | Promise<void>;
+}) {
+  const confirmRef = useRef<HTMLButtonElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+  const isSubmittingRef = useRef(false);
+  const mountedRef = useRef(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    isSubmittingRef.current = isSubmitting;
+  }, [isSubmitting]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    confirmRef.current?.focus();
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        if (!isSubmittingRef.current) onCancel();
+      }
+    };
+
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      mountedRef.current = false;
+      document.removeEventListener("keydown", onKeyDown);
+      previousFocusRef.current?.focus();
+    };
+  }, [onCancel]);
+
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (isSubmitting) return;
+    setIsSubmitting(true);
+    try {
+      await onConfirm();
+    } finally {
+      if (mountedRef.current) setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <div
+      role="presentation"
+      onClick={(event) => {
+        if (event.target === event.currentTarget && !isSubmitting) onCancel();
+      }}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 145,
+        background: "rgba(18,15,10,0.58)",
+        backdropFilter: "blur(7px)",
+        WebkitBackdropFilter: "blur(7px)",
+        display: "grid",
+        placeItems: "center",
+        padding: 22,
+      }}
+    >
+      <form
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="confirmation-title"
+        aria-describedby="confirmation-description"
+        onSubmit={submit}
+        style={{
+          width: "min(420px, calc(100vw - 44px))",
+          borderRadius: 15,
+          background: "var(--surface)",
+          color: "var(--ink)",
+          boxShadow: "0 24px 70px rgba(0,0,0,0.3)",
+          padding: "26px 24px 22px",
+        }}
+      >
+        {eyebrow ? (
+          <div
+            style={{
+              fontFamily: "var(--sans)",
+              fontSize: 11,
+              letterSpacing: "0.16em",
+              textTransform: "uppercase",
+              color: destructive ? "var(--accent)" : "var(--faint)",
+            }}
+          >
+            {eyebrow}
+          </div>
+        ) : null}
+        <h2
+          id="confirmation-title"
+          style={{
+            fontFamily: "var(--serif)",
+            fontWeight: 300,
+            fontSize: 25,
+            lineHeight: 1.12,
+            color: "var(--ink)",
+            margin: eyebrow ? "8px 0 0" : 0,
+          }}
+        >
+          {title}
+        </h2>
+        <div
+          id="confirmation-description"
+          style={{
+            marginTop: 13,
+            fontFamily: "var(--sans)",
+            fontSize: 14,
+            lineHeight: 1.55,
+            color: "var(--graphite)",
+          }}
+        >
+          {description}
+        </div>
+        <div style={{ display: "flex", gap: 11, marginTop: 24 }}>
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={isSubmitting}
+            style={{
+              flex: "none",
+              appearance: "none",
+              cursor: isSubmitting ? "default" : "pointer",
+              height: 50,
+              padding: "0 34px",
+              borderRadius: 13,
+              border: "1px solid var(--line-2)",
+              background: "transparent",
+              color: isSubmitting ? "var(--muted)" : "var(--ink)",
+              fontFamily: "var(--sans)",
+              fontSize: 15,
+            }}
+          >
+            {cancelLabel}
+          </button>
+          <button
+            ref={confirmRef}
+            type="submit"
+            disabled={isSubmitting}
+            style={{
+              flex: 1,
+              appearance: "none",
+              cursor: isSubmitting ? "default" : "pointer",
+              height: 50,
+              borderRadius: 13,
+              border: 0,
+              background: destructive ? "var(--accent)" : "var(--ink)",
+              color: destructive ? "var(--on-accent)" : "var(--surface)",
+              fontFamily: "var(--sans)",
+              fontSize: 15,
+              fontWeight: 600,
+              opacity: isSubmitting ? 0.72 : 1,
+            }}
+          >
+            {isSubmitting ? busyLabel || confirmLabel : confirmLabel}
+          </button>
+        </div>
+      </form>
+    </div>
   );
 }
 
