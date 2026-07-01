@@ -946,7 +946,9 @@ export default function Streams() {
     return (
       <div>
         <div style={{ marginTop: 2, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-          <div style={{ fontFamily: "var(--sans)", fontSize: 13, color: "var(--muted)" }}>Sources that fill your folio</div>
+          <div style={{ fontFamily: "var(--sans)", fontSize: 13, color: "var(--muted)" }}>
+            Sources with routing for Folios, Gallery, or review
+          </div>
           <button
             type="button"
             onClick={() => setEditor({ kind: "create" })}
@@ -1006,7 +1008,7 @@ export default function Streams() {
       <PageHeader
         eyebrow="Streams · backstage"
         title="Where pieces come in"
-        subcopy="The quiet machinery behind the gallery. Tend it when you need to."
+        subcopy="The quiet machinery behind incoming pieces, routing, and visibility."
         action={addAction}
       />
       <section style={{ maxWidth: 920, padding: "34px 0 0", display: "flex", flexDirection: "column", gap: 12 }}>
@@ -1034,8 +1036,9 @@ export default function Streams() {
           ))
         )}
         <p style={{ fontFamily: "var(--sans)", fontSize: 12.5, color: "var(--faint)", margin: "14px 2px 0", lineHeight: 1.6 }}>
-          Streams run on their own schedule. New pieces land in your Inbox for review before they settle into the Gallery. No
-          source defines the collection - it is yours.
+          Streams run on their own schedule. Depending on their destination, new pieces can route to a Folio, appear in the
+          Gallery for Library browsing, wait in Inbox review, or stay hidden from the Gallery. No source defines the collection -
+          it is yours.
         </p>
       </section>
       {editor ? <WebGalleryEditor mode={editor} isMobile={isMobile} busy={webGalleryBusy} onClose={() => setEditor(null)} onSaved={() => { setEditor(null); reload(); }} /> : null}
