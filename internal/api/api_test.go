@@ -1967,6 +1967,55 @@ func TestBuildConnectorStatusesSurfacesRunErrorWhenNoFailedRows(t *testing.T) {
 	}
 }
 
+func TestBuildConnectorStatusesIgnoresOlderRunErrorAfterSuccessfulRun(t *testing.T) {
+	base := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+	successEnd := base.Add(10 * time.Minute)
+	runs := []database.ExtractionRun{
+		{
+			ID:        43,
+			Provider:  "telegram",
+			StartTime: ptrTime(base.Add(9 * time.Minute)),
+			EndTime:   &successEnd,
+			Status:    "completed",
+		},
+		{
+			ID:           42,
+			Provider:     "telegram",
+			StartTime:    ptrTime(base),
+			EndTime:      ptrTime(base.Add(1 * time.Minute)),
+			Status:       "failed",
+			PhotosFailed: 1,
+			ErrorMessage: "telegram token is missing",
+		},
+	}
+	states := []database.ConnectorState{
+		{
+			ProviderID: "telegram",
+			LastRunAt:  &successEnd,
+			LastStatus: "completed",
+		},
+	}
+
+	connectors := buildConnectorStatuses(nil, runs, states, nil)
+
+	var telegram *connectorStatus
+	for i := range connectors {
+		if connectors[i].ID == "telegram" {
+			telegram = &connectors[i]
+			break
+		}
+	}
+	if telegram == nil {
+		t.Fatalf("Expected Telegram connector, got %#v", connectors)
+	}
+	if len(telegram.RecentErrors) != 0 {
+		t.Fatalf("Expected older run error to be ignored after successful latest run, got %#v", telegram.RecentErrors)
+	}
+	if telegram.Health != "healthy" || telegram.State != "Healthy" {
+		t.Fatalf("Expected recovered connector to be healthy, got health=%q state=%q", telegram.Health, telegram.State)
+	}
+}
+
 func TestConnectorHealth(t *testing.T) {
 	syncingRun := connectorStatus{
 		RecentRuns: []connectorRunStatus{{Status: "running"}},
