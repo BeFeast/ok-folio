@@ -1101,10 +1101,11 @@ func (db *DB) routeDuplicateToInbox(duplicate *InboxItem, contentHash []byte) (b
 }
 
 // MarkPhotoFailed marks a photo download as failed, keyed on url_hash.
-func (db *DB) MarkPhotoFailed(url, errorMsg string) error {
+func (db *DB) MarkPhotoFailed(providerID, url, errorMsg string) error {
 	return db.Model(&DownloadedPhoto{}).
 		Where("url_hash = ?", HashURL(url)).
 		Updates(map[string]interface{}{
+			"provider":      normalizeFailedProvider(providerID),
 			"status":        "failed",
 			"error_message": errorMsg,
 		}).Error
@@ -1112,19 +1113,29 @@ func (db *DB) MarkPhotoFailed(url, errorMsg string) error {
 
 // RecordFailedDownload atomically records a failed download attempt, upserting
 // on the url_hash unique index.
-func (db *DB) RecordFailedDownload(url, errorMsg string) error {
+func (db *DB) RecordFailedDownload(providerID, url, errorMsg string) error {
 	photo := &DownloadedPhoto{
 		URL:          url,
+		Provider:     normalizeFailedProvider(providerID),
 		Status:       "failed",
 		ErrorMessage: errorMsg,
 	}
 	return db.Clauses(clause.OnConflict{
 		Columns: []clause.Column{{Name: "url_hash"}},
 		DoUpdates: clause.Assignments(map[string]interface{}{
+			"provider":      normalizeFailedProvider(providerID),
 			"status":        "failed",
 			"error_message": errorMsg,
 		}),
 	}).Create(photo).Error
+}
+
+func normalizeFailedProvider(providerID string) string {
+	providerID = strings.TrimSpace(providerID)
+	if providerID == "" {
+		return "sight.photo"
+	}
+	return providerID
 }
 
 // RecordInboxException records a duplicate or ambiguous ingest item for Inbox

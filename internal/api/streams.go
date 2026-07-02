@@ -126,6 +126,8 @@ func buildConnectorStatuses(sourceStats []database.ConnectorSourceStats, runs []
 		},
 	}
 	sourceIndex := make(map[string]connectorSourceRef)
+	runErrorFallbacks := make(map[string]connectorErrorStatus)
+	latestRuns := latestConnectorRunsByProvider(runs)
 
 	for _, stat := range sourceStats {
 		providerID := connectorProviderIDFromStored(stat.Provider)
@@ -162,10 +164,7 @@ func buildConnectorStatuses(sourceStats []database.ConnectorSourceStats, runs []
 	}
 
 	for _, run := range runs {
-		providerID := run.Provider
-		if providerID == "" {
-			providerID = "webgallery"
-		}
+		providerID := connectorRunProviderID(run)
 		connector := ensureConnectorStatus(byConnector, providerID)
 		if runLastSync := extractionRunLastSync(run); runLastSync != nil {
 			connector.LastSync = maxTime(connector.LastSync, *runLastSync)
@@ -182,6 +181,24 @@ func buildConnectorStatuses(sourceStats []database.ConnectorSourceStats, runs []
 			PhotosFailed:     run.PhotosFailed,
 			ErrorMessage:     run.ErrorMessage,
 		})
+		if run.ErrorMessage != "" && latestRuns[providerID].ID == run.ID && shouldSurfaceRunError(run) {
+			if _, exists := runErrorFallbacks[providerID]; !exists {
+				occurredAt := run.StartTime
+				if lastSync := extractionRunLastSync(run); lastSync != nil {
+					occurredAt = lastSync
+				}
+				if occurredAt != nil {
+					runErrorFallbacks[providerID] = connectorErrorStatus{
+						ID:         "run:" + strconvUint(run.ID),
+						SourceID:   providerID,
+						Source:     connectorDisplayName(providerID),
+						Title:      "Latest run",
+						Message:    run.ErrorMessage,
+						OccurredAt: *occurredAt,
+					}
+				}
+			}
+		}
 	}
 
 	for _, state := range states {
@@ -218,6 +235,12 @@ func buildConnectorStatuses(sourceStats []database.ConnectorSourceStats, runs []
 			OccurredAt: connectorError.OccurredAt,
 		})
 	}
+	for providerID, fallback := range runErrorFallbacks {
+		connector := ensureConnectorStatus(byConnector, providerID)
+		if len(connector.RecentErrors) == 0 {
+			connector.RecentErrors = append(connector.RecentErrors, fallback)
+		}
+	}
 
 	connectors := make([]connectorStatus, 0, len(byConnector))
 	for _, connector := range byConnector {
@@ -242,6 +265,46 @@ func buildConnectorStatuses(sourceStats []database.ConnectorSourceStats, runs []
 	})
 
 	return connectors
+}
+
+func shouldSurfaceRunError(run database.ExtractionRun) bool {
+	status := normalizeConnectorStatus(run.Status)
+	return status == "failed" || status == "completed_with_errors" || run.PhotosFailed > 0
+}
+
+func latestConnectorRunsByProvider(runs []database.ExtractionRun) map[string]database.ExtractionRun {
+	latest := map[string]database.ExtractionRun{}
+	for _, run := range runs {
+		providerID := connectorRunProviderID(run)
+		current, ok := latest[providerID]
+		if !ok || extractionRunIsNewer(run, current) {
+			latest[providerID] = run
+		}
+	}
+	return latest
+}
+
+func connectorRunProviderID(run database.ExtractionRun) string {
+	if run.Provider == "" {
+		return "webgallery"
+	}
+	return run.Provider
+}
+
+func extractionRunIsNewer(candidate database.ExtractionRun, current database.ExtractionRun) bool {
+	if candidate.StartTime != nil && current.StartTime != nil {
+		if !candidate.StartTime.Equal(*current.StartTime) {
+			return candidate.StartTime.After(*current.StartTime)
+		}
+		return candidate.ID > current.ID
+	}
+	if candidate.StartTime != nil {
+		return true
+	}
+	if current.StartTime != nil {
+		return false
+	}
+	return candidate.ID > current.ID
 }
 
 func ensureConnectorStatus(byConnector map[string]*connectorStatus, providerID string) *connectorStatus {
