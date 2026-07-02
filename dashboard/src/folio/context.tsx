@@ -288,7 +288,7 @@ interface FolioContextValue {
   selected: PieceVM | null;
   selIndex: number;
   selCount: number;
-  openPiece: (id: number) => void;
+  openPiece: (id: number, piece?: PieceVM) => void;
   closePiece: () => void;
   stepPiece: (dir: number) => void;
 
@@ -1048,7 +1048,20 @@ export function FolioProvider({ children }: { children: ReactNode }) {
     [metadataOverrides, pieces, queryClient, updatePhotosInInfiniteCaches, viewerPieces],
   );
 
-  const openPiece = useCallback((id: number) => setSelectedId(id), []);
+  const openPiece = useCallback((id: number, piece?: PieceVM) => {
+    if (piece) {
+      setViewerPiecesState((current) => {
+        const existingIndex = current.findIndex((item) => item.id === id);
+        if (existingIndex >= 0) {
+          const next = current.slice();
+          next[existingIndex] = piece;
+          return next;
+        }
+        return [...current, piece];
+      });
+    }
+    setSelectedId(id);
+  }, []);
   const closePiece = useCallback(() => setSelectedId(null), []);
   const filterByArtist = useCallback(
     (name: string) => {
@@ -1124,7 +1137,7 @@ export function FolioProvider({ children }: { children: ReactNode }) {
     inboxCount: inboxCounts.data?.total ?? 0,
     selected,
     selIndex,
-    selCount: pieces.length,
+    selCount: activeViewerPieces.length,
     openPiece,
     closePiece,
     stepPiece,

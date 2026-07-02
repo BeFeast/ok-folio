@@ -13,6 +13,7 @@ import type {
   TodayPhotosResponse,
   WeekPhotosResponse,
   GalleryCatalogResponse,
+  GallerySimilarResponse,
   InboxCountsResponse,
   InboxItem,
   InboxResponse,
@@ -33,6 +34,7 @@ import type {
 const API_BASE = "/api/v1";
 const API_GET_CACHE_NAME = "ok-folio-api-get";
 const PIECE_IMAGE_CACHE_NAME = "ok-folio-piece-images";
+let gallerySimilarUnavailable = false;
 
 async function clearOfflineCaches(cacheNames: string[] = [API_GET_CACHE_NAME]): Promise<void> {
   if (typeof caches === "undefined") {
@@ -605,6 +607,22 @@ export function getPhotoThumbnailUrl(id: number, width?: number): string {
 
 export function getPhotoImageUrl(id: number): string {
   return `${API_BASE}/photos/${id}/image`;
+}
+
+export async function fetchGallerySimilar(id: number, limit: number = 12): Promise<GallerySimilarResponse> {
+  if (gallerySimilarUnavailable) {
+    return { pieces: [] };
+  }
+  const params = new URLSearchParams({ limit: limit.toString() });
+  const response = await fetch(`${API_BASE}/gallery/${id}/similar?${params}`);
+  if (response.status === 404) {
+    gallerySimilarUnavailable = true;
+    return { pieces: [] };
+  }
+  if (!response.ok) {
+    throw new Error("Failed to fetch similar pieces");
+  }
+  return response.json();
 }
 
 export async function fetchRunPhotos(
