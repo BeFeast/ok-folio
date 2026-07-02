@@ -50,6 +50,7 @@ type Config struct {
 	Telegram   TelegramConfig   `yaml:"telegram"`
 	Logging    LoggingConfig    `yaml:"logging"`
 	Download   DownloadConfig   `yaml:"download"`
+	Similarity SimilarityConfig `yaml:"similarity"`
 }
 
 type SourceConfig struct {
@@ -162,6 +163,11 @@ type DownloadConfig struct {
 	RateLimitBackoff time.Duration `yaml:"rate_limit_backoff"`
 }
 
+type SimilarityConfig struct {
+	Enabled    bool   `yaml:"enabled"`
+	SidecarURL string `yaml:"sidecar_url"`
+}
+
 // Load reads configuration from a YAML file
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
@@ -263,6 +269,16 @@ func Load(path string) (*Config, error) {
 			return nil, fmt.Errorf("invalid OK_FOLIO_WARM_ON_INGEST_WIDTHS %q: %w", warmWidths, err)
 		}
 		cfg.Storage.WarmOnIngestWidths = widths
+	}
+	if similarityEnabled := os.Getenv("OK_FOLIO_SIMILARITY_ENABLED"); similarityEnabled != "" {
+		enabled, err := strconv.ParseBool(similarityEnabled)
+		if err != nil {
+			return nil, fmt.Errorf("invalid OK_FOLIO_SIMILARITY_ENABLED %q: %w", similarityEnabled, err)
+		}
+		cfg.Similarity.Enabled = enabled
+	}
+	if similaritySidecarURL := os.Getenv("OK_FOLIO_SIMILARITY_SIDECAR_URL"); similaritySidecarURL != "" {
+		cfg.Similarity.SidecarURL = similaritySidecarURL
 	}
 
 	cfg.Storage.applyDefaults()

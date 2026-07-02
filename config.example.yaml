@@ -22,6 +22,14 @@ storage:
   warm_on_ingest: true
   warm_on_ingest_widths: [400, 700]
 
+similarity:
+  # Keeps pgvector similarity routes invisible until embeddings are available.
+  # Also settable via OK_FOLIO_SIMILARITY_ENABLED.
+  enabled: false
+  # Reserved for the embedding sidecar introduced by the follow-up backfill work.
+  # Also settable via OK_FOLIO_SIMILARITY_SIDECAR_URL.
+  sidecar_url: ""
+
 database:
   # OK Folio owns its own dedicated Postgres. These DB_* settings must never
   # point at the legacy MariaDB host; the app refuses to start if they do.

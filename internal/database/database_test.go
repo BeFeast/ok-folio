@@ -29,7 +29,7 @@ func setupTestDB(t *testing.T) *DB {
 		t.Fatalf("Failed to migrate test database: %v", err)
 	}
 
-	return &DB{gormDB}
+	return &DB{DB: gormDB}
 }
 
 func ptrTime(t time.Time) *time.Time {
@@ -2069,7 +2069,7 @@ func TestGalleryFavoriteColumnPrefersCanonicalFavorite(t *testing.T) {
 		t.Fatalf("Failed to migrate test database: %v", err)
 	}
 
-	db := &DB{gormDB}
+	db := &DB{DB: gormDB}
 	photo := DownloadedPhoto{
 		URL:      "https://example.com/canonical-favorite.jpg",
 		FilePath: filepath.Join(t.TempDir(), "canonical-favorite.jpg"),

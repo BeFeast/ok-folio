@@ -1,6 +1,7 @@
 package database
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -149,6 +150,71 @@ func TestPostgresMigrateSchemaAndIdempotency(t *testing.T) {
 	}
 	assertIdentityByDefault(t, db, "downloaded_photos")
 	assertIdentityByDefault(t, db, "extraction_runs")
+}
+
+func TestPostgresGallerySimilarUsesVectorDistanceAndVisibility(t *testing.T) {
+	db := openPostgresTestDB(t)
+	if err := Migrate(db.DB); err != nil {
+		t.Fatalf("Migrate failed: %v", err)
+	}
+	if !db.RefreshEmbeddingColumnCapability() {
+		t.Skip("embedding column unavailable; pgvector extension is required")
+	}
+
+	anchorID := insertSimilarFixturePhoto(t, db, "anchor", "downloaded", false, nil)
+	updateFixtureEmbedding(t, db, anchorID, vectorFixture(map[int]float64{0: 1}))
+
+	nearID := insertSimilarFixturePhoto(t, db, "near", "downloaded", false, []byte("near-content"))
+	updateFixtureEmbedding(t, db, nearID, vectorFixture(map[int]float64{0: 0.99, 1: 0.1}))
+	farID := insertSimilarFixturePhoto(t, db, "far", "downloaded", false, []byte("far-content"))
+	updateFixtureEmbedding(t, db, farID, vectorFixture(map[int]float64{1: 1}))
+	hiddenID := insertSimilarFixturePhoto(t, db, "hidden", "downloaded", true, []byte("hidden-content"))
+	updateFixtureEmbedding(t, db, hiddenID, vectorFixture(map[int]float64{0: 1}))
+	failedID := insertSimilarFixturePhoto(t, db, "failed", "failed", false, []byte("failed-content"))
+	updateFixtureEmbedding(t, db, failedID, vectorFixture(map[int]float64{0: 1}))
+	nullHashDupeID := insertSimilarFixturePhoto(t, db, "null-hash-dupe", "downloaded", false, nil)
+	updateFixtureEmbedding(t, db, nullHashDupeID, vectorFixture(map[int]float64{0: 1}))
+	noEmbeddingID := insertSimilarFixturePhoto(t, db, "no-embedding", "downloaded", false, []byte("no-embedding-content"))
+
+	pieces, err := db.GetGallerySimilar(anchorID, 20)
+	if err != nil {
+		t.Fatalf("GetGallerySimilar failed: %v", err)
+	}
+	if len(pieces) != 2 {
+		t.Fatalf("expected only two visible non-duplicate embedded rows, got %#v", similarIDs(pieces))
+	}
+	if pieces[0].ID != nearID || pieces[1].ID != farID {
+		t.Fatalf("expected cosine-distance order near, far; got ids %v", similarIDs(pieces))
+	}
+	if pieces[0].Distance > pieces[1].Distance {
+		t.Fatalf("expected first distance <= second distance, got %f > %f", pieces[0].Distance, pieces[1].Distance)
+	}
+	for _, excluded := range []uint64{anchorID, hiddenID, failedID, nullHashDupeID, noEmbeddingID} {
+		if similarContains(pieces, excluded) {
+			t.Fatalf("did not expect excluded id %d in similar results %v", excluded, similarIDs(pieces))
+		}
+	}
+
+	nullAnchorID := insertSimilarFixturePhoto(t, db, "null-anchor", "downloaded", false, []byte("null-anchor-content"))
+	empty, err := db.GetGallerySimilar(nullAnchorID, 20)
+	if err != nil {
+		t.Fatalf("GetGallerySimilar with null anchor embedding failed: %v", err)
+	}
+	if len(empty) != 0 {
+		t.Fatalf("expected null anchor embedding to return an empty list, got %#v", empty)
+	}
+
+	for i := 0; i < 60; i++ {
+		id := insertSimilarFixturePhoto(t, db, fmt.Sprintf("bulk-%02d", i), "downloaded", false, []byte(fmt.Sprintf("bulk-content-%02d", i)))
+		updateFixtureEmbedding(t, db, id, vectorFixture(map[int]float64{0: 1, 2: float64(i + 1)}))
+	}
+	clamped, err := db.GetGallerySimilar(anchorID, 100)
+	if err != nil {
+		t.Fatalf("GetGallerySimilar with oversized limit failed: %v", err)
+	}
+	if len(clamped) != 50 {
+		t.Fatalf("expected oversized limit to clamp to 50, got %d", len(clamped))
+	}
 }
 
 func TestPostgresMigrateQuarantinesExistingContentHashDuplicates(t *testing.T) {
@@ -420,6 +486,60 @@ func TestPostgresNewConnectsThroughBootGuards(t *testing.T) {
 	if _, err := New(&config.DatabaseConfig{Host: "photoprism-mariadb", URL: dsn}); err == nil {
 		t.Fatal("expected New to refuse a legacy DB_HOST")
 	}
+}
+
+func insertSimilarFixturePhoto(t *testing.T, db *DB, label string, status string, hidden bool, contentHash []byte) uint64 {
+	t.Helper()
+	photo := DownloadedPhoto{
+		URL:               "fixture:similar:" + label,
+		SourcePage:        "https://fixture.test/similar/" + label,
+		Title:             "Similar " + label,
+		FileName:          label + ".jpg",
+		Status:            status,
+		HiddenFromGallery: hidden,
+		ContentHash:       contentHash,
+		DownloadedAt:      ptrTime(time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)),
+	}
+	if err := db.Create(&photo).Error; err != nil {
+		t.Fatalf("failed to create similar fixture %q: %v", label, err)
+	}
+	return photo.ID
+}
+
+func updateFixtureEmbedding(t *testing.T, db *DB, id uint64, vector string) {
+	t.Helper()
+	if err := db.Exec("UPDATE downloaded_photos SET embedding = ?::vector WHERE id = ?", vector, id).Error; err != nil {
+		t.Fatalf("failed to update embedding for photo %d: %v", id, err)
+	}
+}
+
+func vectorFixture(values map[int]float64) string {
+	parts := make([]string, EmbeddingDim)
+	for i := range parts {
+		if value, ok := values[i]; ok {
+			parts[i] = fmt.Sprintf("%.8f", value)
+		} else {
+			parts[i] = "0"
+		}
+	}
+	return "[" + strings.Join(parts, ",") + "]"
+}
+
+func similarIDs(pieces []GallerySimilarPhoto) []uint64 {
+	ids := make([]uint64, 0, len(pieces))
+	for _, piece := range pieces {
+		ids = append(ids, piece.ID)
+	}
+	return ids
+}
+
+func similarContains(pieces []GallerySimilarPhoto, id uint64) bool {
+	for _, piece := range pieces {
+		if piece.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 func assertIdentityByDefault(t *testing.T, db *DB, table string) {

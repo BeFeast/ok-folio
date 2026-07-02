@@ -1673,6 +1673,29 @@ func TestHandleGalleryCatalogFiltersEmptyArtist(t *testing.T) {
 	}
 }
 
+func TestHandleGallerySimilarInvisibleWhenDisabledOrUnavailable(t *testing.T) {
+	server, _ := setupTestServer(t)
+	defer safeShutdown(server)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/gallery/123/similar", nil)
+	w := httptest.NewRecorder()
+
+	server.handleGallerySimilar(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("Expected disabled similarity route to return 404, got %d", w.Code)
+	}
+
+	server.cfg.Similarity.Enabled = true
+	w = httptest.NewRecorder()
+
+	server.handleGallerySimilar(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("Expected similarity route without embedding capability to return 404, got %d", w.Code)
+	}
+}
+
 func TestHandleConnectorStatus(t *testing.T) {
 	server, db := setupTestServer(t)
 	defer safeShutdown(server)

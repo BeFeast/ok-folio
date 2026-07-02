@@ -2,16 +2,20 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	okfcache "ok-folio/internal/cache"
 	"ok-folio/internal/database"
 	"ok-folio/internal/gallery"
+
+	"github.com/go-chi/chi/v5"
 )
 
 type galleryProviderFacet struct {
@@ -60,6 +64,10 @@ type galleryCatalogResponse struct {
 	Query     string                     `json:"query"`
 	Providers []galleryProviderFacet     `json:"providers"`
 	Facets    galleryCatalogFacets       `json:"facets"`
+}
+
+type gallerySimilarResponse struct {
+	Pieces []database.GallerySimilarPhoto `json:"pieces"`
 }
 
 type cacheQueryValue struct {
@@ -236,6 +244,45 @@ func (s *Server) handleGalleryDecision(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.writeJSON(w, http.StatusOK, decision)
+}
+
+func (s *Server) handleGallerySimilar(w http.ResponseWriter, r *http.Request) {
+	if !s.cfg.Similarity.Enabled || !s.db.HasEmbeddingColumn() {
+		s.writeError(w, http.StatusNotFound, "Photo not found")
+		return
+	}
+
+	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, "Invalid photo ID")
+		return
+	}
+
+	limit := 20
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed <= 0 {
+			s.writeError(w, http.StatusBadRequest, "Invalid limit")
+			return
+		}
+		limit = parsed
+	}
+	if limit > 50 {
+		limit = 50
+	}
+
+	pieces, err := s.db.GetGallerySimilar(id, limit)
+	if err != nil {
+		if errors.Is(err, database.ErrPhotoNotFound) {
+			s.writeError(w, http.StatusNotFound, "Photo not found")
+			return
+		}
+		s.logger.Error().Err(err).Uint64("photo_id", id).Msg("Failed to fetch similar gallery pieces")
+		s.writeError(w, http.StatusInternalServerError, "Failed to fetch similar pieces")
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, gallerySimilarResponse{Pieces: pieces})
 }
 
 func galleryProviderFacets(sourceStats []database.GallerySourceStats) []galleryProviderFacet {
