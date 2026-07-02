@@ -251,6 +251,8 @@ export interface AddPiecesToFolioResult {
 }
 let toastSeq = 0;
 
+type ViewerPiecesSource = "explicit" | "transient" | null;
+
 interface FolioContextValue {
   theme: ThemeName;
   setTheme: (t: ThemeName) => void;
@@ -349,6 +351,7 @@ export function FolioProvider({ children }: { children: ReactNode }) {
   const [metadataOverrides, setMetadataOverrides] = useState<Record<number, Partial<PieceVM>>>({});
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [viewerPieces, setViewerPiecesState] = useState<PieceVM[]>([]);
+  const viewerPiecesSourceRef = useRef<ViewerPiecesSource>(null);
 
   // Theme: keep the document tokens in sync with state.
   useEffect(() => {
@@ -1051,6 +1054,10 @@ export function FolioProvider({ children }: { children: ReactNode }) {
   const openPiece = useCallback((id: number, piece?: PieceVM) => {
     if (piece) {
       setViewerPiecesState((current) => {
+        if (viewerPiecesSourceRef.current === "transient" || current.length === 0) {
+          viewerPiecesSourceRef.current = "transient";
+          return [piece];
+        }
         const existingIndex = current.findIndex((item) => item.id === id);
         if (existingIndex >= 0) {
           const next = current.slice();
@@ -1059,6 +1066,9 @@ export function FolioProvider({ children }: { children: ReactNode }) {
         }
         return [...current, piece];
       });
+    } else if (viewerPiecesSourceRef.current === "transient") {
+      viewerPiecesSourceRef.current = null;
+      setViewerPiecesState([]);
     }
     setSelectedId(id);
   }, []);
@@ -1088,6 +1098,7 @@ export function FolioProvider({ children }: { children: ReactNode }) {
   );
 
   const setViewerPieces = useCallback((nextPieces: PieceVM[]) => {
+    viewerPiecesSourceRef.current = nextPieces.length > 0 ? "explicit" : null;
     setViewerPiecesState(nextPieces);
   }, []);
 

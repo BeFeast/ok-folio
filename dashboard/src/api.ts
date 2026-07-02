@@ -34,7 +34,7 @@ import type {
 const API_BASE = "/api/v1";
 const API_GET_CACHE_NAME = "ok-folio-api-get";
 const PIECE_IMAGE_CACHE_NAME = "ok-folio-piece-images";
-let gallerySimilarUnavailable = false;
+const gallerySimilarNotFoundIds = new Set<number>();
 
 async function clearOfflineCaches(cacheNames: string[] = [API_GET_CACHE_NAME]): Promise<void> {
   if (typeof caches === "undefined") {
@@ -610,13 +610,13 @@ export function getPhotoImageUrl(id: number): string {
 }
 
 export async function fetchGallerySimilar(id: number, limit: number = 12): Promise<GallerySimilarResponse> {
-  if (gallerySimilarUnavailable) {
+  if (gallerySimilarNotFoundIds.has(id)) {
     return { pieces: [] };
   }
   const params = new URLSearchParams({ limit: limit.toString() });
   const response = await fetch(`${API_BASE}/gallery/${id}/similar?${params}`);
   if (response.status === 404) {
-    gallerySimilarUnavailable = true;
+    gallerySimilarNotFoundIds.add(id);
     return { pieces: [] };
   }
   if (!response.ok) {
