@@ -214,7 +214,7 @@ func (s *Scraper) ScrapePage(ctx context.Context, page int) (int, int, int, erro
 				s.logger.Error().Err(err).Str("dedupe_key", dedupeKey).Msg("Failed to download photo")
 
 				// Record the failed download to the database
-				if dbErr := s.db.RecordFailedDownload(dedupeKey, err.Error()); dbErr != nil {
+				if dbErr := s.db.RecordFailedDownload(s.provider.Provider().ID, dedupeKey, err.Error()); dbErr != nil {
 					s.logger.Error().Err(dbErr).Str("dedupe_key", dedupeKey).Msg("Failed to record failed download")
 				}
 

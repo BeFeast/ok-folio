@@ -324,7 +324,7 @@ func TestDownloadResolvedMediaWarmsRecoveredFailedRowWithPersistedID(t *testing.
 	s.thumbHotCache = nil
 
 	dedupeKey := provider.DedupeKey{ProviderID: "fixture", Value: "source-retry:media-retry"}.String()
-	if err := db.RecordFailedDownload(dedupeKey, "temporary failure"); err != nil {
+	if err := db.RecordFailedDownload("fixture", dedupeKey, "temporary failure"); err != nil {
 		t.Fatalf("RecordFailedDownload failed: %v", err)
 	}
 

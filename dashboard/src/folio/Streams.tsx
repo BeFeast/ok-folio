@@ -140,6 +140,11 @@ function sourceConfig(source?: ConnectorSourceSetting): WebGalleryConfig {
   return defaultConfig("");
 }
 
+function latestStreamIssue(s: ConnectorStatus): string {
+  const message = s.recent_errors?.[0]?.message?.trim();
+  return message || "";
+}
+
 function initialForm(source?: ConnectorSourceSetting): WebGalleryForm {
   const cfg = sourceConfig(source);
   return {
@@ -313,6 +318,7 @@ function MobileStreamCard({
   const enabled = managedSources.length > 0 ? managedSources.some((source) => source.enabled) : s.health !== "idle" && s.health !== "error";
   const canToggle = managedSources.length > 0 && !busy;
   const pieces = s.counts?.total ?? s.counts?.downloaded ?? 0;
+  const issue = latestStreamIssue(s);
   return (
     <article
       style={{
@@ -349,6 +355,11 @@ function MobileStreamCard({
         <div style={{ marginTop: 4, fontFamily: "var(--sans)", fontSize: 12.5, color: "var(--muted)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
           {sourceType(s)} · synced {formatAgo(s.last_sync)} · {pieces.toLocaleString()} pieces
         </div>
+        {issue ? (
+          <div style={{ marginTop: 4, fontFamily: "var(--sans)", fontSize: 12, color: "var(--accent)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            Latest issue: {issue}
+          </div>
+        ) : null}
       </div>
       <Toggle on={enabled} onClick={() => onToggle(s, managedSources)} label={`Toggle ${s.display_name}`} disabled={!canToggle} />
     </article>
@@ -487,6 +498,7 @@ function StreamRow({
   const sourceCount = s.sources?.length ?? 0;
   const managedSources = settings.filter((source) => source.type === s.id);
   const kind = managedSources.length > 0 ? `Connector · ${managedSources.length} managed sources` : sourceCount > 1 ? `Connector · ${sourceCount} sources` : "Connector";
+  const issue = latestStreamIssue(s);
   return (
     <div
       style={{
@@ -520,6 +532,11 @@ function StreamRow({
           <div style={{ fontFamily: "var(--sans)", fontSize: 12.5, color: "var(--muted)", marginTop: 3 }}>
             {kind} · last gathered {formatAgo(s.last_sync)}
           </div>
+          {issue ? (
+            <div style={{ fontFamily: "var(--sans)", fontSize: 12, color: "var(--accent)", marginTop: 5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+              Latest issue: {issue}
+            </div>
+          ) : null}
         </div>
         <div style={{ flex: "none", display: "flex", alignItems: "center", gap: 8, width: 104 }}>
           <span style={{ width: 7, height: 7, borderRadius: 99, background: sv.dot }} />

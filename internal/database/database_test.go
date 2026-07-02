@@ -165,7 +165,7 @@ func TestRecordDownloadSanitizesRetryUpdate(t *testing.T) {
 	db := setupTestDB(t)
 
 	const sharedURL = "https://example.com/retry-junk-title.jpg"
-	if err := db.RecordFailedDownload(sharedURL, "temporary timeout"); err != nil {
+	if err := db.RecordFailedDownload("webgallery", sharedURL, "temporary timeout"); err != nil {
 		t.Fatalf("Failed to seed failed download: %v", err)
 	}
 
@@ -519,7 +519,7 @@ func TestRecordDownloadOrDuplicateRecoversFailedURLHashOwner(t *testing.T) {
 	db := setupTestDB(t)
 
 	const sharedURL = "https://example.com/retry-success.jpg"
-	if err := db.RecordFailedDownload(sharedURL, "temporary timeout"); err != nil {
+	if err := db.RecordFailedDownload("webgallery", sharedURL, "temporary timeout"); err != nil {
 		t.Fatalf("Failed to seed failed download: %v", err)
 	}
 
@@ -652,7 +652,7 @@ func TestMarkPhotoFailed(t *testing.T) {
 	db.Create(photo)
 
 	// Mark it as failed
-	err := db.MarkPhotoFailed("https://example.com/photo1.jpg", "Network error")
+	err := db.MarkPhotoFailed("webgallery", "https://example.com/photo1.jpg", "Network error")
 	if err != nil {
 		t.Fatalf("Failed to mark photo as failed: %v", err)
 	}
@@ -665,6 +665,32 @@ func TestMarkPhotoFailed(t *testing.T) {
 	}
 	if retrieved.ErrorMessage != "Network error" {
 		t.Errorf("Expected error message 'Network error', got '%s'", retrieved.ErrorMessage)
+	}
+	if retrieved.Provider != "webgallery" {
+		t.Errorf("Expected provider 'webgallery', got '%s'", retrieved.Provider)
+	}
+}
+
+func TestRecordFailedDownloadPersistsProviderOnInsertAndUpdate(t *testing.T) {
+	db := setupTestDB(t)
+	const dedupeKey = "telegram:-100123:3925:AQAD"
+
+	if err := db.RecordFailedDownload("telegram", dedupeKey, "first failure"); err != nil {
+		t.Fatalf("RecordFailedDownload insert failed: %v", err)
+	}
+	if err := db.RecordFailedDownload("telegram", dedupeKey, "second failure"); err != nil {
+		t.Fatalf("RecordFailedDownload update failed: %v", err)
+	}
+
+	var stored DownloadedPhoto
+	if err := db.Where("url_hash = ?", HashURL(dedupeKey)).First(&stored).Error; err != nil {
+		t.Fatalf("failed to load failed download: %v", err)
+	}
+	if stored.Provider != "telegram" {
+		t.Fatalf("expected provider telegram, got %q", stored.Provider)
+	}
+	if stored.ErrorMessage != "second failure" {
+		t.Fatalf("expected updated error message, got %q", stored.ErrorMessage)
 	}
 }
 

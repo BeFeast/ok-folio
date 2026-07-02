@@ -126,6 +126,7 @@ func buildConnectorStatuses(sourceStats []database.ConnectorSourceStats, runs []
 		},
 	}
 	sourceIndex := make(map[string]connectorSourceRef)
+	runErrorFallbacks := make(map[string]connectorErrorStatus)
 
 	for _, stat := range sourceStats {
 		providerID := connectorProviderIDFromStored(stat.Provider)
@@ -182,6 +183,24 @@ func buildConnectorStatuses(sourceStats []database.ConnectorSourceStats, runs []
 			PhotosFailed:     run.PhotosFailed,
 			ErrorMessage:     run.ErrorMessage,
 		})
+		if run.ErrorMessage != "" && shouldSurfaceRunError(run) {
+			if _, exists := runErrorFallbacks[providerID]; !exists {
+				occurredAt := run.StartTime
+				if lastSync := extractionRunLastSync(run); lastSync != nil {
+					occurredAt = lastSync
+				}
+				if occurredAt != nil {
+					runErrorFallbacks[providerID] = connectorErrorStatus{
+						ID:         "run:" + strconvUint(run.ID),
+						SourceID:   providerID,
+						Source:     connectorDisplayName(providerID),
+						Title:      "Latest run",
+						Message:    run.ErrorMessage,
+						OccurredAt: *occurredAt,
+					}
+				}
+			}
+		}
 	}
 
 	for _, state := range states {
@@ -218,6 +237,12 @@ func buildConnectorStatuses(sourceStats []database.ConnectorSourceStats, runs []
 			OccurredAt: connectorError.OccurredAt,
 		})
 	}
+	for providerID, fallback := range runErrorFallbacks {
+		connector := ensureConnectorStatus(byConnector, providerID)
+		if len(connector.RecentErrors) == 0 {
+			connector.RecentErrors = append(connector.RecentErrors, fallback)
+		}
+	}
 
 	connectors := make([]connectorStatus, 0, len(byConnector))
 	for _, connector := range byConnector {
@@ -242,6 +267,11 @@ func buildConnectorStatuses(sourceStats []database.ConnectorSourceStats, runs []
 	})
 
 	return connectors
+}
+
+func shouldSurfaceRunError(run database.ExtractionRun) bool {
+	status := normalizeConnectorStatus(run.Status)
+	return status == "failed" || status == "completed_with_errors" || run.PhotosFailed > 0
 }
 
 func ensureConnectorStatus(byConnector map[string]*connectorStatus, providerID string) *connectorStatus {

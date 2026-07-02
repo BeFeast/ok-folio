@@ -36,6 +36,7 @@ type Result struct {
 	Halted           bool
 	ErrorMessage     string
 	Cursor           string
+	failedDedupeKeys []string
 }
 
 type RunOptions struct {
@@ -94,6 +95,13 @@ func (i *Ingestor) RunConnectorWithOptions(ctx context.Context, connector provid
 	if stateErr := i.saveConnectorState(providerID, result.Cursor, stateStatus, message); stateErr != nil && runErr == nil {
 		runErr = stateErr
 	}
+	if result.PhotosFailed > 0 {
+		i.logger.Warn().
+			Str("provider_id", providerID).
+			Int("failed", result.PhotosFailed).
+			Strs("dedupe_keys", result.failedDedupeKeys).
+			Msg("Connector ingest finished with item failures")
+	}
 	return result, runErr
 }
 
@@ -112,7 +120,7 @@ func (i *Ingestor) ingestPages(ctx context.Context, connector provider.Connector
 
 		page, err := connector.DiscoverPage(ctx, req)
 		if err != nil {
-			halt, handledErr := i.handleProviderError(ctx, providerID, "", err, run, &result)
+			halt, handledErr := i.handleProviderError(ctx, providerID, "", "", err, run, &result)
 			if halt {
 				return result, nil
 			}
@@ -139,10 +147,13 @@ func (i *Ingestor) ingestPages(ctx context.Context, connector provider.Connector
 
 			dedupeKey := scraper.StableDedupeKey(item)
 			if dedupeKey == "" {
-				if err := i.db.RecordFailedDownload("", "missing connector dedupe key"); err != nil {
+				message := "missing connector dedupe key"
+				i.logItemFailure(providerID, dedupeKey, item.Source.URL, message)
+				if err := i.db.RecordFailedDownload(providerID, "", message); err != nil {
 					i.logger.Warn().Err(err).Msg("Failed to record missing dedupe key")
 				}
 				result.PhotosFailed++
+				result.failedDedupeKeys = append(result.failedDedupeKeys, dedupeKey)
 				continue
 			}
 
@@ -170,7 +181,7 @@ func (i *Ingestor) ingestPages(ctx context.Context, connector provider.Connector
 
 			resolved, err := connector.ResolveMedia(ctx, item)
 			if err != nil {
-				halt, handledErr := i.handleProviderError(ctx, providerID, dedupeKey, err, run, &result)
+				halt, handledErr := i.handleProviderError(ctx, providerID, dedupeKey, item.Source.URL, err, run, &result)
 				if halt {
 					return result, nil
 				}
@@ -213,10 +224,13 @@ func (i *Ingestor) ingestPages(ctx context.Context, connector provider.Connector
 			}
 			photo, kept, err := i.scraper.DownloadResolvedMediaOrDuplicate(ctx, *resolved, providerID, routing)
 			if err != nil {
-				if dbErr := i.db.RecordFailedDownload(dedupeKey, safeErrorMessage(err)); dbErr != nil {
+				message := safeErrorMessage(err)
+				i.logItemFailure(providerID, dedupeKey, resolved.Source.URL, message)
+				if dbErr := i.db.RecordFailedDownload(providerID, dedupeKey, message); dbErr != nil {
 					i.logger.Warn().Err(dbErr).Str("dedupe_key", dedupeKey).Msg("Failed to record failed download")
 				}
 				result.PhotosFailed++
+				result.failedDedupeKeys = append(result.failedDedupeKeys, dedupeKey)
 				continue
 			}
 
@@ -313,7 +327,7 @@ func (i *Ingestor) saveConnectorState(providerID string, cursor string, status s
 	})
 }
 
-func (i *Ingestor) handleProviderError(ctx context.Context, providerID string, dedupeKey string, err error, run *database.ExtractionRun, result *Result) (bool, error) {
+func (i *Ingestor) handleProviderError(ctx context.Context, providerID string, dedupeKey string, sourceURL string, err error, run *database.ExtractionRun, result *Result) (bool, error) {
 	var providerErr *provider.ProviderError
 	if !errors.As(err, &providerErr) {
 		return false, err
@@ -330,10 +344,13 @@ func (i *Ingestor) handleProviderError(ctx context.Context, providerID string, d
 		if dedupeKey == "" {
 			dedupeKey = fmt.Sprintf("%s:discovery-error", providerID)
 		}
-		if dbErr := i.db.RecordFailedDownload(dedupeKey, safeErrorMessage(providerErr)); dbErr != nil {
+		message := safeErrorMessage(providerErr)
+		i.logItemFailure(providerID, dedupeKey, sourceURL, message)
+		if dbErr := i.db.RecordFailedDownload(providerID, dedupeKey, message); dbErr != nil {
 			return false, dbErr
 		}
 		result.PhotosFailed++
+		result.failedDedupeKeys = append(result.failedDedupeKeys, dedupeKey)
 		return false, nil
 	case provider.ErrorKindPermission:
 		result.Halted = true
@@ -346,6 +363,17 @@ func (i *Ingestor) handleProviderError(ctx context.Context, providerID string, d
 	default:
 		return false, err
 	}
+}
+
+func (i *Ingestor) logItemFailure(providerID string, dedupeKey string, sourceURL string, message string) {
+	event := i.logger.Warn().
+		Str("provider_id", providerID).
+		Str("dedupe_key", dedupeKey).
+		Str("error", message)
+	if sourceURL != "" {
+		event = event.Str("source_url", sourceURL)
+	}
+	event.Msg("Connector item ingest failed")
 }
 
 func normalizeRunOptions(opts RunOptions) RunOptions {

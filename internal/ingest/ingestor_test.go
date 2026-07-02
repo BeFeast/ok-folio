@@ -1,6 +1,7 @@
 package ingest
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"errors"
@@ -586,6 +587,59 @@ func TestRunConnectorRedactsTelegramTokenFromFailedDownload(t *testing.T) {
 	}
 	if !strings.Contains(failed.ErrorMessage, "bot<redacted>/photos/file.jpg") {
 		t.Fatalf("expected redacted telegram URL, got %q", failed.ErrorMessage)
+	}
+	if failed.Provider != "telegram" {
+		t.Fatalf("expected failed download provider telegram, got %q", failed.Provider)
+	}
+}
+
+func TestRunConnectorLogsItemFailureAndRecordsProvider(t *testing.T) {
+	ctx := context.Background()
+	imageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	downloadURL := imageServer.URL + "/broken.jpg"
+	imageServer.Close()
+
+	item := fakeItem("logged-failure", downloadURL)
+	connector := &fakeConnector{
+		pages: map[string]*provider.PageResult{
+			"": {Items: []provider.DiscoveredMedia{item}},
+		},
+		providerID: "telegram",
+	}
+	db, _, ing := setupIngestorTest(t, connector)
+	var logs bytes.Buffer
+	ing.logger = zerolog.New(&logs)
+
+	result, err := ing.RunConnector(ctx, connector)
+	if err != nil {
+		t.Fatalf("RunConnector failed: %v", err)
+	}
+	if result.PhotosFailed != 1 {
+		t.Fatalf("expected one failed item, got %#v", result)
+	}
+
+	var failed database.DownloadedPhoto
+	if err := db.Where("url = ? AND status = ?", item.DedupeKey.String(), "failed").First(&failed).Error; err != nil {
+		t.Fatalf("expected failed download record: %v", err)
+	}
+	if failed.Provider != "telegram" {
+		t.Fatalf("expected failed row provider telegram, got %q", failed.Provider)
+	}
+
+	output := logs.String()
+	for _, want := range []string{
+		`"provider_id":"telegram"`,
+		`"dedupe_key":"fixture:logged-failure"`,
+		`"source_url":"https://fixture.test/source/logged-failure"`,
+		`"message":"Connector item ingest failed"`,
+		`"dedupe_keys":["fixture:logged-failure"]`,
+		`"message":"Connector ingest finished with item failures"`,
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("expected log output to contain %s, got %s", want, output)
+		}
 	}
 }
 
