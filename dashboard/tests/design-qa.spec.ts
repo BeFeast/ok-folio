@@ -62,6 +62,7 @@ for (const theme of ["light", "dark"] as Theme[]) {
       await page.addInitScript((themeName) => {
         window.localStorage.setItem("okfolio-theme", themeName);
         window.localStorage.setItem("okfolio-info-panel-mode", "remember");
+        window.localStorage.setItem("okfolio-info-panel-open", "true");
       }, theme);
     });
 
@@ -230,6 +231,33 @@ for (const theme of ["light", "dark"] as Theme[]) {
 
       await page.keyboard.press("Escape");
       await expect(viewer).toBeHidden();
+    });
+
+    test("viewer more like this opens a similar piece in place", async ({ page }) => {
+      await page.goto("/");
+      await expect(page.locator("body")).toContainText(/Gallery|Recently gathered|Red Room Study/);
+      await page.locator("figure").filter({ has: page.locator("img") }).first().click();
+      const viewer = page.getByRole("dialog", { name: "Piece viewer" });
+      await expect(viewer.getByText("More like this")).toBeVisible();
+      await viewer.getByRole("button", { name: /Open Quiet Window/ }).click();
+      await expect(viewer.getByRole("heading", { name: "Quiet Window" })).toBeVisible();
+      await expect(viewer.getByText("More like this")).toBeVisible();
+    });
+
+    test("viewer hides more like this when similarity is unavailable", async ({ page }) => {
+      const consoleErrors: string[] = [];
+      page.on("console", (message) => {
+        if (message.type() === "error" && !message.text().includes("Failed to load resource")) consoleErrors.push(message.text());
+      });
+      await page.route("**/api/v1/gallery/*/similar?*", async (route) => {
+        await route.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ error: "Photo not found" }) });
+      });
+      await page.goto("/");
+      await expect(page.locator("body")).toContainText(/Gallery|Recently gathered|Red Room Study/);
+      await page.locator("figure").filter({ has: page.locator("img") }).first().click();
+      const viewer = page.getByRole("dialog", { name: "Piece viewer" });
+      await expect(viewer.getByText("More like this")).toHaveCount(0);
+      expect(consoleErrors).toEqual([]);
     });
 
     test("folio delete uses the styled confirmation dialog", async ({ page }, testInfo) => {

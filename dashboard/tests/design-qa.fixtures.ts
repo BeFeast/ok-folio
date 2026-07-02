@@ -174,6 +174,17 @@ async function routeApi(route: Route) {
     await route.fulfill(json(catalog(url)));
     return;
   }
+  if (/^\/api\/v1\/gallery\/\d+\/similar$/.test(path)) {
+    const id = Number(path.split("/")[4]);
+    const limit = Number(url.searchParams.get("limit") ?? "12");
+    await route.fulfill(json({
+      pieces: photos
+        .filter((item) => item.ID !== id)
+        .slice(0, limit)
+        .map((item, index) => ({ ...item, distance: (index + 1) / 100 })),
+    }));
+    return;
+  }
   if (path === "/api/v1/artists") {
     await route.fulfill(json({ artists: catalog(url).facets.artists.map((item) => ({ artist: item.display_name, photo_count: item.count, total_size: item.count * 1024 })), total: 3, limit: 500, offset: 0, sort: "count" }));
     return;

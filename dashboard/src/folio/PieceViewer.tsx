@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { fetchFolios, type PieceMetadataPatch } from "../api";
-import { useFolio } from "./context";
+import { fetchFolios, fetchGallerySimilar, type PieceMetadataPatch } from "../api";
+import { mapPhoto, useFolio, type PieceVM } from "./context";
 import { ChevronIcon, CloseIcon, HeartIcon, OkfImage } from "./ui";
 import { useViewport } from "./useViewport";
 
@@ -112,6 +112,34 @@ const MOBILE_SHEET_ROW: CSSProperties = {
   gap: 14,
   padding: "12px 0",
   borderBottom: "1px solid rgba(236,230,218,.1)",
+};
+const SIMILAR_GRID: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+  gap: 8,
+};
+const SIMILAR_BUTTON: CSSProperties = {
+  appearance: "none",
+  minWidth: 0,
+  minHeight: 44,
+  border: "1px solid rgba(251,246,238,0.1)",
+  borderRadius: 8,
+  background: "rgba(251,246,238,0.04)",
+  color: "#FBF6EE",
+  padding: 0,
+  overflow: "hidden",
+  textAlign: "left",
+  cursor: "pointer",
+};
+const SIMILAR_CAPTION: CSSProperties = {
+  padding: "7px 8px 8px",
+  fontFamily: "var(--sans)",
+  fontSize: 11,
+  lineHeight: 1.2,
+  color: "rgba(251,246,238,0.68)",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
 };
 
 function useReducedMotion(): boolean {
@@ -233,6 +261,7 @@ export default function PieceViewer() {
     infoPanelMode,
     infoPanelRememberedOpen,
     setInfoPanelRememberedOpen,
+    openPiece,
   } = useFolio();
   const { isMobile, width: viewportWidth } = useViewport();
   const reducedMotion = useReducedMotion();
@@ -285,6 +314,14 @@ export default function PieceViewer() {
   // Keyed on the piece id (a primitive), NOT the `selected` object — its
   // identity churns on every context re-render.
   const pieceId = selected?.id ?? null;
+  const similar = useQuery({
+    queryKey: ["gallery-similar", pieceId],
+    queryFn: () => fetchGallerySimilar(pieceId ?? 0, 12),
+    enabled: pieceId != null,
+    retry: false,
+    staleTime: 60_000,
+    select: (data) => data.pieces.map(mapPhoto),
+  });
   useEffect(() => {
     if (infoPanelMode === "hidden") setTransientPanelOpen(false);
     setFolioPickerOpen(false);
@@ -633,6 +670,45 @@ export default function PieceViewer() {
       )}
     </div>
   );
+  const renderMoreLikeThis = (pieces: PieceVM[], compact: boolean = false) => {
+    if (editing || pieces.length === 0) return null;
+    return (
+      <div style={{ marginTop: compact ? 24 : 26, paddingTop: compact ? 0 : 20, borderTop: compact ? 0 : "1px solid rgba(251,246,238,0.12)" }}>
+        <div style={{ ...LABEL, marginBottom: 12, color: compact ? "rgba(236,230,218,.46)" : LABEL.color }}>More like this</div>
+        <div style={SIMILAR_GRID}>
+          {pieces.slice(0, 12).map((piece) => (
+            <button
+              key={piece.id}
+              type="button"
+              onClick={() => openPiece(piece.id, piece)}
+              aria-label={`Open ${piece.t || piece.a || "similar piece"}`}
+              style={SIMILAR_BUTTON}
+            >
+              <OkfImage
+                src={piece.thumb}
+                alt={piece.t || piece.a || "Similar piece"}
+                title={piece.t}
+                artist={piece.a}
+                imgStyle={{ display: "block", width: "100%", aspectRatio: "1 / 1", objectFit: "cover" }}
+                matteStyle={{
+                  width: "100%",
+                  aspectRatio: "1 / 1",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  padding: 10,
+                  background: "rgba(251,246,238,0.06)",
+                  textAlign: "center",
+                }}
+                matteTitleStyle={{ fontFamily: "var(--serif)", fontSize: 13, lineHeight: 1.1, color: "#FBF6EE" }}
+                matteArtistStyle={{ display: "none" }}
+              />
+              <div style={SIMILAR_CAPTION}>{piece.t || piece.a || "Untitled"}</div>
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  };
 
   if (isMobile) {
     const compactMobileChrome = viewportWidth > 0 && viewportWidth <= 360;
@@ -913,6 +989,7 @@ export default function PieceViewer() {
                 </div>
               </div>
             ) : null}
+            {renderMoreLikeThis(similar.data ?? [], true)}
           </div>
 
           {folioPickerOpen
@@ -1341,6 +1418,7 @@ export default function PieceViewer() {
             ) : null}
           </div>
         </div>
+        {renderMoreLikeThis(similar.data ?? [])}
       </div>
     </div>
   );

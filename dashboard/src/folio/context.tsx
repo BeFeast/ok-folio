@@ -251,6 +251,8 @@ export interface AddPiecesToFolioResult {
 }
 let toastSeq = 0;
 
+type ViewerPiecesSource = "explicit" | "transient" | null;
+
 interface FolioContextValue {
   theme: ThemeName;
   setTheme: (t: ThemeName) => void;
@@ -288,7 +290,7 @@ interface FolioContextValue {
   selected: PieceVM | null;
   selIndex: number;
   selCount: number;
-  openPiece: (id: number) => void;
+  openPiece: (id: number, piece?: PieceVM) => void;
   closePiece: () => void;
   stepPiece: (dir: number) => void;
 
@@ -349,6 +351,7 @@ export function FolioProvider({ children }: { children: ReactNode }) {
   const [metadataOverrides, setMetadataOverrides] = useState<Record<number, Partial<PieceVM>>>({});
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [viewerPieces, setViewerPiecesState] = useState<PieceVM[]>([]);
+  const viewerPiecesSourceRef = useRef<ViewerPiecesSource>(null);
 
   // Theme: keep the document tokens in sync with state.
   useEffect(() => {
@@ -1048,7 +1051,27 @@ export function FolioProvider({ children }: { children: ReactNode }) {
     [metadataOverrides, pieces, queryClient, updatePhotosInInfiniteCaches, viewerPieces],
   );
 
-  const openPiece = useCallback((id: number) => setSelectedId(id), []);
+  const openPiece = useCallback((id: number, piece?: PieceVM) => {
+    if (piece) {
+      setViewerPiecesState((current) => {
+        if (viewerPiecesSourceRef.current === "transient" || current.length === 0) {
+          viewerPiecesSourceRef.current = "transient";
+          return [piece];
+        }
+        const existingIndex = current.findIndex((item) => item.id === id);
+        if (existingIndex >= 0) {
+          const next = current.slice();
+          next[existingIndex] = piece;
+          return next;
+        }
+        return [...current, piece];
+      });
+    } else if (viewerPiecesSourceRef.current === "transient") {
+      viewerPiecesSourceRef.current = null;
+      setViewerPiecesState([]);
+    }
+    setSelectedId(id);
+  }, []);
   const closePiece = useCallback(() => setSelectedId(null), []);
   const filterByArtist = useCallback(
     (name: string) => {
@@ -1075,6 +1098,7 @@ export function FolioProvider({ children }: { children: ReactNode }) {
   );
 
   const setViewerPieces = useCallback((nextPieces: PieceVM[]) => {
+    viewerPiecesSourceRef.current = nextPieces.length > 0 ? "explicit" : null;
     setViewerPiecesState(nextPieces);
   }, []);
 
@@ -1124,7 +1148,7 @@ export function FolioProvider({ children }: { children: ReactNode }) {
     inboxCount: inboxCounts.data?.total ?? 0,
     selected,
     selIndex,
-    selCount: pieces.length,
+    selCount: activeViewerPieces.length,
     openPiece,
     closePiece,
     stepPiece,

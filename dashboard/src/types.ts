@@ -305,6 +305,14 @@ export interface GalleryCatalogResponse {
   facets: GalleryCatalogFacets;
 }
 
+export interface GallerySimilarPiece extends Photo {
+  distance: number;
+}
+
+export interface GallerySimilarResponse {
+  pieces: GallerySimilarPiece[];
+}
+
 export interface GalleryProviderFacet {
   id: string;
   display_name: string;
