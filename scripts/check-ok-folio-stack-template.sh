@@ -95,20 +95,9 @@ if grep -Eq 'DATABASE_URL' "$compose_file"; then
   fail "compose must not render DATABASE_URL alongside discrete DB_* settings"
 fi
 
-legacy_mount_patterns=(
-  'PHOTO_ORIGINALS_HOST_PATH.*:/photoprism/originals:ro'
-  'PHOTO_DAILY_HOST_PATH.*:/photoprism/_daily:ro'
-  'PHOTOPRISM_STORAGE_HOST_PATH.*:/photoprism/storage:ro'
-)
-for pattern in "${legacy_mount_patterns[@]}"; do
-  require_grep "$pattern" "$compose_file" "legacy mount must end in :ro: $pattern"
-done
-
-while IFS= read -r line; do
-  if [[ ! "$line" =~ :ro[[:space:]]*$ ]]; then
-    fail "found a legacy mount without a trailing :ro: $line"
-  fi
-done < <(grep -E '\$\{(PHOTO_ORIGINALS_HOST_PATH|PHOTO_DAILY_HOST_PATH|PHOTOPRISM_STORAGE_HOST_PATH)' "$compose_file")
+require_grep 'PHOTO_ORIGINALS_HOST_PATH.*:/photoprism/originals[[:space:]]*$' "$compose_file" "originals mount must be writable"
+require_grep 'PHOTO_DAILY_HOST_PATH.*:/photoprism/_daily[[:space:]]*$' "$compose_file" "daily mount must be writable"
+require_grep 'PHOTOPRISM_STORAGE_HOST_PATH.*:/photoprism/storage:ro' "$compose_file" "legacy storage mount must end in :ro"
 
 if grep -Eq '([0-9]{1,3}\.){3}[0-9]{1,3}|/mnt/|/tank/|/pool/|/var/lib/docker|/home/' "$compose_file"; then
   fail "compose template must not contain concrete IPs or host paths"
