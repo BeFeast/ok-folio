@@ -187,6 +187,61 @@ jobs:
           set -euo pipefail
           docker run --rm --entrypoint /app/ok-folio-etl "$IMAGE_REF" print-legacy-checks --legacy-database ok_folio_smoke >/dev/null
 
+      - name: Smoke test embedder image
+        env:
+          IMAGE_REF: ${{ steps.image.outputs.embedder_image }}:${{ steps.image.outputs.smoke_tag }}
+        run: |
+          set -euo pipefail
+          response_log="$(mktemp)"
+          fixture_image="$(mktemp)"
+          container_name="ok-folio-embedder-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cleanup() {
+            docker rm -f "$container_name" >/dev/null 2>&1 || true
+            rm -f "$response_log" "$fixture_image"
+          }
+          trap cleanup EXIT
+
+          python3 - <<'PY' "$fixture_image"
+          import sys
+          pixels = bytes([
+              255, 0, 0, 0, 255, 0,
+              0, 0, 255, 255, 255, 255,
+          ])
+          with open(sys.argv[1], "wb") as f:
+              f.write(b"P6\n2 2\n255\n" + pixels)
+          PY
+
+          docker run -d \
+            --name "$container_name" \
+            -p 127.0.0.1:18081:8081 \
+            "$IMAGE_REF"
+
+          for _ in $(seq 1 60); do
+            if curl -fsS "http://127.0.0.1:18081/health" >"$response_log"; then
+              if jq -e '.ok == true and .model == "clip-vit-b32" and .dim == 512' "$response_log" >/dev/null; then
+                break
+              fi
+            fi
+            sleep 2
+          done
+          if ! jq -e '.ok == true and .model == "clip-vit-b32" and .dim == 512' "$response_log" >/dev/null 2>&1; then
+            echo "Embedder smoke test did not receive a healthy response" >&2
+            if [ -s "$response_log" ]; then
+              cat "$response_log" >&2
+            fi
+            docker logs "$container_name"
+            exit 1
+          fi
+
+          curl -fsS -X POST --data-binary "@$fixture_image" "http://127.0.0.1:18081/embed" >"$response_log"
+          jq -e '
+            .model == "clip-vit-b32"
+            and .dim == 512
+            and (.embedding | length) == 512
+            and ((.embedding | map(. * .) | add) > 0.999)
+            and ((.embedding | map(. * .) | add) < 1.001)
+          ' "$response_log" >/dev/null
+
       - name: Log in to registry
         uses: docker/login-action@v3
         with:
@@ -194,7 +249,8 @@ jobs:
           username: ${{ secrets.REGISTRY_USERNAME }}
           password: ${{ secrets.REGISTRY_PASSWORD }}
 
-      - name: Refuse existing immutable tag
+      - name: Check immutable tag availability
+        id: immutable
         env:
           IMAGE: ${{ steps.image.outputs.image }}
           EMBEDDER_IMAGE: ${{ steps.image.outputs.embedder_image }}
@@ -207,22 +263,28 @@ jobs:
           }
           trap cleanup EXIT
 
-          for immutable_ref in "$IMAGE:$SHA_TAG" "$EMBEDDER_IMAGE:$SHA_TAG"; do
+          check_ref() {
+            local output_name="$1"
+            local immutable_ref="$2"
             if docker manifest inspect "$immutable_ref" >"$inspect_log" 2>&1; then
-              echo "Immutable image tag already exists: $immutable_ref" >&2
-              echo "Refusing to overwrite a commit tag. Use the existing tag or run from a new commit." >&2
-              exit 1
+              echo "Immutable image tag already exists and will not be overwritten: $immutable_ref"
+              echo "$output_name=true" >> "$GITHUB_OUTPUT"
+              return
             fi
 
             if grep -Eiq '(manifest unknown|manifest.*not found|no such manifest|not found|name unknown)' "$inspect_log"; then
               echo "Immutable image tag is not present yet: $immutable_ref"
-              continue
+              echo "$output_name=false" >> "$GITHUB_OUTPUT"
+              return
             fi
 
             echo "Could not verify whether immutable image tag exists: $immutable_ref" >&2
             cat "$inspect_log" >&2
             exit 1
-          done
+          }
+
+          check_ref "app_sha_present" "$IMAGE:$SHA_TAG"
+          check_ref "embedder_sha_present" "$EMBEDDER_IMAGE:$SHA_TAG"
 
       - name: Push immutable and dev tags
         env:
@@ -230,15 +292,25 @@ jobs:
           EMBEDDER_IMAGE: ${{ steps.image.outputs.embedder_image }}
           SMOKE_TAG: ${{ steps.image.outputs.smoke_tag }}
           SHA_TAG: ${{ steps.image.outputs.sha_tag }}
+          APP_SHA_PRESENT: ${{ steps.immutable.outputs.app_sha_present }}
+          EMBEDDER_SHA_PRESENT: ${{ steps.immutable.outputs.embedder_sha_present }}
         run: |
           set -euo pipefail
-          docker tag "$IMAGE:$SMOKE_TAG" "$IMAGE:$SHA_TAG"
           docker tag "$IMAGE:$SMOKE_TAG" "$IMAGE:dev"
-          docker tag "$EMBEDDER_IMAGE:$SMOKE_TAG" "$EMBEDDER_IMAGE:$SHA_TAG"
           docker tag "$EMBEDDER_IMAGE:$SMOKE_TAG" "$EMBEDDER_IMAGE:dev"
-          docker push "$IMAGE:$SHA_TAG"
+          if [ "$APP_SHA_PRESENT" != "true" ]; then
+            docker tag "$IMAGE:$SMOKE_TAG" "$IMAGE:$SHA_TAG"
+            docker push "$IMAGE:$SHA_TAG"
+          else
+            echo "Skipping already-published immutable app tag $IMAGE:$SHA_TAG"
+          fi
           docker push "$IMAGE:dev"
-          docker push "$EMBEDDER_IMAGE:$SHA_TAG"
+          if [ "$EMBEDDER_SHA_PRESENT" != "true" ]; then
+            docker tag "$EMBEDDER_IMAGE:$SMOKE_TAG" "$EMBEDDER_IMAGE:$SHA_TAG"
+            docker push "$EMBEDDER_IMAGE:$SHA_TAG"
+          else
+            echo "Skipping already-published immutable embedder tag $EMBEDDER_IMAGE:$SHA_TAG"
+          fi
           docker push "$EMBEDDER_IMAGE:dev"
 
       - name: Log out of registry

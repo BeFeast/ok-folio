@@ -1,6 +1,7 @@
 package scraper
 
 import (
+	"bytes"
 	"context"
 	"image"
 	"image/color"
@@ -9,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -361,6 +363,44 @@ func TestDownloadResolvedMediaWarmsRecoveredFailedRowWithPersistedID(t *testing.
 	}
 	entry := cache.Entry(&stored, 400, validator)
 	waitForFile(t, entry.Path)
+}
+
+func TestDownloadResolvedMediaEmbedsWhenThumbnailWarmDisabled(t *testing.T) {
+	imageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "image/jpeg")
+		writeScraperTestJPEG(t, w)
+	}))
+	defer imageServer.Close()
+
+	db := setupScraperTestDB(t)
+	cfg := setupScraperTestConfig(t)
+	cfg.Storage.WarmOnIngest = false
+	cfg.Storage.WarmOnIngestWidths = nil
+	var logs bytes.Buffer
+	s := NewWithProvider(cfg, db, zerolog.New(&logs), &fakeConnector{})
+	s.embedderClient = fakeEmbedClient{}
+	s.embedSem = make(chan struct{}, 1)
+	s.embedSem <- struct{}{}
+
+	photo, kept, err := s.DownloadResolvedMediaOrDuplicate(context.Background(), provider.DiscoveredMedia{
+		ProviderID: "fixture",
+		DedupeKey:  provider.DedupeKey{ProviderID: "fixture", Value: "source-embed:media-embed"},
+		Source:     provider.SourceMetadata{URL: "https://fixture.test/source/embed", ExternalID: "source-embed"},
+		Media:      provider.MediaMetadata{URL: imageServer.URL + "/media-embed.jpg", ExternalID: "media-embed", FileName: "media-embed.jpg"},
+		Title:      "Embed Fixture",
+	}, "fixture")
+	if err != nil {
+		t.Fatalf("DownloadResolvedMediaOrDuplicate failed: %v", err)
+	}
+	if !kept {
+		t.Fatal("expected new media to be kept")
+	}
+	if photo.ID == 0 {
+		t.Fatal("expected persisted photo ID")
+	}
+	if !strings.Contains(logs.String(), "Similarity embed-on-ingest skipped because workers are full") {
+		t.Fatalf("expected embed-on-ingest scheduling with thumbnail warm disabled, logs: %s", logs.String())
+	}
 }
 
 func TestScheduleWarmThumbnailsOnIngestReturnsWhenWorkersFull(t *testing.T) {

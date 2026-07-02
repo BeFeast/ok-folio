@@ -398,6 +398,7 @@ func (s *Scraper) DownloadResolvedMediaOrDuplicate(ctx context.Context, resolved
 		Str("artist", resolved.Artist).
 		Msg("Successfully downloaded photo")
 	s.scheduleWarmThumbnailsOnIngest(*photo)
+	s.scheduleEmbedOnIngest(*photo)
 
 	return photo, true, nil
 }
@@ -463,7 +464,6 @@ func (s *Scraper) scheduleWarmThumbnailsOnIngest(photo database.DownloadedPhoto)
 				Int("failed", result.Failed).
 				Msg("Thumbnail warm-on-ingest completed with warnings")
 		}
-		s.scheduleEmbedOnIngest(photo)
 	}()
 }
 

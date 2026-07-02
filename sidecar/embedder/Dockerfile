@@ -1,7 +1,7 @@
 FROM python:3.12-slim AS model
 
 ARG MODEL_URL=https://huggingface.co/Xenova/clip-vit-base-patch32/resolve/main/onnx/vision_model_quantized.onnx
-ARG MODEL_SHA256=
+ARG MODEL_SHA256=583fd1110a514667812fee7d684952aaf82a99b959760c8d7dca7e0ab9839299
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*

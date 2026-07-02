@@ -45,6 +45,8 @@ var (
 
 func main() {
 	flag.Parse()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	// Load configuration
 	cfg, err := config.Load(*configPath)
@@ -91,7 +93,7 @@ func main() {
 	// Create scraper
 	scraperInstance := scraper.New(cfg, db, logger)
 	if cfg.Similarity.Enabled && cfg.Similarity.Backfill {
-		go runSimilarityBackfill(context.Background(), cfg, db, logger)
+		go runSimilarityBackfill(ctx, cfg, db, logger)
 	}
 	connectors := buildConnectors(cfg, db, logger)
 
@@ -126,9 +128,8 @@ func main() {
 	logger.Info().Msg("PhotoPrism Extractor is running")
 
 	// Wait for interrupt signal
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-	<-sigChan
+	<-ctx.Done()
+	stop()
 
 	logger.Info().Msg("Shutting down gracefully...")
 
