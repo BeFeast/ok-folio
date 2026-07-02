@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -40,6 +41,7 @@ const (
 	ContentHashUniqueIndex = "idx_downloaded_photos_content_hash_unique"
 	CatalogSortIndex       = "idx_downloaded_photos_catalog_sort"
 	KeywordsGINIndex       = "idx_downloaded_photos_keywords"
+	EmbeddingHNSWIndex     = "idx_downloaded_photos_embedding_hnsw"
 
 	downloadedStatusPredicate = "status = 'downloaded'"
 	galleryVisiblePredicate   = "status = 'downloaded' AND hidden_from_gallery = false"
@@ -660,6 +662,35 @@ func (db *DB) RefreshEmbeddingColumnCapability() bool {
 
 func (db *DB) HasEmbeddingColumn() bool {
 	return db.embeddingColumnPresent
+}
+
+func (db *DB) StoreEmbedding(id uint64, embedding []float32) error {
+	if len(embedding) != EmbeddingDim {
+		return fmt.Errorf("embedding dimension %d does not match expected %d", len(embedding), EmbeddingDim)
+	}
+	vector := vectorLiteral(embedding)
+	if db.Dialector.Name() == "postgres" {
+		return db.Exec("UPDATE downloaded_photos SET embedding = ?::vector WHERE id = ?", vector, id).Error
+	}
+	return db.Exec("UPDATE downloaded_photos SET embedding = ? WHERE id = ?", vector, id).Error
+}
+
+func (db *DB) CreateEmbeddingHNSWIndex() error {
+	if db == nil || db.DB == nil || db.Dialector.Name() != "postgres" || !db.HasEmbeddingColumn() {
+		return nil
+	}
+	if err := db.Exec(`CREATE INDEX IF NOT EXISTS ` + EmbeddingHNSWIndex + ` ON downloaded_photos USING hnsw (embedding vector_cosine_ops)`).Error; err != nil {
+		return fmt.Errorf("create embedding hnsw index: %w", err)
+	}
+	return nil
+}
+
+func vectorLiteral(values []float32) string {
+	parts := make([]string, len(values))
+	for i, value := range values {
+		parts[i] = strconv.FormatFloat(float64(value), 'g', -1, 32)
+	}
+	return "[" + strings.Join(parts, ",") + "]"
 }
 
 func (db *DB) probeEmbeddingColumn() bool {

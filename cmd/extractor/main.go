@@ -22,6 +22,7 @@ import (
 	"ok-folio/internal/provider/webgallery"
 	"ok-folio/internal/scheduler"
 	"ok-folio/internal/scraper"
+	"ok-folio/internal/similarity"
 	"ok-folio/pkg/retry"
 
 	"github.com/rs/zerolog"
@@ -44,6 +45,8 @@ var (
 
 func main() {
 	flag.Parse()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	// Load configuration
 	cfg, err := config.Load(*configPath)
@@ -85,9 +88,13 @@ func main() {
 			Msg("Failed to connect to database after retries")
 	}
 	logger.Info().Msg("Database connected")
+	checkSimilaritySidecar(cfg, logger)
 
 	// Create scraper
 	scraperInstance := scraper.New(cfg, db, logger)
+	if cfg.Similarity.Enabled && cfg.Similarity.Backfill {
+		go runSimilarityBackfill(ctx, cfg, db, logger)
+	}
 	connectors := buildConnectors(cfg, db, logger)
 
 	// Create and start API server
@@ -121,9 +128,8 @@ func main() {
 	logger.Info().Msg("PhotoPrism Extractor is running")
 
 	// Wait for interrupt signal
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-	<-sigChan
+	<-ctx.Done()
+	stop()
 
 	logger.Info().Msg("Shutting down gracefully...")
 
@@ -146,6 +152,34 @@ func main() {
 	}
 
 	logger.Info().Msg("Shutdown complete")
+}
+
+func checkSimilaritySidecar(cfg *config.Config, logger zerolog.Logger) {
+	if !cfg.Similarity.Enabled || strings.TrimSpace(cfg.Similarity.SidecarURL) == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	health, err := similarity.NewClient(cfg.Similarity.SidecarURL).Health(ctx)
+	if err != nil {
+		logger.Warn().Err(err).Str("sidecar_url", cfg.Similarity.SidecarURL).Msg("Similarity sidecar health check failed")
+		return
+	}
+	logger.Info().Str("model", health.Model).Int("dim", health.Dim).Msg("Similarity sidecar health check passed")
+}
+
+func runSimilarityBackfill(ctx context.Context, cfg *config.Config, db *database.DB, logger zerolog.Logger) {
+	if strings.TrimSpace(cfg.Similarity.SidecarURL) == "" {
+		logger.Warn().Msg("Similarity backfill skipped because sidecar_url is empty")
+		return
+	}
+	_, err := similarity.Backfill(ctx, db, cfg.Storage, similarity.NewClient(cfg.Similarity.SidecarURL), similarity.Options{
+		Concurrency: similarity.MaxConcurrency,
+		Progress:    500,
+	}, logger.With().Str("component", "similarity-backfill").Logger())
+	if err != nil {
+		logger.Warn().Err(err).Msg("Similarity backfill stopped")
+	}
 }
 
 func buildConnectors(cfg *config.Config, db *database.DB, logger zerolog.Logger) []provider.Connector {

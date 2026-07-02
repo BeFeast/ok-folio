@@ -6,12 +6,18 @@ OK Folio registry images are released manually from GitHub Actions. The registry
 
 - Workflow: `.github/workflows/release-image.yml`
 - Trigger: `workflow_dispatch` only
-- Image repository: `${REGISTRY_URL}/ok-folio`
+- Image repositories: `${REGISTRY_URL}/ok-folio` and `${REGISTRY_URL}/ok-folio-embedder`
 - Tags pushed from each run:
   - `${GITHUB_SHA}` for the immutable deploy pin
   - `dev` for the latest development image
 
-The workflow builds the repository `Dockerfile` with Docker Buildx, loads the smoke image into the runner Docker daemon, runs the container locally, checks that `http://127.0.0.1:18080/health` reports `status: healthy` and `database: connected`, checks that `${GITHUB_SHA}` does not already exist in the registry, and only then tags and pushes the same image content as `${GITHUB_SHA}` and `dev`.
+The workflow builds the repository `Dockerfile` and the CPU-only embedder
+sidecar image with Docker Buildx. It loads the app smoke image into the runner
+Docker daemon, runs the container locally, checks that
+`http://127.0.0.1:18080/health` reports `status: healthy` and
+`database: connected`, checks that `${GITHUB_SHA}` does not already exist for
+either image in the registry, and only then tags and pushes both images as
+`${GITHUB_SHA}` and `dev`.
 
 The release image ships both `/app/extractor` and `/app/ok-folio-etl`. The
 workflow also runs `/app/ok-folio-etl print-legacy-checks --legacy-database
@@ -45,8 +51,8 @@ Credential inventory:
 1. Open the `Release image` workflow in GitHub Actions.
 2. Run it manually from the target branch or commit.
 3. Confirm the smoke step prints a healthy `/health` response before the login and push steps.
-4. Confirm the registry tag list contains the new commit SHA tag and the updated `dev` tag.
-5. Give the dedicated-stack change the immutable `${GITHUB_SHA}` tag. Do not deploy from `dev`.
+4. Confirm the registry tag list contains the new commit SHA tag and the updated `dev` tag for both image repositories.
+5. Give the dedicated-stack change the immutable `${GITHUB_SHA}` app and embedder tags. Do not deploy from `dev`.
 6. Use `docs/dedicated-dockhand-stack-runbook.md` for the Dockhand-only stack deploy contract. Do not deploy with manual `docker compose up`.
 
 ## Builder LXC Fallback

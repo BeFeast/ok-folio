@@ -166,6 +166,7 @@ type DownloadConfig struct {
 type SimilarityConfig struct {
 	Enabled    bool   `yaml:"enabled"`
 	SidecarURL string `yaml:"sidecar_url"`
+	Backfill   bool   `yaml:"backfill"`
 }
 
 // Load reads configuration from a YAML file
@@ -279,6 +280,13 @@ func Load(path string) (*Config, error) {
 	}
 	if similaritySidecarURL := os.Getenv("OK_FOLIO_SIMILARITY_SIDECAR_URL"); similaritySidecarURL != "" {
 		cfg.Similarity.SidecarURL = similaritySidecarURL
+	}
+	if similarityBackfill := os.Getenv("OK_FOLIO_SIMILARITY_BACKFILL"); similarityBackfill != "" {
+		enabled, err := strconv.ParseBool(similarityBackfill)
+		if err != nil {
+			return nil, fmt.Errorf("invalid OK_FOLIO_SIMILARITY_BACKFILL %q: %w", similarityBackfill, err)
+		}
+		cfg.Similarity.Backfill = enabled
 	}
 
 	cfg.Storage.applyDefaults()

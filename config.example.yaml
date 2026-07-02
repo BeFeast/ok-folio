@@ -29,6 +29,9 @@ similarity:
   # Reserved for the embedding sidecar introduced by the follow-up backfill work.
   # Also settable via OK_FOLIO_SIMILARITY_SIDECAR_URL.
   sidecar_url: ""
+  # Runs a resumable CPU embedding backfill from the app process.
+  # Also settable via OK_FOLIO_SIMILARITY_BACKFILL.
+  backfill: false
 
 database:
   # OK Folio owns its own dedicated Postgres. These DB_* settings must never
