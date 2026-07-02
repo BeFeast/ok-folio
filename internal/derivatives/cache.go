@@ -129,6 +129,34 @@ func (c *Cache) Read(entry Entry) ([]byte, bool) {
 	return data, true
 }
 
+func JPEGForEmbedding(ctx context.Context, cfg config.StorageConfig, photo *database.DownloadedPhoto, width int) ([]byte, Entry, error) {
+	if photo == nil {
+		return nil, Entry{}, fmt.Errorf("photo is required")
+	}
+	width = ClampWidth(width)
+	filePath := resolveOriginalPath(cfg, photo.FilePath)
+	if _, err := os.Stat(filePath); err != nil {
+		return nil, Entry{}, err
+	}
+	validator, err := Validator(photo, filePath)
+	if err != nil {
+		return nil, Entry{}, err
+	}
+	cache := NewCache(cfg)
+	entry := cache.Entry(photo, width, validator)
+	if data, ok := cache.Read(entry); ok {
+		return data, entry, nil
+	}
+	data, err := GenerateThumbnail(ctx, filePath, width)
+	if err != nil {
+		return nil, entry, err
+	}
+	if err := cache.Write(entry, data); err != nil {
+		return nil, entry, err
+	}
+	return data, entry, nil
+}
+
 func (c *Cache) Touch(entry Entry) {
 	if c == nil {
 		return

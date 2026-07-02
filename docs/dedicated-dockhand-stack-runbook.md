@@ -83,6 +83,7 @@ Complete rendered `.env` key set:
 ```dotenv
 OK_FOLIO_IMAGE_REGISTRY=<registry-host>
 OK_FOLIO_IMAGE_SHA=<immutable-commit-sha>
+OK_FOLIO_IMAGE_EMBEDDER_SHA=<immutable-commit-sha>
 OK_FOLIO_APP_PORT=<verified-free-app-port>
 OK_FOLIO_POSTGRES_PORT=<verified-free-postgres-port>
 OK_FOLIO_VALKEY_PORT=<verified-free-valkey-port>
@@ -116,6 +117,8 @@ PHOTOPRISM_STORAGE_HOST_PATH=<photoprism-storage-host-path>
 TELEGRAM_BOT_TOKEN=<telegram-bot-token>
 TELEGRAM_CHAT_ID=<telegram-chat-id>
 TELEGRAM_USERNAME=<telegram-username>
+OK_FOLIO_SIMILARITY_SIDECAR_URL=http://embedder:8081
+OK_FOLIO_SIMILARITY_BACKFILL=false
 REGISTRY_URL=<registry-host>
 REGISTRY_USERNAME=<push-scoped-ci-user>
 REGISTRY_PASSWORD=<push-scoped-ci-password>
@@ -145,9 +148,12 @@ and keeps `maxmemory` and eviction policy as host-budget placeholders until
 sizing is decided. Do not pass the Valkey password as a long-running process
 argument.
 
-The app image is always pinned as `ok-folio:<immutable-commit-sha>`. It joins
-the private stack network and the external legacy Docker network. The app talks
-to Postgres and Valkey by service name; published ports are for operations only.
+The app image is always pinned as `ok-folio:<immutable-commit-sha>`. The CLIP
+embedder sidecar is pinned separately as
+`ok-folio-embedder:<immutable-commit-sha>` and stays on the private stack
+network with no published ports. The app joins the private stack network and
+the external legacy Docker network. The app talks to Postgres, Valkey, and the
+embedder by service name; published ports are for operations only.
 
 All legacy mounts are kernel-enforced read-only:
 
@@ -207,8 +213,8 @@ Then deploy in this order:
 
 1. Create and verify ZFS/Valkey directories.
 2. Add and render secrets from Infisical.
-3. Build, smoke, and push the immutable `ok-folio:<sha>` image.
-4. Stage the stack directory and render `.env` with the pinned sha.
+3. Build, smoke, and push the immutable `ok-folio:<sha>` and `ok-folio-embedder:<sha>` images.
+4. Stage the stack directory and render `.env` with both pinned shas.
 5. Run the rendered legacy mount assertion.
 6. Deploy via the verified Dockhand route or authorized UI action.
 7. Verify service healthchecks are green.

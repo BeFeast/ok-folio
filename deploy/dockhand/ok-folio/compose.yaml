@@ -61,6 +61,12 @@ services:
     networks:
       - ok-folio-private
 
+  embedder:
+    image: ${OK_FOLIO_IMAGE_REGISTRY:?OK_FOLIO_IMAGE_REGISTRY is required}/ok-folio-embedder:${OK_FOLIO_IMAGE_EMBEDDER_SHA:?OK_FOLIO_IMAGE_EMBEDDER_SHA is required}
+    restart: unless-stopped
+    networks:
+      - ok-folio-private
+
   app:
     image: ${OK_FOLIO_IMAGE_REGISTRY:?OK_FOLIO_IMAGE_REGISTRY is required}/ok-folio:${OK_FOLIO_IMAGE_SHA:?OK_FOLIO_IMAGE_SHA is required}
     restart: unless-stopped
@@ -70,6 +76,8 @@ services:
         condition: service_healthy
       valkey:
         condition: service_healthy
+      embedder:
+        condition: service_started
     environment:
       DB_HOST: ${DB_HOST:-postgres}
       DB_PORT: ${DB_PORT:-5432}
@@ -89,6 +97,8 @@ services:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?TELEGRAM_BOT_TOKEN is required}
       TELEGRAM_USERNAME: ${TELEGRAM_USERNAME:?TELEGRAM_USERNAME is required}
       OK_FOLIO_DERIVATIVES_DIR: /derivatives
+      OK_FOLIO_SIMILARITY_SIDECAR_URL: ${OK_FOLIO_SIMILARITY_SIDECAR_URL:-http://embedder:8081}
+      OK_FOLIO_SIMILARITY_BACKFILL: ${OK_FOLIO_SIMILARITY_BACKFILL:-false}
     ports:
       - "${OK_FOLIO_APP_PORT:?OK_FOLIO_APP_PORT is required}:8080"
     volumes:

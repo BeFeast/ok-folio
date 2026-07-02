@@ -692,6 +692,7 @@ func TestLoad_SimilarityEnvironmentOverrides(t *testing.T) {
 
 	t.Setenv("OK_FOLIO_SIMILARITY_ENABLED", "true")
 	t.Setenv("OK_FOLIO_SIMILARITY_SIDECAR_URL", "http://similarity-sidecar:8080")
+	t.Setenv("OK_FOLIO_SIMILARITY_BACKFILL", "true")
 
 	cfg, err := Load(configPath)
 	if err != nil {
@@ -702,6 +703,9 @@ func TestLoad_SimilarityEnvironmentOverrides(t *testing.T) {
 	}
 	if cfg.Similarity.SidecarURL != "http://similarity-sidecar:8080" {
 		t.Fatalf("Expected similarity sidecar URL override, got %q", cfg.Similarity.SidecarURL)
+	}
+	if !cfg.Similarity.Backfill {
+		t.Fatalf("Expected similarity backfill override to enable backfill")
 	}
 }
 
@@ -715,6 +719,19 @@ func TestLoad_InvalidSimilarityEnabled(t *testing.T) {
 	t.Setenv("OK_FOLIO_SIMILARITY_ENABLED", "not-a-bool")
 	if _, err := Load(configPath); err == nil {
 		t.Fatal("Expected error for invalid OK_FOLIO_SIMILARITY_ENABLED, got nil")
+	}
+}
+
+func TestLoad_InvalidSimilarityBackfill(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte(completeConfig("")), 0644); err != nil {
+		t.Fatalf("Failed to write config: %v", err)
+	}
+
+	t.Setenv("OK_FOLIO_SIMILARITY_BACKFILL", "not-a-bool")
+	if _, err := Load(configPath); err == nil {
+		t.Fatal("Expected error for invalid OK_FOLIO_SIMILARITY_BACKFILL, got nil")
 	}
 }
 

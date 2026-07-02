@@ -387,6 +387,35 @@ func TestScheduleWarmThumbnailsOnIngestReturnsWhenWorkersFull(t *testing.T) {
 	}
 }
 
+func TestScheduleEmbedOnIngestReturnsWhenWorkersFull(t *testing.T) {
+	cfg := setupScraperTestConfig(t)
+	s := &Scraper{
+		cfg:            cfg,
+		logger:         zerolog.Nop(),
+		embedderClient: fakeEmbedClient{},
+		embedSem:       make(chan struct{}, 1),
+	}
+	s.embedSem <- struct{}{}
+
+	done := make(chan struct{})
+	go func() {
+		s.scheduleEmbedOnIngest(database.DownloadedPhoto{ID: 42})
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("scheduleEmbedOnIngest blocked when workers were full")
+	}
+}
+
+type fakeEmbedClient struct{}
+
+func (fakeEmbedClient) Embed(context.Context, []byte) ([]float32, error) {
+	return make([]float32, database.EmbeddingDim), nil
+}
+
 func setupScraperTestDB(t *testing.T) *database.DB {
 	t.Helper()
 

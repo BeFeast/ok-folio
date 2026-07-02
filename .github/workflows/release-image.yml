@@ -8,6 +8,7 @@ permissions:
 
 env:
   IMAGE_NAME: ok-folio
+  EMBEDDER_IMAGE_NAME: ok-folio-embedder
 
 jobs:
   build-smoke-push:
@@ -63,11 +64,13 @@ jobs:
             exit 1
           fi
           image="$registry/${IMAGE_NAME}"
+          embedder_image="$registry/${EMBEDDER_IMAGE_NAME}"
           sha_tag="${GITHUB_SHA}"
           smoke_tag="smoke-${GITHUB_SHA}"
           {
             echo "registry=$registry"
             echo "image=$image"
+            echo "embedder_image=$embedder_image"
             echo "sha_tag=$sha_tag"
             echo "smoke_tag=$smoke_tag"
           } >> "$GITHUB_OUTPUT"
@@ -79,6 +82,14 @@ jobs:
           file: ./Dockerfile
           load: true
           tags: ${{ steps.image.outputs.image }}:${{ steps.image.outputs.smoke_tag }}
+
+      - name: Build embedder smoke image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./sidecar/embedder/Dockerfile
+          load: true
+          tags: ${{ steps.image.outputs.embedder_image }}:${{ steps.image.outputs.smoke_tag }}
 
       - name: Smoke test image
         env:
@@ -186,42 +197,49 @@ jobs:
       - name: Refuse existing immutable tag
         env:
           IMAGE: ${{ steps.image.outputs.image }}
+          EMBEDDER_IMAGE: ${{ steps.image.outputs.embedder_image }}
           SHA_TAG: ${{ steps.image.outputs.sha_tag }}
         run: |
           set -euo pipefail
-          immutable_ref="$IMAGE:$SHA_TAG"
           inspect_log="$(mktemp)"
           cleanup() {
             rm -f "$inspect_log"
           }
           trap cleanup EXIT
 
-          if docker manifest inspect "$immutable_ref" >"$inspect_log" 2>&1; then
-            echo "Immutable image tag already exists: $immutable_ref" >&2
-            echo "Refusing to overwrite a commit tag. Use the existing tag or run from a new commit." >&2
+          for immutable_ref in "$IMAGE:$SHA_TAG" "$EMBEDDER_IMAGE:$SHA_TAG"; do
+            if docker manifest inspect "$immutable_ref" >"$inspect_log" 2>&1; then
+              echo "Immutable image tag already exists: $immutable_ref" >&2
+              echo "Refusing to overwrite a commit tag. Use the existing tag or run from a new commit." >&2
+              exit 1
+            fi
+
+            if grep -Eiq '(manifest unknown|manifest.*not found|no such manifest|not found|name unknown)' "$inspect_log"; then
+              echo "Immutable image tag is not present yet: $immutable_ref"
+              continue
+            fi
+
+            echo "Could not verify whether immutable image tag exists: $immutable_ref" >&2
+            cat "$inspect_log" >&2
             exit 1
-          fi
-
-          if grep -Eiq '(manifest unknown|manifest.*not found|no such manifest|not found|name unknown)' "$inspect_log"; then
-            echo "Immutable image tag is not present yet: $immutable_ref"
-            exit 0
-          fi
-
-          echo "Could not verify whether immutable image tag exists: $immutable_ref" >&2
-          cat "$inspect_log" >&2
-          exit 1
+          done
 
       - name: Push immutable and dev tags
         env:
           IMAGE: ${{ steps.image.outputs.image }}
+          EMBEDDER_IMAGE: ${{ steps.image.outputs.embedder_image }}
           SMOKE_TAG: ${{ steps.image.outputs.smoke_tag }}
           SHA_TAG: ${{ steps.image.outputs.sha_tag }}
         run: |
           set -euo pipefail
           docker tag "$IMAGE:$SMOKE_TAG" "$IMAGE:$SHA_TAG"
           docker tag "$IMAGE:$SMOKE_TAG" "$IMAGE:dev"
+          docker tag "$EMBEDDER_IMAGE:$SMOKE_TAG" "$EMBEDDER_IMAGE:$SHA_TAG"
+          docker tag "$EMBEDDER_IMAGE:$SMOKE_TAG" "$EMBEDDER_IMAGE:dev"
           docker push "$IMAGE:$SHA_TAG"
           docker push "$IMAGE:dev"
+          docker push "$EMBEDDER_IMAGE:$SHA_TAG"
+          docker push "$EMBEDDER_IMAGE:dev"
 
       - name: Log out of registry
         if: always()

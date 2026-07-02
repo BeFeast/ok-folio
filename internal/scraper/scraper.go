@@ -23,6 +23,7 @@ import (
 	"ok-folio/internal/photoprism"
 	"ok-folio/internal/provider"
 	"ok-folio/internal/provider/webgallery"
+	"ok-folio/internal/similarity"
 	"ok-folio/pkg/retry"
 
 	"github.com/rs/zerolog"
@@ -53,6 +54,8 @@ type Scraper struct {
 	photoprismClient *photoprism.Client
 	thumbHotCache    *okfcache.Client
 	thumbWarmSem     chan struct{}
+	embedderClient   similarity.Client
+	embedSem         chan struct{}
 }
 
 func New(cfg *config.Config, db *database.DB, logger zerolog.Logger) *Scraper {
@@ -75,6 +78,12 @@ func New(cfg *config.Config, db *database.DB, logger zerolog.Logger) *Scraper {
 		thumbHotCache = okfcache.New(context.Background(), cfg.Cache, logger.With().Str("component", "thumbnail-warmer-cache").Logger())
 		thumbWarmSem = make(chan struct{}, 2)
 	}
+	var embedClient similarity.Client
+	var embedSem chan struct{}
+	if cfg.Similarity.Enabled && strings.TrimSpace(cfg.Similarity.SidecarURL) != "" && db != nil && db.HasEmbeddingColumn() {
+		embedClient = similarity.NewClient(cfg.Similarity.SidecarURL)
+		embedSem = make(chan struct{}, 2)
+	}
 
 	return &Scraper{
 		cfg:              cfg,
@@ -93,8 +102,10 @@ func New(cfg *config.Config, db *database.DB, logger zerolog.Logger) *Scraper {
 				Multiplier:   cfg.Retry.Multiplier,
 			},
 		}, client, logger.With().Str("provider", webgallery.ProviderID).Logger()),
-		thumbHotCache: thumbHotCache,
-		thumbWarmSem:  thumbWarmSem,
+		thumbHotCache:  thumbHotCache,
+		thumbWarmSem:   thumbWarmSem,
+		embedderClient: embedClient,
+		embedSem:       embedSem,
 	}
 }
 
@@ -398,6 +409,27 @@ func publishedAtPtr(publishedAt time.Time) *time.Time {
 	return &publishedAt
 }
 
+func (s *Scraper) scheduleEmbedOnIngest(photo database.DownloadedPhoto) {
+	if s.embedderClient == nil || s.embedSem == nil {
+		return
+	}
+	select {
+	case s.embedSem <- struct{}{}:
+	default:
+		s.logger.Warn().Uint64("photo_id", photo.ID).Msg("Similarity embed-on-ingest skipped because workers are full")
+		return
+	}
+	go func() {
+		defer func() { <-s.embedSem }()
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		err := similarity.EmbedPhoto(ctx, s.db, s.cfg.Storage, s.embedderClient, &photo)
+		if err != nil {
+			s.logger.Warn().Err(err).Uint64("photo_id", photo.ID).Msg("Similarity embed-on-ingest skipped")
+		}
+	}()
+}
+
 func (s *Scraper) scheduleWarmThumbnailsOnIngest(photo database.DownloadedPhoto) {
 	if !s.cfg.Storage.WarmOnIngest || len(s.cfg.Storage.WarmOnIngestWidths) == 0 || s.thumbWarmSem == nil {
 		return
@@ -431,6 +463,7 @@ func (s *Scraper) scheduleWarmThumbnailsOnIngest(photo database.DownloadedPhoto)
 				Int("failed", result.Failed).
 				Msg("Thumbnail warm-on-ingest completed with warnings")
 		}
+		s.scheduleEmbedOnIngest(photo)
 	}()
 }
 
