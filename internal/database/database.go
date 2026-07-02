@@ -3,6 +3,7 @@ package database
 import (
 	"bytes"
 	"crypto/sha256"
+	"database/sql"
 	"database/sql/driver"
 	"encoding/json"
 	"errors"
@@ -522,6 +523,7 @@ func uniqueViolationConstraint(err error) string {
 
 type DB struct {
 	*gorm.DB
+	embeddingColumnPresent bool
 }
 
 // GalleryCatalogFilters narrows the OK Folio gallery catalog without
@@ -552,6 +554,11 @@ type GalleryFacetStats struct {
 type GalleryFavoriteStats struct {
 	Favorite bool  `json:"favorite"`
 	Count    int64 `json:"count"`
+}
+
+type GallerySimilarPhoto struct {
+	DownloadedPhoto `gorm:"embedded"`
+	Distance        float64 `gorm:"column:distance" json:"distance"`
 }
 
 // ConnectorSourceStats summarizes media state for a connector source.
@@ -626,7 +633,9 @@ func New(cfg *config.DatabaseConfig) (*DB, error) {
 		return nil, err
 	}
 
-	return &DB{db}, nil
+	handle := &DB{DB: db}
+	handle.RefreshEmbeddingColumnCapability()
+	return handle, nil
 }
 
 // Migrate runs AutoMigrate on the owned models and, on Postgres, the
@@ -642,6 +651,33 @@ func Migrate(db *gorm.DB) error {
 		}
 	}
 	return nil
+}
+
+func (db *DB) RefreshEmbeddingColumnCapability() bool {
+	db.embeddingColumnPresent = db.probeEmbeddingColumn()
+	return db.embeddingColumnPresent
+}
+
+func (db *DB) HasEmbeddingColumn() bool {
+	return db.embeddingColumnPresent
+}
+
+func (db *DB) probeEmbeddingColumn() bool {
+	if db == nil || db.DB == nil || db.Dialector.Name() != "postgres" {
+		return false
+	}
+	var present bool
+	if err := db.DB.Raw(`
+		SELECT EXISTS (
+			SELECT 1
+			FROM information_schema.columns
+			WHERE table_schema = current_schema()
+				AND table_name = 'downloaded_photos'
+				AND column_name = 'embedding'
+		)`).Scan(&present).Error; err != nil {
+		return false
+	}
+	return present
 }
 
 // postMigratePostgres applies Postgres-only schema steps that AutoMigrate does
@@ -2289,6 +2325,60 @@ func (db *DB) GetGalleryCatalog(limit int, offset int, filters GalleryCatalogFil
 	}
 
 	return photos, total, nil
+}
+
+func (db *DB) GetGallerySimilar(anchorID uint64, limit int) ([]GallerySimilarPhoto, error) {
+	if db.Dialector.Name() != "postgres" || !db.HasEmbeddingColumn() {
+		return nil, ErrPhotoNotFound
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 50 {
+		limit = 50
+	}
+
+	var anchor struct {
+		ID           uint64
+		HasEmbedding bool
+	}
+	row := db.DB.Raw(`
+		SELECT id, embedding IS NOT NULL AS has_embedding
+		FROM downloaded_photos
+		WHERE id = ? AND `+galleryVisiblePredicate+`
+	`, anchorID).Row()
+	if err := row.Scan(&anchor.ID, &anchor.HasEmbedding); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrPhotoNotFound
+		}
+		return nil, err
+	}
+	if !anchor.HasEmbedding {
+		return []GallerySimilarPhoto{}, nil
+	}
+
+	var photos []GallerySimilarPhoto
+	err := db.DB.Raw(`
+		WITH anchor AS (
+			SELECT id, content_hash, embedding
+			FROM downloaded_photos
+			WHERE id = ? AND `+galleryVisiblePredicate+`
+		)
+		SELECT dp.*, dp.embedding <=> anchor.embedding AS distance
+		FROM downloaded_photos dp
+		CROSS JOIN anchor
+		WHERE dp.status = 'downloaded'
+			AND dp.hidden_from_gallery = false
+			AND dp.embedding IS NOT NULL
+			AND dp.id != anchor.id
+			AND (anchor.content_hash IS NULL OR dp.content_hash IS DISTINCT FROM anchor.content_hash)
+		ORDER BY distance ASC
+		LIMIT ?
+	`, anchorID, limit).Scan(&photos).Error
+	if err != nil {
+		return nil, err
+	}
+	return photos, nil
 }
 
 // GetGallerySourceStats returns provider source facets for downloaded media.

@@ -171,6 +171,12 @@ download:
 	if len(cfg.Storage.WarmOnIngestWidths) != 2 || cfg.Storage.WarmOnIngestWidths[0] != 400 || cfg.Storage.WarmOnIngestWidths[1] != 700 {
 		t.Errorf("Expected WarmOnIngestWidths [400 700], got %v", cfg.Storage.WarmOnIngestWidths)
 	}
+	if cfg.Similarity.Enabled {
+		t.Errorf("Expected Similarity.Enabled default to be false")
+	}
+	if cfg.Similarity.SidecarURL != "" {
+		t.Errorf("Expected Similarity.SidecarURL default to be empty, got %q", cfg.Similarity.SidecarURL)
+	}
 
 	// Test database config
 	if cfg.Database.Host != "localhost" {
@@ -674,6 +680,41 @@ func TestLoad_InvalidDerivativesMaxBytes(t *testing.T) {
 	t.Setenv("OK_FOLIO_DERIVATIVES_MAX_BYTES", "not-a-number")
 	if _, err := Load(configPath); err == nil {
 		t.Fatal("Expected error for invalid OK_FOLIO_DERIVATIVES_MAX_BYTES, got nil")
+	}
+}
+
+func TestLoad_SimilarityEnvironmentOverrides(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte(completeConfig("")), 0644); err != nil {
+		t.Fatalf("Failed to write config: %v", err)
+	}
+
+	t.Setenv("OK_FOLIO_SIMILARITY_ENABLED", "true")
+	t.Setenv("OK_FOLIO_SIMILARITY_SIDECAR_URL", "http://similarity-sidecar:8080")
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Failed to load config: %v", err)
+	}
+	if !cfg.Similarity.Enabled {
+		t.Fatalf("Expected similarity env override to enable similarity")
+	}
+	if cfg.Similarity.SidecarURL != "http://similarity-sidecar:8080" {
+		t.Fatalf("Expected similarity sidecar URL override, got %q", cfg.Similarity.SidecarURL)
+	}
+}
+
+func TestLoad_InvalidSimilarityEnabled(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte(completeConfig("")), 0644); err != nil {
+		t.Fatalf("Failed to write config: %v", err)
+	}
+
+	t.Setenv("OK_FOLIO_SIMILARITY_ENABLED", "not-a-bool")
+	if _, err := Load(configPath); err == nil {
+		t.Fatal("Expected error for invalid OK_FOLIO_SIMILARITY_ENABLED, got nil")
 	}
 }
 

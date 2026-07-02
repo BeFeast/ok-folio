@@ -188,6 +188,7 @@ func (s *Server) setupRoutes() {
 		// Gallery architecture prototype
 		r.Post("/catalog/bulk-edit", s.handleBulkEditCatalog)
 		r.Get("/gallery/catalog", s.handleGalleryCatalog)
+		r.Get("/gallery/{id}/similar", s.handleGallerySimilar)
 		r.Get("/gallery/decision", s.handleGalleryDecision)
 		r.Get("/inbox", s.handleInbox)
 		r.Get("/inbox/counts", s.handleInboxCounts)
