@@ -76,7 +76,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Build smoke image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ./Dockerfile
@@ -84,7 +84,7 @@ jobs:
           tags: ${{ steps.image.outputs.image }}:${{ steps.image.outputs.smoke_tag }}
 
       - name: Build embedder smoke image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ./sidecar/embedder/Dockerfile
