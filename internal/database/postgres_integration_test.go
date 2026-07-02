@@ -180,16 +180,16 @@ func TestPostgresGallerySimilarUsesVectorDistanceAndVisibility(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetGallerySimilar failed: %v", err)
 	}
-	if len(pieces) != 2 {
-		t.Fatalf("expected only two visible non-duplicate embedded rows, got %#v", similarIDs(pieces))
+	if len(pieces) != 3 {
+		t.Fatalf("expected three visible embedded rows, got %#v", similarIDs(pieces))
 	}
-	if pieces[0].ID != nearID || pieces[1].ID != farID {
-		t.Fatalf("expected cosine-distance order near, far; got ids %v", similarIDs(pieces))
+	if pieces[0].ID != nullHashDupeID || pieces[1].ID != nearID || pieces[2].ID != farID {
+		t.Fatalf("expected cosine-distance order null-hash candidate, near, far; got ids %v", similarIDs(pieces))
 	}
 	if pieces[0].Distance > pieces[1].Distance {
 		t.Fatalf("expected first distance <= second distance, got %f > %f", pieces[0].Distance, pieces[1].Distance)
 	}
-	for _, excluded := range []uint64{anchorID, hiddenID, failedID, nullHashDupeID, noEmbeddingID} {
+	for _, excluded := range []uint64{anchorID, hiddenID, failedID, noEmbeddingID} {
 		if similarContains(pieces, excluded) {
 			t.Fatalf("did not expect excluded id %d in similar results %v", excluded, similarIDs(pieces))
 		}

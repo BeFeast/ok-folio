@@ -2371,7 +2371,7 @@ func (db *DB) GetGallerySimilar(anchorID uint64, limit int) ([]GallerySimilarPho
 			AND dp.hidden_from_gallery = false
 			AND dp.embedding IS NOT NULL
 			AND dp.id != anchor.id
-			AND dp.content_hash IS DISTINCT FROM anchor.content_hash
+			AND (anchor.content_hash IS NULL OR dp.content_hash IS DISTINCT FROM anchor.content_hash)
 		ORDER BY distance ASC
 		LIMIT ?
 	`, anchorID, limit).Scan(&photos).Error
