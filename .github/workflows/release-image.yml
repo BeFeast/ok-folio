@@ -243,7 +243,7 @@ jobs:
           ' "$response_log" >/dev/null
 
       - name: Log in to registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ steps.image.outputs.registry }}
           username: ${{ secrets.REGISTRY_USERNAME }}
