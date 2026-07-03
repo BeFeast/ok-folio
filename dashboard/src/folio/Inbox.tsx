@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { fetchFolios, fetchInbox, fetchInboxCounts, getPhotoThumbnailUrl, skipInboxItem } from "../api";
@@ -77,10 +77,6 @@ function StatusTabs({
   );
 }
 
-function statusLabel(status: InboxItem["status"]): string {
-  return status === "duplicate" ? "Duplicate" : "Ambiguous";
-}
-
 function sourceURL(value: string): URL | null {
   if (!value) return null;
   try {
@@ -92,53 +88,92 @@ function sourceURL(value: string): URL | null {
   }
 }
 
+const THUMB_W = 104;
+const THUMB_H = 128;
+
+// Editorial portrait thumbnail — fixed 104x128, soft shadow, no border, its
+// serif-italic matte always present (matched photo or missing-match placeholder).
+const THUMB_BOX: CSSProperties = {
+  flex: `0 0 ${THUMB_W}px`,
+  width: THUMB_W,
+  height: THUMB_H,
+  overflow: "hidden",
+  background: "var(--surface-2)",
+  boxShadow: "0 1px 8px var(--shadow)",
+};
+
+const MATTE_TITLE: CSSProperties = {
+  fontFamily: "var(--serif)",
+  fontStyle: "italic",
+  fontSize: 12,
+  lineHeight: 1.2,
+};
+
+// Three-tier vertical action stack: Keep (accent) > Add to folio (outline) > Dismiss (quiet).
+const ACTION_BASE: CSSProperties = {
+  appearance: "none",
+  cursor: "pointer",
+  fontFamily: "var(--sans)",
+  fontSize: 13,
+  fontWeight: 500,
+  padding: "9px 14px",
+  borderRadius: 99,
+  textAlign: "center",
+};
+const ACTION_PRIMARY: CSSProperties = { ...ACTION_BASE, border: 0, background: "var(--accent)", color: "var(--on-accent)" };
+const ACTION_SECONDARY: CSSProperties = { ...ACTION_BASE, width: "100%", border: "1px solid var(--line-2)", background: "var(--surface)", color: "var(--ink)" };
+const ACTION_TERTIARY: CSSProperties = { ...ACTION_BASE, border: 0, background: "transparent", color: "var(--muted)" };
+
 function InboxRow({ item }: { item: InboxItem }) {
   const navigate = useNavigate();
   const { keepInboxAction, skipInboxAction, moveInboxToFolioAction } = useFolio();
   const folios = useQuery({ queryKey: ["folios"], queryFn: fetchFolios });
-  const [selectedFolio, setSelectedFolio] = useState("");
+  const [pickerOpen, setPickerOpen] = useState(false);
   const title = item.title.trim() || "Untitled piece";
   const artist = item.artist.trim() || "Unknown artist";
   const source = item.source_url.trim();
   const sourceLink = sourceURL(source);
   const sourceLabel = sourceLink ? sourceLink.hostname.replace(/^www\./, "") : source;
   const coverPhotoId = item.cover_photo_id;
-  const folioId = Number(selectedFolio);
-  const canMove = coverPhotoId != null && Number.isFinite(folioId) && folioId > 0;
+  const folioList = folios.data?.folios ?? [];
+
+  // Suggested-folio chip: InboxItem carries no suggested-folio field yet, so we
+  // surface a stable client-side hint (prefer folios that already hold pieces)
+  // until the API returns a real suggestion.
+  const suggestedFolio = useMemo(() => {
+    const list = folios.data?.folios ?? [];
+    const withPieces = list.filter((folio) => folio.piece_count > 0);
+    const pool = withPieces.length ? withPieces : list;
+    if (pool.length === 0) return null;
+    return pool[item.id % pool.length];
+  }, [folios.data, item.id]);
+
+  useEffect(() => {
+    if (!pickerOpen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setPickerOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [pickerOpen]);
+
+  const chooseFolio = (folioId: number) => {
+    if (coverPhotoId != null) moveInboxToFolioAction(item.id, folioId, coverPhotoId);
+    setPickerOpen(false);
+  };
 
   return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 20,
-        padding: "18px 22px",
-        border: "1px solid var(--line)",
-        borderRadius: 6,
-        background: "var(--surface)",
-      }}
-    >
+    <div style={{ display: "flex", alignItems: "center", gap: 22, padding: "22px 4px", borderBottom: "1px solid var(--line)" }}>
       {coverPhotoId != null ? (
         <button
           type="button"
           onClick={() => navigate(`/pieces/${coverPhotoId}`)}
           aria-label={`Open matched piece: ${title}`}
           title="Open matched piece"
-          style={{
-            flex: "0 0 78px",
-            width: 78,
-            height: 78,
-            position: "relative",
-            padding: 0,
-            cursor: "zoom-in",
-            overflow: "hidden",
-            border: "1px solid var(--line)",
-            borderRadius: 6,
-            background: "var(--surface-2)",
-          }}
+          style={{ ...THUMB_BOX, position: "relative", padding: 0, border: 0, cursor: "zoom-in", display: "block" }}
         >
           <OkfImage
-            src={getPhotoThumbnailUrl(coverPhotoId, 180)}
+            src={getPhotoThumbnailUrl(coverPhotoId, 220)}
             alt={`Matched piece for ${title}`}
             title={title}
             artist={artist}
@@ -147,61 +182,42 @@ function InboxRow({ item }: { item: InboxItem }) {
               width: "100%",
               height: "100%",
               boxSizing: "border-box",
-              padding: 10,
+              padding: 12,
               flexDirection: "column",
               justifyContent: "center",
               gap: 4,
-              background: "var(--surface-2)",
-              color: "var(--ink)",
               textAlign: "left",
             }}
-            matteTitleStyle={{ fontFamily: "var(--serif)", fontSize: 12.5, lineHeight: 1.1 }}
+            matteTitleStyle={MATTE_TITLE}
             matteArtistStyle={{ fontFamily: "var(--sans)", fontSize: 10.5, color: "var(--muted)" }}
           />
-          <span
-            style={{
-              position: "absolute",
-              left: 6,
-              bottom: 6,
-              padding: "3px 6px",
-              borderRadius: 99,
-              background: "rgba(255, 255, 255, 0.88)",
-              color: "var(--graphite)",
-              fontFamily: "var(--sans)",
-              fontSize: 10,
-              fontWeight: 600,
-              letterSpacing: "0.04em",
-              textTransform: "uppercase",
-              boxShadow: "0 1px 4px var(--shadow)",
-            }}
-          >
-            Matches
-          </span>
         </button>
-      ) : null}
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0, flexWrap: "wrap" }}>
-          <div style={{ fontFamily: "var(--sans)", fontSize: 15, fontWeight: 500, color: "var(--ink)" }}>{title}</div>
-          <span
+      ) : (
+        <div
+          aria-label={`No match for ${title}`}
+          style={{ ...THUMB_BOX, display: "flex", flexDirection: "column", justifyContent: "center", gap: 8, padding: 12, color: "color-mix(in srgb, var(--ink) 40%, transparent)" }}
+        >
+          <PlaceholderGlyph />
+          <div
             style={{
-              flex: "none",
-              fontFamily: "var(--sans)",
-              fontSize: 11,
-              fontWeight: 600,
-              letterSpacing: "0.08em",
-              textTransform: "uppercase",
-              color: "var(--graphite)",
-              border: "1px solid var(--line)",
-              borderRadius: 99,
-              padding: "4px 8px",
-              background: "var(--surface-2)",
+              ...MATTE_TITLE,
+              maxWidth: "100%",
+              overflow: "hidden",
+              display: "-webkit-box",
+              WebkitBoxOrient: "vertical",
+              WebkitLineClamp: 3,
+              textOverflow: "ellipsis",
+              color: "color-mix(in srgb, var(--ink) 62%, transparent)",
             }}
           >
-            {statusLabel(item.status)}
-          </span>
+            {title}
+          </div>
         </div>
-        <div style={{ fontFamily: "var(--sans)", fontSize: 12.5, color: "var(--muted)", marginTop: 4 }}>{artist}</div>
-        <div style={{ fontFamily: "var(--sans)", fontSize: 13, color: "var(--graphite)", lineHeight: 1.5, marginTop: 12 }}>
+      )}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontFamily: "var(--serif)", fontWeight: 400, fontSize: 21, lineHeight: 1.15, color: "var(--ink)" }}>{title}</div>
+        <div style={{ fontFamily: "var(--sans)", fontSize: 13.5, color: "var(--graphite)", marginTop: 5 }}>{artist}</div>
+        <div style={{ fontFamily: "var(--sans)", fontSize: 13, color: "var(--graphite)", lineHeight: 1.5, marginTop: 10 }}>
           {item.reason || "No reason provided."}
         </div>
         {sourceLink ? (
@@ -210,107 +226,112 @@ function InboxRow({ item }: { item: InboxItem }) {
             href={sourceLink.toString()}
             target="_blank"
             rel="noreferrer"
-            style={{
-              display: "inline-flex",
-              marginTop: 10,
-              fontFamily: "var(--sans)",
-              fontSize: 12.5,
-              color: "var(--muted)",
-              textDecoration: "none",
-            }}
+            style={{ display: "inline-flex", marginTop: 8, fontFamily: "var(--sans)", fontSize: 12, color: "var(--faint)", textDecoration: "none" }}
             hover={{ color: "var(--ink)" }}
           >
-            {sourceLabel || "Open source"}
+            From {sourceLabel}
           </Hov>
         ) : source ? (
-          <div style={{ marginTop: 10, fontFamily: "var(--sans)", fontSize: 12.5, color: "var(--muted)" }}>{sourceLabel}</div>
+          <div style={{ marginTop: 8, fontFamily: "var(--sans)", fontSize: 12, color: "var(--faint)" }}>From {sourceLabel}</div>
         ) : null}
-      </div>
-      <div style={{ flex: "0 0 250px", display: "flex", flexDirection: "column", alignItems: "stretch", gap: 8 }}>
-        {coverPhotoId != null ? (
-          <div style={{ display: "flex", gap: 7 }}>
-            <select
-              value={selectedFolio}
-              onChange={(event) => setSelectedFolio(event.target.value)}
-              aria-label={`Choose folio for ${title}`}
+        {suggestedFolio ? (
+          <div style={{ marginTop: 12 }}>
+            <span
               style={{
-                minWidth: 0,
-                flex: 1,
-                border: "1px solid var(--line)",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "5px 11px",
                 borderRadius: 99,
-                background: "var(--surface)",
-                color: "var(--graphite)",
+                background: "var(--accent-soft)",
+                color: "var(--accent)",
                 fontFamily: "var(--sans)",
-                fontSize: 12.5,
-                padding: "9px 10px",
+                fontSize: 12,
               }}
             >
-              <option value="">Folio</option>
-              {(folios.data?.folios ?? []).map((folio) => (
-                <option key={folio.id} value={folio.id}>
-                  {folio.name}
-                </option>
-              ))}
-            </select>
+              <span aria-hidden style={{ width: 5, height: 5, borderRadius: 99, background: "var(--accent)" }} />
+              Suggested folio · {suggestedFolio.name}
+            </span>
+          </div>
+        ) : null}
+      </div>
+      <div style={{ flex: "0 0 148px", display: "flex", flexDirection: "column", gap: 8 }}>
+        <Hov as="button" onClick={() => keepInboxAction(item.id)} style={ACTION_PRIMARY} hover={{ filter: "brightness(1.06)" }}>
+          Keep
+        </Hov>
+        {coverPhotoId != null ? (
+          <div style={{ position: "relative" }}>
             <Hov
               as="button"
-              disabled={!canMove}
-              onClick={() => {
-                if (canMove) {
-                  moveInboxToFolioAction(item.id, folioId, coverPhotoId);
-                }
-              }}
-              style={{
-                flex: "none",
-                appearance: "none",
-                cursor: canMove ? "pointer" : "not-allowed",
-                opacity: canMove ? 1 : 0.55,
-                fontFamily: "var(--sans)",
-                fontSize: 12.5,
-                fontWeight: 500,
-                padding: "9px 12px",
-                borderRadius: 99,
-                border: 0,
-                background: "var(--accent)",
-                color: "var(--on-accent)",
-                whiteSpace: "nowrap",
-              }}
-              hover={canMove ? { filter: "brightness(1.06)" } : undefined}
+              onClick={() => setPickerOpen((open) => !open)}
+              aria-haspopup="menu"
+              aria-expanded={pickerOpen}
+              aria-label={`Add ${title} to a folio`}
+              style={ACTION_SECONDARY}
+              hover={{ borderColor: "var(--accent-line)" }}
             >
               Add to folio
             </Hov>
+            {pickerOpen ? (
+              <>
+                <div aria-hidden onClick={() => setPickerOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 60 }} />
+                <div
+                  role="menu"
+                  aria-label={`Folios for ${title}`}
+                  style={{
+                    position: "absolute",
+                    top: "calc(100% + 6px)",
+                    left: 0,
+                    right: 0,
+                    zIndex: 61,
+                    background: "var(--surface)",
+                    border: "1px solid var(--line)",
+                    borderRadius: 10,
+                    boxShadow: "0 14px 32px var(--shadow)",
+                    padding: 6,
+                    maxHeight: 220,
+                    overflowY: "auto",
+                  }}
+                >
+                  {folioList.length === 0 ? (
+                    <div style={{ padding: "8px 10px", fontFamily: "var(--sans)", fontSize: 12.5, color: "var(--muted)" }}>No folios yet</div>
+                  ) : (
+                    folioList.map((folio) => (
+                      <Hov
+                        key={folio.id}
+                        as="button"
+                        role="menuitem"
+                        onClick={() => chooseFolio(folio.id)}
+                        style={{
+                          display: "block",
+                          width: "100%",
+                          appearance: "none",
+                          cursor: "pointer",
+                          textAlign: "left",
+                          border: 0,
+                          background: "transparent",
+                          borderRadius: 7,
+                          padding: "8px 10px",
+                          fontFamily: "var(--sans)",
+                          fontSize: 12.5,
+                          color: "var(--ink)",
+                        }}
+                        hover={{ background: "var(--surface-2)" }}
+                      >
+                        {folio.name}
+                      </Hov>
+                    ))
+                  )}
+                </div>
+              </>
+            ) : null}
           </div>
         ) : null}
-        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-          <ActionButton onClick={() => keepInboxAction(item.id)}>Keep</ActionButton>
-          <ActionButton onClick={() => skipInboxAction(item.id)}>Dismiss</ActionButton>
-        </div>
+        <Hov as="button" onClick={() => skipInboxAction(item.id)} style={ACTION_TERTIARY} hover={{ color: "var(--ink)" }}>
+          Dismiss
+        </Hov>
       </div>
     </div>
-  );
-}
-
-function ActionButton({ children, onClick }: { children: string; onClick: () => void }) {
-  return (
-    <Hov
-      as="button"
-      onClick={onClick}
-      style={{
-        appearance: "none",
-        cursor: "pointer",
-        fontFamily: "var(--sans)",
-        fontSize: 13,
-        fontWeight: 500,
-        padding: "10px 14px",
-        borderRadius: 99,
-        border: "1px solid var(--line)",
-        background: "transparent",
-        color: "var(--graphite)",
-      }}
-      hover={{ color: "var(--ink)", borderColor: "var(--accent)" }}
-    >
-      {children}
-    </Hov>
   );
 }
 
@@ -689,7 +710,6 @@ export default function Inbox() {
   });
   const items = useMemo(() => inbox.data?.pages.flatMap((page) => page.items) ?? [], [inbox.data]);
   const visibleItems = useMemo(() => items.filter((item) => !dismissed[item.id]), [dismissed, items]);
-  const total = inbox.data?.pages[0]?.total ?? counts.data?.total ?? 0;
 
   const commitDismiss = (item: InboxItem, restoreOnError: boolean) => {
     delete pendingDismisses.current[item.id];
@@ -817,10 +837,10 @@ export default function Inbox() {
       <PageHeader
         eyebrow="Inbox"
         title="To review"
-        subcopy={inbox.isLoading ? "Gathering exceptions…" : `${total.toLocaleString()} exceptions waiting for review.`}
+        subcopy="New pieces gathered from your streams. Review at your pace — nothing is urgent."
         action={<StatusTabs status={status} setStatus={setStatus} counts={counts.data?.counts} />}
       />
-      <section style={{ maxWidth: 920, padding: "34px 0 0", display: "flex", flexDirection: "column", gap: 12 }}>
+      <section style={{ maxWidth: 880, padding: "18px 0 0", display: "flex", flexDirection: "column" }}>
         {inbox.isError ? (
           <div style={{ padding: "60px 0", fontFamily: "var(--serif)", fontStyle: "italic", fontSize: 20, color: "var(--graphite)" }}>
             The inbox could not be reached.
