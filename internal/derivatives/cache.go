@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"image"
 	"image/jpeg"
@@ -36,6 +37,11 @@ const (
 )
 
 var pruneDebounce = defaultPruneDebounce
+
+// ErrUndecodable marks originals whose image data cannot be decoded. Unlike a
+// missing file or an unreachable sidecar, this failure is permanent for the
+// stored content, so callers may skip the photo instead of retrying forever.
+var ErrUndecodable = errors.New("undecodable image data")
 
 type Cache struct {
 	dir            string
@@ -360,7 +366,7 @@ func GenerateThumbnail(ctx context.Context, filePath string, size int) ([]byte, 
 
 	img, _, err := image.Decode(imgFile)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", ErrUndecodable, err)
 	}
 
 	thumbnail := imaging.Fit(img, size, size, imaging.Lanczos)

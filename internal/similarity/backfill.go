@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -34,11 +35,12 @@ type Options struct {
 }
 
 type Result struct {
-	Scanned  int64
-	Embedded int64
-	Skipped  int64
-	Missing  int64
-	Failed   int64
+	Scanned   int64
+	Embedded  int64
+	Skipped   int64
+	Missing   int64
+	Permanent int64
+	Failed    int64
 }
 
 type job struct {
@@ -98,16 +100,25 @@ func Backfill(ctx context.Context, db *database.DB, storage config.StorageConfig
 	if err != nil {
 		return out, err
 	}
+	// Permanent decode failures repeat on every sweep, so only transient
+	// failures (sidecar, DB, context) block index creation.
 	if out.Failed == 0 {
 		if err := db.CreateEmbeddingHNSWIndex(); err != nil {
 			return out, err
 		}
+	}
+	if ids := result.permanentIDsSnapshot(); len(ids) > 0 {
+		logger.Warn().
+			Uints64("photo_ids", ids).
+			Int("count", len(ids)).
+			Msg("Similarity backfill skipped photos with permanently undecodable originals")
 	}
 	logger.Info().
 		Int64("scanned", out.Scanned).
 		Int64("embedded", out.Embedded).
 		Int64("skipped", out.Skipped).
 		Int64("missing", out.Missing).
+		Int64("permanent", out.Permanent).
 		Int64("failed", out.Failed).
 		Msg("Similarity embedding backfill completed")
 	return out, nil
@@ -149,6 +160,11 @@ func processOne(ctx context.Context, db *database.DB, storage config.StorageConf
 		if errors.Is(err, os.ErrNotExist) {
 			result.addMissing()
 			logger.Warn().Err(err).Uint64("photo_id", photo.ID).Str("file_path", photo.FilePath).Msg("Original file missing; skipping embedding")
+			return
+		}
+		if errors.Is(err, derivatives.ErrUndecodable) {
+			result.addPermanent(photo.ID)
+			logger.Warn().Err(err).Uint64("photo_id", photo.ID).Str("file_path", photo.FilePath).Msg("Original image is undecodable; skipping embedding permanently")
 			return
 		}
 		result.addFailed()
@@ -212,6 +228,7 @@ func enqueue(ctx context.Context, db *database.DB, batchSize int, limit int, pro
 					Int64("embedded", out.Embedded).
 					Int64("skipped", out.Skipped).
 					Int64("missing", out.Missing).
+					Int64("permanent", out.Permanent).
 					Int64("failed", out.Failed).
 					Dur("elapsed", time.Since(started)).
 					Msg("Similarity embedding backfill progress")
@@ -221,11 +238,15 @@ func enqueue(ctx context.Context, db *database.DB, batchSize int, limit int, pro
 }
 
 type atomicResult struct {
-	scanned  atomic.Int64
-	embedded atomic.Int64
-	skipped  atomic.Int64
-	missing  atomic.Int64
-	failed   atomic.Int64
+	scanned   atomic.Int64
+	embedded  atomic.Int64
+	skipped   atomic.Int64
+	missing   atomic.Int64
+	permanent atomic.Int64
+	failed    atomic.Int64
+
+	permanentMu  sync.Mutex
+	permanentIDs []uint64
 }
 
 func (r *atomicResult) addScanned() int64 { return r.scanned.Add(1) }
@@ -233,12 +254,28 @@ func (r *atomicResult) addEmbedded()      { r.embedded.Add(1) }
 func (r *atomicResult) addMissing()       { r.missing.Add(1) }
 func (r *atomicResult) addFailed()        { r.failed.Add(1) }
 
+func (r *atomicResult) addPermanent(photoID uint64) {
+	r.permanent.Add(1)
+	r.permanentMu.Lock()
+	r.permanentIDs = append(r.permanentIDs, photoID)
+	r.permanentMu.Unlock()
+}
+
+func (r *atomicResult) permanentIDsSnapshot() []uint64 {
+	r.permanentMu.Lock()
+	ids := append([]uint64(nil), r.permanentIDs...)
+	r.permanentMu.Unlock()
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	return ids
+}
+
 func (r *atomicResult) snapshot() Result {
 	return Result{
-		Scanned:  r.scanned.Load(),
-		Embedded: r.embedded.Load(),
-		Skipped:  r.skipped.Load(),
-		Missing:  r.missing.Load(),
-		Failed:   r.failed.Load(),
+		Scanned:   r.scanned.Load(),
+		Embedded:  r.embedded.Load(),
+		Skipped:   r.skipped.Load(),
+		Missing:   r.missing.Load(),
+		Permanent: r.permanent.Load(),
+		Failed:    r.failed.Load(),
 	}
 }
