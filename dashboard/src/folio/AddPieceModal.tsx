@@ -371,11 +371,12 @@ export default function AddPieceModal() {
         alignItems: "center",
         justifyContent: "center",
         padding: 34,
+        animation: "okf-fade .2s ease",
       }}
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        style={{ width: "min(780px, 95vw)", maxHeight: "90vh", overflow: "auto", background: "var(--surface)", boxShadow: "0 50px 130px rgba(0,0,0,0.5)" }}
+        style={{ width: "min(780px, 95vw)", maxHeight: "90vh", overflow: "auto", background: "var(--surface)", boxShadow: "0 50px 130px rgba(0,0,0,0.5)", animation: "okf-rise .3s cubic-bezier(0.22,1,0.36,1)" }}
       >
         <div style={{ padding: "26px 32px", borderBottom: "1px solid var(--line)", display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
           <div>
