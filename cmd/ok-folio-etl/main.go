@@ -32,6 +32,8 @@ func main() {
 		smokeReadPaths(os.Args[2:])
 	case "warm-thumbnails":
 		warmThumbnails(os.Args[2:])
+	case "audit-originals":
+		auditOriginals(os.Args[2:])
 	case "print-legacy-checks":
 		printLegacyChecks(os.Args[2:])
 	default:
@@ -177,8 +179,59 @@ func warmThumbnails(args []string) {
 	}
 }
 
+func auditOriginals(args []string) {
+	fs := flag.NewFlagSet("audit-originals", flag.ExitOnError)
+	configPath := fs.String("config", "/config/config.yaml", "Path to OK Folio configuration")
+	exclude := fs.Bool("exclude", false, "Mark undecodable originals status='failed' so gallery, warm, and backfill sweeps skip them")
+	batchSize := fs.Int("batch-size", 500, "Catalog rows fetched per database batch")
+	limit := fs.Int("limit", 0, "Maximum catalog rows to scan; 0 scans all downloaded rows")
+	progress := fs.Int("progress", 1000, "Log progress every N scanned rows")
+	if err := fs.Parse(args); err != nil {
+		exitErr(err)
+	}
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		exitErr(err)
+	}
+	db, err := database.New(&cfg.Database)
+	if err != nil {
+		exitErr(err)
+	}
+	logger := zerolog.New(os.Stderr).With().Timestamp().Logger()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	result, err := derivatives.AuditOriginals(ctx, db, cfg.Storage, derivatives.AuditOptions{
+		BatchSize: *batchSize,
+		Limit:     *limit,
+		Progress:  *progress,
+		Exclude:   *exclude,
+	}, logger)
+	if err != nil {
+		exitErr(err)
+	}
+	for _, finding := range result.Findings {
+		fmt.Printf("id=%d path=%q size=%d mime=%q first_bytes=%s class=%s excluded=%t decode_error=%q\n",
+			finding.PhotoID,
+			finding.FilePath,
+			finding.FileSize,
+			finding.SniffedMIME,
+			finding.FirstBytes,
+			finding.Class,
+			finding.Excluded,
+			finding.DecodeError,
+		)
+	}
+	fmt.Printf("audit_originals scanned=%d decodable=%d missing=%d undecodable=%d excluded=%d\n",
+		result.Scanned,
+		result.Decodable,
+		result.Missing,
+		result.Undecodable,
+		result.Excluded,
+	)
+}
+
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: ok-folio-etl <load-dump|hash-content|smoke-read-paths|warm-thumbnails|print-legacy-checks> [flags]")
+	fmt.Fprintln(os.Stderr, "usage: ok-folio-etl <load-dump|hash-content|smoke-read-paths|warm-thumbnails|audit-originals|print-legacy-checks> [flags]")
 }
 
 func parseWidths(value string) ([]int, error) {
