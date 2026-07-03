@@ -1,7 +1,12 @@
 package derivatives
 
 import (
+	"bytes"
 	"context"
+	"image"
+	"image/gif"
+	"image/png"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +14,7 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
+	"golang.org/x/image/bmp"
 
 	"ok-folio/internal/config"
 	"ok-folio/internal/database"
@@ -19,6 +25,13 @@ func TestAuditOriginalsClassifiesAndExcludes(t *testing.T) {
 	storage := warmStorage(t)
 
 	valid := createWarmPhoto(t, db, storage, "valid.jpg")
+	// Formats the product accepts must audit as decodable, or exclude mode
+	// would fail valid pieces out of the gallery and backfill.
+	validPNG := createAuditPhoto(t, db, storage, "valid.png", encodedImage(t, png.Encode))
+	validGIF := createAuditPhoto(t, db, storage, "valid.gif", encodedImage(t, func(w io.Writer, m image.Image) error {
+		return gif.Encode(w, m, nil)
+	}))
+	validBMP := createAuditPhoto(t, db, storage, "valid.bmp", encodedImage(t, bmp.Encode))
 	html := createAuditPhoto(t, db, storage, "html.jpg", []byte("<!DOCTYPE html><html><head><title>502</title></head><body>Bad Gateway</body></html>"))
 	truncated := createAuditPhoto(t, db, storage, "truncated.jpg", truncatedJPEG(t))
 	avif := createAuditPhoto(t, db, storage, "avif.jpg", append([]byte{0, 0, 0, 0x20}, []byte("ftypavif\x00\x00\x00\x00avifmif1miaf")...))
@@ -32,7 +45,7 @@ func TestAuditOriginalsClassifiesAndExcludes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AuditOriginals failed: %v", err)
 	}
-	if result.Scanned != 6 || result.Decodable != 1 || result.Missing != 1 || result.Undecodable != 4 || result.Excluded != 0 {
+	if result.Scanned != 9 || result.Decodable != 4 || result.Missing != 1 || result.Undecodable != 4 || result.Excluded != 0 {
 		t.Fatalf("unexpected audit result: %#v", result)
 	}
 
@@ -49,7 +62,7 @@ func TestAuditOriginalsClassifiesAndExcludes(t *testing.T) {
 	}
 
 	// Report-only mode must not change any statuses.
-	for _, id := range []uint64{valid.ID, html.ID, truncated.ID, avif.ID, empty.ID, missing.ID} {
+	for _, id := range []uint64{valid.ID, validPNG.ID, validGIF.ID, validBMP.ID, html.ID, truncated.ID, avif.ID, empty.ID, missing.ID} {
 		assertStatus(t, db, id, "downloaded", "")
 	}
 
@@ -66,8 +79,9 @@ func TestAuditOriginalsClassifiesAndExcludes(t *testing.T) {
 		}
 	}
 
-	assertStatus(t, db, valid.ID, "downloaded", "")
-	assertStatus(t, db, missing.ID, "downloaded", "")
+	for _, id := range []uint64{valid.ID, validPNG.ID, validGIF.ID, validBMP.ID, missing.ID} {
+		assertStatus(t, db, id, "downloaded", "")
+	}
 	for _, id := range []uint64{html.ID, truncated.ID, avif.ID, empty.ID} {
 		var stored database.DownloadedPhoto
 		if err := db.First(&stored, id).Error; err != nil {
@@ -86,15 +100,15 @@ func TestAuditOriginalsClassifiesAndExcludes(t *testing.T) {
 	if err := db.Model(&database.DownloadedPhoto{}).Where("status = ?", "downloaded").Count(&sweepable).Error; err != nil {
 		t.Fatalf("count downloaded: %v", err)
 	}
-	if sweepable != 2 {
-		t.Fatalf("expected 2 downloaded rows after exclusion, got %d", sweepable)
+	if sweepable != 5 {
+		t.Fatalf("expected 5 downloaded rows after exclusion, got %d", sweepable)
 	}
 
 	result, err = AuditOriginals(context.Background(), db, storage, AuditOptions{Exclude: true}, zerolog.Nop())
 	if err != nil {
 		t.Fatalf("AuditOriginals rerun failed: %v", err)
 	}
-	if result.Scanned != 2 || result.Undecodable != 0 {
+	if result.Scanned != 5 || result.Undecodable != 0 {
 		t.Fatalf("expected excluded rows to be skipped on rerun, got %#v", result)
 	}
 }
@@ -183,6 +197,16 @@ func createAuditPhoto(t *testing.T, db *database.DB, storage config.StorageConfi
 		t.Fatalf("create photo: %v", err)
 	}
 	return photo
+}
+
+func encodedImage(t *testing.T, encode func(io.Writer, image.Image) error) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, 8, 8))
+	var buf bytes.Buffer
+	if err := encode(&buf, img); err != nil {
+		t.Fatalf("encode image: %v", err)
+	}
+	return buf.Bytes()
 }
 
 func truncatedJPEG(t *testing.T) []byte {
