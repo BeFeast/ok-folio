@@ -747,6 +747,7 @@ function FolioNameModal({
         display: "grid",
         placeItems: "center",
         padding: 22,
+        animation: "okf-fade .2s ease",
       }}
     >
       <form
@@ -762,6 +763,7 @@ function FolioNameModal({
           color: "var(--ink)",
           boxShadow: "0 24px 70px rgba(0,0,0,0.3)",
           padding: "26px 24px 22px",
+          animation: "okf-rise .3s cubic-bezier(0.22,1,0.36,1)",
         }}
       >
         <div
