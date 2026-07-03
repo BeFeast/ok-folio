@@ -2,11 +2,14 @@ package derivatives
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"ok-folio/internal/config"
 	"ok-folio/internal/database"
 )
 
@@ -156,5 +159,40 @@ func TestCacheSweepTempFilesRemovesOnlyStaleThumbTemps(t *testing.T) {
 	}
 	if _, err := os.Stat(other); err != nil {
 		t.Fatalf("expected unrelated temp file to remain: %v", err)
+	}
+}
+
+func TestGenerateThumbnailMarksUndecodableDataAsPermanent(t *testing.T) {
+	root := t.TempDir()
+	corrupt := filepath.Join(root, "corrupt.jpg")
+	if err := os.WriteFile(corrupt, []byte("this is not image data"), 0o644); err != nil {
+		t.Fatalf("write corrupt fixture: %v", err)
+	}
+
+	_, err := GenerateThumbnail(context.Background(), corrupt, DefaultThumbnailSize)
+	if !errors.Is(err, ErrUndecodable) {
+		t.Fatalf("expected ErrUndecodable for corrupt image data, got %v", err)
+	}
+
+	_, err = GenerateThumbnail(context.Background(), filepath.Join(root, "absent.jpg"), DefaultThumbnailSize)
+	if err == nil || errors.Is(err, ErrUndecodable) {
+		t.Fatalf("expected a non-permanent error for a missing file, got %v", err)
+	}
+}
+
+func TestJPEGForEmbeddingPropagatesUndecodable(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "corrupt.jpg"), []byte("still not image data"), 0o644); err != nil {
+		t.Fatalf("write corrupt fixture: %v", err)
+	}
+	cfg := config.StorageConfig{
+		BaseDirectory:        root,
+		DerivativesDirectory: filepath.Join(t.TempDir(), "derivatives"),
+	}
+	photo := &database.DownloadedPhoto{ID: 7, FilePath: "corrupt.jpg", ContentHash: bytes.Repeat([]byte{0x33}, 32)}
+
+	_, _, err := JPEGForEmbedding(context.Background(), cfg, photo, DefaultThumbnailSize)
+	if !errors.Is(err, ErrUndecodable) {
+		t.Fatalf("expected ErrUndecodable to propagate through JPEGForEmbedding, got %v", err)
 	}
 }

@@ -86,4 +86,6 @@ jobs:
       - name: Postgres-backed integration test
         env:
           OKFOLIO_TEST_POSTGRES_DSN: "host=localhost port=5432 user=ok_folio password=ci-testpass dbname=ok_folio_test sslmode=disable TimeZone=UTC"
-        run: go test ./internal/database/ -run TestPostgres -v
+        # -p 1: both packages drop and recreate the same tables in the shared
+        # CI database, so they must not run concurrently.
+        run: go test -p 1 ./internal/database/ ./internal/similarity/ -run TestPostgres -v

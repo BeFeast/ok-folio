@@ -23,7 +23,8 @@ import (
 	"ok-folio/internal/database"
 )
 
-func TestPostgresBackfillWritesEmbeddingsAndCreatesHNSW(t *testing.T) {
+func openBackfillTestDB(t *testing.T) *database.DB {
+	t.Helper()
 	dsn := os.Getenv("OKFOLIO_TEST_POSTGRES_DSN")
 	if dsn == "" {
 		t.Skip("set OKFOLIO_TEST_POSTGRES_DSN to run the Postgres-backed similarity backfill test")
@@ -42,13 +43,23 @@ func TestPostgresBackfillWritesEmbeddingsAndCreatesHNSW(t *testing.T) {
 	if !db.HasEmbeddingColumn() {
 		t.Skip("embedding column unavailable; pgvector extension is required")
 	}
+	return db
+}
 
-	root := t.TempDir()
-	storage := config.StorageConfig{
+func backfillTestStorage(t *testing.T, root string) config.StorageConfig {
+	t.Helper()
+	return config.StorageConfig{
 		BaseDirectory:        root,
 		DerivativesDirectory: filepath.Join(t.TempDir(), "derivatives"),
 		DerivativesMaxBytes:  50 * 1024 * 1024,
 	}
+}
+
+func TestPostgresBackfillWritesEmbeddingsAndCreatesHNSW(t *testing.T) {
+	db := openBackfillTestDB(t)
+
+	root := t.TempDir()
+	storage := backfillTestStorage(t, root)
 	writeFixtureJPEG(t, filepath.Join(root, "one.jpg"), color.RGBA{R: 220, G: 20, B: 20, A: 255})
 	writeFixtureJPEG(t, filepath.Join(root, "two.jpg"), color.RGBA{R: 20, G: 220, B: 20, A: 255})
 	insertBackfillPhoto(t, db, 1, "one.jpg", []byte("one"))
@@ -73,7 +84,7 @@ func TestPostgresBackfillWritesEmbeddingsAndCreatesHNSW(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Backfill failed: %v", err)
 	}
-	if result.Scanned != 2 || result.Embedded != 1 || result.Missing != 1 || result.Failed != 0 {
+	if result.Scanned != 2 || result.Embedded != 1 || result.Missing != 1 || result.Permanent != 0 || result.Failed != 0 {
 		t.Fatalf("unexpected result: %#v", result)
 	}
 	if calls != 1 {
@@ -92,6 +103,64 @@ func TestPostgresBackfillWritesEmbeddingsAndCreatesHNSW(t *testing.T) {
 	if result.Embedded != 0 || calls != 0 {
 		t.Fatalf("expected rerun to skip populated rows, result=%#v calls=%d", result, calls)
 	}
+}
+
+func TestPostgresBackfillPermanentDecodeFailuresStillCreateHNSW(t *testing.T) {
+	db := openBackfillTestDB(t)
+
+	root := t.TempDir()
+	storage := backfillTestStorage(t, root)
+	if err := os.WriteFile(filepath.Join(root, "corrupt.jpg"), []byte("not an image"), 0o644); err != nil {
+		t.Fatalf("write corrupt fixture: %v", err)
+	}
+	insertBackfillPhoto(t, db, 1, "corrupt.jpg", []byte("corrupt"))
+
+	var calls int
+	sidecar := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"embedding": fixtureEmbedding(1),
+			"model":     "clip-vit-b32",
+			"dim":       database.EmbeddingDim,
+		})
+	}))
+	defer sidecar.Close()
+
+	result, err := Backfill(context.Background(), db, storage, NewClient(sidecar.URL), Options{Concurrency: 1}, zerolog.Nop())
+	if err != nil {
+		t.Fatalf("Backfill failed: %v", err)
+	}
+	if result.Scanned != 1 || result.Permanent != 1 || result.Failed != 0 {
+		t.Fatalf("unexpected result: %#v", result)
+	}
+	if calls != 0 {
+		t.Fatalf("expected no sidecar calls for an undecodable original, got %d", calls)
+	}
+	assertEmbeddingMissing(t, db, 1)
+	assertIndexExists(t, db, database.EmbeddingHNSWIndex)
+}
+
+func TestPostgresBackfillTransientSidecarFailureBlocksHNSW(t *testing.T) {
+	db := openBackfillTestDB(t)
+
+	root := t.TempDir()
+	storage := backfillTestStorage(t, root)
+	writeFixtureJPEG(t, filepath.Join(root, "one.jpg"), color.RGBA{R: 20, G: 20, B: 220, A: 255})
+	insertBackfillPhoto(t, db, 1, "one.jpg", []byte("one"))
+
+	sidecar := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "embedder unavailable", http.StatusInternalServerError)
+	}))
+	defer sidecar.Close()
+
+	result, err := Backfill(context.Background(), db, storage, NewClient(sidecar.URL), Options{Concurrency: 1}, zerolog.Nop())
+	if err != nil {
+		t.Fatalf("Backfill failed: %v", err)
+	}
+	if result.Scanned != 1 || result.Failed != 1 || result.Permanent != 0 {
+		t.Fatalf("unexpected result: %#v", result)
+	}
+	assertIndexMissing(t, db, database.EmbeddingHNSWIndex)
 }
 
 func insertBackfillPhoto(t *testing.T, db *database.DB, id uint64, filePath string, hashSeed []byte) {
@@ -168,11 +237,23 @@ func assertEmbeddingMissing(t *testing.T, db *database.DB, id uint64) {
 
 func assertIndexExists(t *testing.T, db *database.DB, name string) {
 	t.Helper()
+	if !queryIndexExists(t, db, name) {
+		t.Fatalf("expected index %s", name)
+	}
+}
+
+func assertIndexMissing(t *testing.T, db *database.DB, name string) {
+	t.Helper()
+	if queryIndexExists(t, db, name) {
+		t.Fatalf("expected index %s to be absent", name)
+	}
+}
+
+func queryIndexExists(t *testing.T, db *database.DB, name string) bool {
+	t.Helper()
 	var exists bool
 	if err := db.Raw("SELECT EXISTS (SELECT 1 FROM pg_indexes WHERE tablename = 'downloaded_photos' AND indexname = ?)", name).Scan(&exists).Error; err != nil {
 		t.Fatalf("query index %s: %v", name, err)
 	}
-	if !exists {
-		t.Fatalf("expected index %s", name)
-	}
+	return exists
 }
