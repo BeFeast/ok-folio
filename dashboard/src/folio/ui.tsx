@@ -284,11 +284,7 @@ export function OkfImage({
           background: "#E7E1D4",
         }}
       >
-        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.45" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <rect x="4" y="5" width="16" height="14" rx="1.8" />
-          <path d="M7.5 16 10.4 13.2 12.7 15.2 15 12.8 18.5 16.3" />
-          <circle cx="9" cy="9.5" r="1.1" />
-        </svg>
+        <PictureFrameIcon />
         <div
           style={{
             maxWidth: "100%",
@@ -508,6 +504,17 @@ export function OutlineButton({
       <PlusIcon />
       {children}
     </Hov>
+  );
+}
+
+/** Line-art picture frame used on empty covers and the missing-original matte. */
+export function PictureFrameIcon({ size = 32 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.45" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="4" y="5" width="16" height="14" rx="1.8" />
+      <path d="M7.5 16 10.4 13.2 12.7 15.2 15 12.8 18.5 16.3" />
+      <circle cx="9" cy="9.5" r="1.1" />
+    </svg>
   );
 }
 
