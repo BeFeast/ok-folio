@@ -23,7 +23,13 @@ services:
       LEGACY_DB_HOST: ${LEGACY_DB_HOST:?LEGACY_DB_HOST is required for the legacy admin override}
       LEGACY_DB_USER: ${LEGACY_DB_USER:?LEGACY_DB_USER is required for the legacy admin override}
       LEGACY_DB_PASSWORD: ${LEGACY_DB_PASSWORD:?LEGACY_DB_PASSWORD is required for the legacy admin override}
+    # Keep the base ok-folio-private membership so the app can still reach
+    # postgres/valkey/embedder; Compose can otherwise replace (not extend) the
+    # base networks list with an override-only value, detaching the app from its
+    # core dependencies. The legacy network is added alongside for the ETL/admin
+    # reach only.
     networks:
+      - ok-folio-private
       - legacy
 
 networks:
