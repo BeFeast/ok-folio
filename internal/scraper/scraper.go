@@ -654,14 +654,29 @@ func validatePath(basePath, fullPath string) error {
 	return nil
 }
 
-// TriggerPhotoprismIndex triggers PhotoPrism indexing
+// TriggerPhotoprismIndex triggers PhotoPrism indexing after a download run. It
+// is the automatic post-download path and stays a no-op unless an operator has
+// explicitly opted the legacy integration into auto-indexing, keeping PhotoPrism
+// indexing out of the normal OK Folio runtime.
 func (s *Scraper) TriggerPhotoprismIndex(ctx context.Context) error {
-	if !s.cfg.PhotoPrism.Enabled || !s.cfg.PhotoPrism.AutoIndex {
+	if !s.cfg.PhotoPrism.AutoIndexEnabled() {
 		return nil
 	}
 
 	if s.photoprismClient == nil {
 		return fmt.Errorf("PhotoPrism client not initialized")
+	}
+
+	return s.photoprismClient.TriggerIndex(ctx)
+}
+
+// TriggerPhotoprismIndexManual triggers PhotoPrism indexing on demand for the
+// gated admin escape hatch used during legacy retirement. Unlike the automatic
+// post-download path it does not require auto_index; it only requires that the
+// PhotoPrism integration is explicitly enabled and initialized.
+func (s *Scraper) TriggerPhotoprismIndexManual(ctx context.Context) error {
+	if !s.cfg.PhotoPrism.Enabled || s.photoprismClient == nil {
+		return fmt.Errorf("PhotoPrism integration is disabled")
 	}
 
 	return s.photoprismClient.TriggerIndex(ctx)

@@ -130,21 +130,31 @@ func (s *Server) handleArtistDetail(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, response)
 }
 
-// handleTriggerIndex triggers PhotoPrism indexing manually
+// handleTriggerIndex triggers legacy PhotoPrism indexing manually. PhotoPrism is
+// a stopped-but-startable fallback during Wave 6 legacy retirement, so this is a
+// gated admin-only escape hatch: it is disabled by default and returns a
+// deterministic disabled response unless an operator explicitly opts in via
+// photoprism.enabled. The normal OK Folio product path never reaches it.
 func (s *Server) handleTriggerIndex(w http.ResponseWriter, r *http.Request) {
+	if !s.cfg.PhotoPrism.Enabled {
+		s.logger.Debug().Msg("Rejected PhotoPrism index trigger: integration disabled")
+		s.writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+			"status":  "disabled",
+			"message": "PhotoPrism indexing is disabled",
+		})
+		return
+	}
+
 	s.logger.Info().Msg("Manual index trigger requested")
 
-	err := s.scraper.TriggerPhotoprismIndex(r.Context())
-	if err != nil {
+	if err := s.scraper.TriggerPhotoprismIndexManual(r.Context()); err != nil {
 		s.logger.Error().Err(err).Msg("Failed to trigger PhotoPrism indexing")
 		s.writeError(w, http.StatusInternalServerError, "Failed to trigger indexing: "+err.Error())
 		return
 	}
 
-	response := map[string]interface{}{
-		"message": "PhotoPrism indexing triggered successfully",
+	s.writeJSON(w, http.StatusOK, map[string]interface{}{
+		"message": "PhotoPrism indexing triggered",
 		"status":  "triggered",
-	}
-
-	s.writeJSON(w, http.StatusOK, response)
+	})
 }

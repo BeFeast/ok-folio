@@ -57,11 +57,6 @@ export default defineConfig({
       },
     }),
   ],
-  define: {
-    "import.meta.env.VITE_PHOTOPRISM_PORT": JSON.stringify(
-      process.env.VITE_PHOTOPRISM_PORT || "1111",
-    ),
-  },
   server: {
     proxy: {
       "/api": {
