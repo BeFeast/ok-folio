@@ -64,6 +64,14 @@ type StorageConfig struct {
 	DailyDirectory       string `yaml:"daily_directory"`
 	DerivativesDirectory string `yaml:"derivatives_directory"`
 	DerivativesMaxBytes  int64  `yaml:"derivatives_max_bytes"`
+	// LegacyThumbDirectory is an OPTIONAL, read-only fallback directory holding
+	// pre-rendered legacy PhotoPrism thumbnails. It is consulted only when OK
+	// Folio cannot generate a thumbnail from its own original (for example when a
+	// piece's original has not been migrated yet). Empty disables the fallback
+	// entirely: the normal runtime boots and serves thumbnails from OK Folio
+	// originals + the derivative cache without it. When set it is only ever read,
+	// never written. Also settable via OK_FOLIO_LEGACY_THUMB_DIR.
+	LegacyThumbDirectory string `yaml:"legacy_thumb_directory"`
 	WarmOnIngest         bool   `yaml:"warm_on_ingest"`
 	WarmOnIngestWidths   []int  `yaml:"warm_on_ingest_widths"`
 }
@@ -263,6 +271,9 @@ func Load(path string) (*Config, error) {
 	}
 	if derivativesDir := os.Getenv("OK_FOLIO_DERIVATIVES_DIR"); derivativesDir != "" {
 		cfg.Storage.DerivativesDirectory = derivativesDir
+	}
+	if legacyThumbDir := os.Getenv("OK_FOLIO_LEGACY_THUMB_DIR"); legacyThumbDir != "" {
+		cfg.Storage.LegacyThumbDirectory = legacyThumbDir
 	}
 	if derivativesMaxBytes := os.Getenv("OK_FOLIO_DERIVATIVES_MAX_BYTES"); derivativesMaxBytes != "" {
 		maxBytes, err := strconv.ParseInt(derivativesMaxBytes, 10, 64)

@@ -168,6 +168,13 @@ indexing-gating, maintenance-CLI, connector-freshness, and retirement-doc
 evidence in one PASS/WARN/FAIL/PENDING report. It mutates nothing; see
 `docs/legacy-retirement-preflight.md`.
 
+Retiring the legacy PhotoPrism storage/thumb mount is a separate, later step
+gated on the `legacy_storage` thumbnail tier holding at zero across a reconcile
+window. See "Legacy Storage Fallback And Thumbnail Tier Measurement" in the
+dedicated Dockhand stack runbook for the measurement command
+(`GET /api/v1/stats/thumbnail-tiers`) and the evidence required before dropping
+the mount.
+
 ## Content Hash Pass
 
 Content hashing is ongoing OK Folio catalog maintenance, decoupled from legacy

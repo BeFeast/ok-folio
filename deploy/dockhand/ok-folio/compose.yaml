@@ -109,7 +109,12 @@ services:
       - ${OK_FOLIO_DERIVATIVES_HOST_PATH:?OK_FOLIO_DERIVATIVES_HOST_PATH is required}:/derivatives
       - ${PHOTO_ORIGINALS_HOST_PATH:?PHOTO_ORIGINALS_HOST_PATH is required}:/photoprism/originals
       - ${PHOTO_DAILY_HOST_PATH:?PHOTO_DAILY_HOST_PATH is required}:/photoprism/_daily
-      - ${PHOTOPRISM_STORAGE_HOST_PATH:?PHOTOPRISM_STORAGE_HOST_PATH is required}:/photoprism/storage:ro
+      # The legacy PhotoPrism storage/thumb fallback is intentionally NOT mounted
+      # here: the normal runtime boots and serves thumbnails from OK Folio
+      # originals + the derivative cache. Mount it read-only only during the
+      # retirement measurement window via the opt-in compose.legacy-storage.yaml
+      # override; drop the override once the `legacy_storage` thumbnail tier holds
+      # at zero (GET /api/v1/stats/thumbnail-tiers).
     networks:
       - ok-folio-private
 

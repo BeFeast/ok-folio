@@ -69,18 +69,19 @@ func (l *ipRateLimiter) limiterFor(key string) *rate.Limiter {
 }
 
 type Server struct {
-	cfg        *config.Config
-	db         *database.DB
-	scraper    *scraper.Scraper
-	logger     zerolog.Logger
-	router     *chi.Mux
-	ctx        context.Context
-	cancel     context.CancelFunc
-	jobQueue   chan func()
-	limiter    *ipRateLimiter
-	statsCache *StatsCache
-	cache      *okfcache.Client
-	thumbCache *derivatives.Cache
+	cfg            *config.Config
+	db             *database.DB
+	scraper        *scraper.Scraper
+	logger         zerolog.Logger
+	router         *chi.Mux
+	ctx            context.Context
+	cancel         context.CancelFunc
+	jobQueue       chan func()
+	limiter        *ipRateLimiter
+	statsCache     *StatsCache
+	cache          *okfcache.Client
+	thumbCache     *derivatives.Cache
+	thumbnailTiers *thumbnailTierMetrics
 }
 
 func New(cfg *config.Config, db *database.DB, scraper *scraper.Scraper, logger zerolog.Logger) *Server {
@@ -88,18 +89,19 @@ func New(cfg *config.Config, db *database.DB, scraper *scraper.Scraper, logger z
 	cacheClient := okfcache.New(ctx, cfg.Cache, logger)
 
 	s := &Server{
-		cfg:        cfg,
-		db:         db,
-		scraper:    scraper,
-		logger:     logger,
-		router:     chi.NewRouter(),
-		ctx:        ctx,
-		cancel:     cancel,
-		jobQueue:   make(chan func(), ExtractionJobQueueSize),
-		limiter:    newIPRateLimiter(RateLimitPerSecond, RateLimitBurst),
-		statsCache: NewStatsCache(5 * time.Minute), // Cache stats for 5 minutes
-		cache:      cacheClient,
-		thumbCache: derivatives.NewCache(cfg.Storage),
+		cfg:            cfg,
+		db:             db,
+		scraper:        scraper,
+		logger:         logger,
+		router:         chi.NewRouter(),
+		ctx:            ctx,
+		cancel:         cancel,
+		jobQueue:       make(chan func(), ExtractionJobQueueSize),
+		limiter:        newIPRateLimiter(RateLimitPerSecond, RateLimitBurst),
+		statsCache:     NewStatsCache(5 * time.Minute), // Cache stats for 5 minutes
+		cache:          cacheClient,
+		thumbCache:     derivatives.NewCache(cfg.Storage),
+		thumbnailTiers: &thumbnailTierMetrics{},
 	}
 
 	// Start worker pool for extraction jobs
@@ -162,6 +164,7 @@ func (s *Server) setupRoutes() {
 		// Analytics endpoints
 		r.Get("/stats/timeline", s.handleStatsTimeline)
 		r.Get("/stats/artists/top", s.handleTopArtists)
+		r.Get("/stats/thumbnail-tiers", s.handleThumbnailTiers)
 		r.Get("/workers/status", s.handleWorkerStatus)
 
 		// Failed photos management

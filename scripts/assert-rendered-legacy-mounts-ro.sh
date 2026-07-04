@@ -17,9 +17,13 @@ fail() {
   exit 1
 }
 
+# Only the legacy PhotoPrism storage/thumb fallback mount must be read-only.
+# /photoprism/originals and /photoprism/_daily are OK Folio's own writable media
+# (the app downloads originals and writes daily symlinks), so they are
+# intentionally NOT asserted read-only here. The storage mount is optional and
+# only present when the compose.legacy-storage.yaml override is applied; when it
+# is present it must always be read-only.
 targets=(
-  '/photoprism/originals'
-  '/photoprism/_daily'
   '/photoprism/storage'
 )
 

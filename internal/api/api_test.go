@@ -2718,6 +2718,160 @@ func TestImageThumbnailUsesDiskCacheAfterMiss(t *testing.T) {
 	}
 }
 
+func decodeThumbnailTiers(t *testing.T, server *Server) map[string]interface{} {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/stats/thumbnail-tiers", nil)
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected thumbnail-tiers status 200, got %d body=%q", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Tiers                           map[string]int64 `json:"tiers"`
+		LegacyStorageFallbackConfigured bool             `json:"legacy_storage_fallback_configured"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("Failed to decode thumbnail tiers: %v", err)
+	}
+	return map[string]interface{}{"tiers": resp.Tiers, "configured": resp.LegacyStorageFallbackConfigured}
+}
+
+// TestThumbnailTiersWithoutLegacyStorage exercises the no-legacy-storage
+// configuration path: OK Folio boots and serves a generated thumbnail from its
+// own original with no legacy PhotoPrism storage mount, and the measured
+// `legacy_storage` tier stays at zero.
+func TestThumbnailTiersWithoutLegacyStorage(t *testing.T) {
+	server, db := setupTestServer(t)
+	defer safeShutdown(server)
+
+	if server.cfg.Storage.LegacyThumbDirectory != "" {
+		t.Fatalf("expected no legacy thumb directory configured by default")
+	}
+
+	before := decodeThumbnailTiers(t, server)
+	if before["configured"].(bool) {
+		t.Fatalf("expected legacy_storage_fallback_configured=false without a legacy dir")
+	}
+
+	filePath := filepath.Join(server.cfg.Storage.BaseDirectory, "no-legacy.jpg")
+	createTestJPEG(t, filePath)
+	contentHash := sha256.Sum256([]byte("no-legacy-v1"))
+	photo := database.DownloadedPhoto{
+		URL:          "https://example.com/no-legacy.jpg",
+		Title:        "No Legacy",
+		FilePath:     filePath,
+		FileName:     "no-legacy.jpg",
+		FileSize:     1234,
+		ContentHash:  contentHash[:],
+		Status:       "downloaded",
+		DownloadedAt: ptrTime(time.Now()),
+	}
+	if err := db.Create(&photo).Error; err != nil {
+		t.Fatalf("Failed to create photo: %v", err)
+	}
+
+	thumbURL := "/api/v1/photos/" + strconv.Itoa(int(photo.ID)) + "/thumbnail?w=320"
+	req := httptest.NewRequest(http.MethodGet, thumbURL, nil)
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected generated thumbnail status 200, got %d body=%q", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("X-OK-Folio-Thumbnail-Cache"); got != "miss" {
+		t.Fatalf("Expected generated thumbnail miss header, got %q", got)
+	}
+
+	after := decodeThumbnailTiers(t, server)
+	tiers := after["tiers"].(map[string]int64)
+	if tiers["generated"] != 1 {
+		t.Fatalf("Expected generated tier to count one thumbnail, got %d", tiers["generated"])
+	}
+	if tiers["legacy_storage"] != 0 {
+		t.Fatalf("Expected legacy_storage tier to stay zero without a legacy mount, got %d", tiers["legacy_storage"])
+	}
+}
+
+// TestImageThumbnailLegacyStorageFallback verifies the optional read-only legacy
+// PhotoPrism storage fallback: when OK Folio cannot generate a thumbnail from its
+// own original but a matching pre-rendered legacy thumbnail exists, it is served,
+// counted as the distinct `legacy_storage` tier, and the legacy directory is
+// never written.
+func TestImageThumbnailLegacyStorageFallback(t *testing.T) {
+	server, db := setupTestServer(t)
+	defer safeShutdown(server)
+
+	legacyDir := t.TempDir()
+	server.cfg.Storage.LegacyThumbDirectory = legacyDir
+
+	// The original is intentionally absent so OK Folio cannot generate a
+	// thumbnail from its own bytes; the content hash still lets it build a
+	// validator without the file.
+	contentHash := sha256.Sum256([]byte("legacy-fallback-v1"))
+	photo := database.DownloadedPhoto{
+		URL:          "https://example.com/legacy-fallback.jpg",
+		Title:        "Legacy Fallback",
+		FilePath:     filepath.Join(server.cfg.Storage.BaseDirectory, "legacy-fallback.jpg"),
+		FileName:     "legacy-fallback.jpg",
+		FileSize:     1234,
+		ContentHash:  contentHash[:],
+		Status:       "downloaded",
+		DownloadedAt: ptrTime(time.Now()),
+	}
+	if err := db.Create(&photo).Error; err != nil {
+		t.Fatalf("Failed to create photo: %v", err)
+	}
+
+	legacyBytes := createTestJPEGBytes(t)
+	legacyName := derivatives.LegacyThumbnailName(&photo, "")
+	if err := os.WriteFile(filepath.Join(legacyDir, legacyName), legacyBytes, 0o444); err != nil {
+		t.Fatalf("seed legacy thumbnail: %v", err)
+	}
+
+	thumbURL := "/api/v1/photos/" + strconv.Itoa(int(photo.ID)) + "/thumbnail?w=400"
+	req := httptest.NewRequest(http.MethodGet, thumbURL, nil)
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected legacy fallback status 200, got %d body=%q", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("X-OK-Folio-Thumbnail-Cache"); got != "legacy-storage" {
+		t.Fatalf("Expected legacy-storage cache header, got %q", got)
+	}
+	if !bytes.Equal(w.Body.Bytes(), legacyBytes) {
+		t.Fatalf("Expected legacy thumbnail bytes to be served verbatim")
+	}
+
+	tiers := decodeThumbnailTiers(t, server)
+	if !tiers["configured"].(bool) {
+		t.Fatalf("expected legacy_storage_fallback_configured=true when a legacy dir is set")
+	}
+	counts := tiers["tiers"].(map[string]int64)
+	if counts["legacy_storage"] != 1 {
+		t.Fatalf("Expected legacy_storage tier to count the fallback hit, got %d", counts["legacy_storage"])
+	}
+	if counts["generated"] != 0 {
+		t.Fatalf("Expected no generated thumbnails for a missing original, got %d", counts["generated"])
+	}
+
+	// The fallback must be read-only: only the seeded file may exist afterwards.
+	entries, err := os.ReadDir(legacyDir)
+	if err != nil {
+		t.Fatalf("read legacy dir: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name() != legacyName {
+		t.Fatalf("expected legacy dir untouched with only %q, got %v", legacyName, entries)
+	}
+
+	// Without the legacy mount the same missing original would 404.
+	server.cfg.Storage.LegacyThumbDirectory = ""
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/photos/"+strconv.Itoa(int(photo.ID))+"/thumbnail?w=401", nil)
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("Expected 404 for a missing original without the legacy fallback, got %d", w.Code)
+	}
+}
+
 func TestImageThumbnailCacheInvalidatesByContentHash(t *testing.T) {
 	server, db := setupTestServer(t)
 	defer safeShutdown(server)

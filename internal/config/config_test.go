@@ -364,6 +364,7 @@ database:
 	os.Setenv("CACHE_PASSWORD", "override-cache-pass")
 	os.Setenv("OK_FOLIO_DERIVATIVES_DIR", filepath.Join(tmpDir, "override-derivatives"))
 	os.Setenv("OK_FOLIO_DERIVATIVES_MAX_BYTES", "2048")
+	os.Setenv("OK_FOLIO_LEGACY_THUMB_DIR", filepath.Join(tmpDir, "legacy-thumbs"))
 	os.Setenv("OK_FOLIO_WARM_ON_INGEST", "false")
 	os.Setenv("OK_FOLIO_WARM_ON_INGEST_WIDTHS", "320,640")
 	defer func() {
@@ -376,6 +377,7 @@ database:
 		os.Unsetenv("CACHE_PASSWORD")
 		os.Unsetenv("OK_FOLIO_DERIVATIVES_DIR")
 		os.Unsetenv("OK_FOLIO_DERIVATIVES_MAX_BYTES")
+		os.Unsetenv("OK_FOLIO_LEGACY_THUMB_DIR")
 		os.Unsetenv("OK_FOLIO_WARM_ON_INGEST")
 		os.Unsetenv("OK_FOLIO_WARM_ON_INGEST_WIDTHS")
 	}()
@@ -412,6 +414,9 @@ database:
 	}
 	if cfg.Storage.DerivativesMaxBytes != 2048 {
 		t.Errorf("Expected derivative max bytes override, got %d", cfg.Storage.DerivativesMaxBytes)
+	}
+	if cfg.Storage.LegacyThumbDirectory != filepath.Join(tmpDir, "legacy-thumbs") {
+		t.Errorf("Expected legacy thumb dir override, got '%s'", cfg.Storage.LegacyThumbDirectory)
 	}
 	if cfg.Storage.WarmOnIngest {
 		t.Errorf("Expected warm-on-ingest env override to disable warming")
