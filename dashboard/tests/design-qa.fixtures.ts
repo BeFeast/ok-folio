@@ -83,6 +83,13 @@ export const photos = [
 const folios = [
   { id: 1, name: "Reference Walls", cover_photo_id: 101, piece_count: 6, created_at: "2026-06-01T10:00:00Z", updated_at: "2026-06-30T10:00:00Z" },
   { id: 2, name: "Color Studies", cover_photo_id: 106, piece_count: 4, created_at: "2026-06-02T10:00:00Z", updated_at: "2026-06-29T10:00:00Z" },
+  { id: 5, name: "Night Studies", cover_photo_id: 107, piece_count: 5, created_at: "2026-06-05T10:00:00Z", updated_at: "2026-06-26T10:00:00Z" },
+  { id: 6, name: "Paper Trails", cover_photo_id: 109, piece_count: 8, created_at: "2026-06-06T10:00:00Z", updated_at: "2026-06-25T10:00:00Z" },
+  { id: 7, name: "Warm Light", cover_photo_id: 110, piece_count: 3, created_at: "2026-06-07T10:00:00Z", updated_at: "2026-06-24T10:00:00Z" },
+  { id: 8, name: "Cold Frames", cover_photo_id: 112, piece_count: 6, created_at: "2026-06-08T10:00:00Z", updated_at: "2026-06-23T10:00:00Z" },
+  { id: 9, name: "Long Exposures", cover_photo_id: 108, piece_count: 4, created_at: "2026-06-09T10:00:00Z", updated_at: "2026-06-22T10:00:00Z" },
+  { id: 10, name: "Grain & Ink", cover_photo_id: 103, piece_count: 9, created_at: "2026-06-10T10:00:00Z", updated_at: "2026-06-21T10:00:00Z" },
+  // Kept last so the dense grid also exercises the "first piece" and empty-matte covers.
   { id: 3, name: "Source Queue", cover_photo_id: null, piece_count: 1, created_at: "2026-06-03T10:00:00Z", updated_at: "2026-06-28T10:00:00Z" },
   { id: 4, name: "Empty Holding", cover_photo_id: null, piece_count: 0, created_at: "2026-06-04T10:00:00Z", updated_at: "2026-06-27T10:00:00Z" },
 ];

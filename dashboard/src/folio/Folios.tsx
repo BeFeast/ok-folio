@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { fetchFolioPieces, fetchFolios, getPhotoThumbnailUrl } from "../api";
 import type { Folio, Photo } from "../types";
 import { mapPhoto, useFolio } from "./context";
-import { BrandMark, ConfirmationDialog, DotsIcon, Hov, OkfImage, OutlineButton, PageHeader, PlusIcon } from "./ui";
+import { BrandMark, ConfirmationDialog, DotsIcon, Hov, OkfImage, OutlineButton, PageHeader, PictureFrameIcon, PlusIcon } from "./ui";
 import { useViewport } from "./useViewport";
 
 const TILE_MATTE: CSSProperties = {
@@ -48,6 +48,25 @@ function coverIds(folio: Folio, photos?: Photo[]): number[] {
   const ids = photos?.map((photo) => photo.ID).filter((id) => id !== folio.cover_photo_id) ?? [];
   if (folio.cover_photo_id) ids.unshift(folio.cover_photo_id);
   return ids.slice(0, 3);
+}
+
+/**
+ * The single hero cover for the Web (desktop) folio tile: the user-chosen cover
+ * if it is still one of the folio's pieces, else the first piece, else nothing
+ * (empty folio → matte). `photos` is the cover-preview window; when it is the
+ * complete piece list (`photos.length >= piece_count`) and the stored cover is
+ * absent, that piece was removed from the folio, so we fall back to the first
+ * piece. For larger folios the window cannot disprove membership, so we honour
+ * the stored cover rather than risk hiding a valid, older cover choice.
+ */
+function heroCoverId(folio: Folio, photos?: Photo[]): number | undefined {
+  const chosen = folio.cover_photo_id ?? undefined;
+  if (chosen) {
+    const complete = photos !== undefined && photos.length >= folio.piece_count;
+    if (complete && !photos.some((photo) => photo.ID === chosen)) return photos[0]?.ID;
+    return chosen;
+  }
+  return photos?.[0]?.ID;
 }
 
 function FolioCoverObject({
@@ -119,6 +138,56 @@ function FolioCoverObject({
           </span>
         ))
       )}
+    </span>
+  );
+}
+
+/**
+ * Web (desktop) folio cover: a single hero image over the tile matte, per the
+ * binding Web design. The 3-layer {@link FolioCoverObject} stack stays
+ * Mobile-only. Empty folios (no hero) render the gradient matte with a
+ * picture-frame icon, the folio name and its piece count.
+ */
+function WebFolioCover({ folio, heroId }: { folio: Folio; heroId?: number }) {
+  const count = folioPiecesLabel(folio.piece_count);
+  if (heroId) {
+    return (
+      <OkfImage
+        src={getPhotoThumbnailUrl(heroId, 720)}
+        alt={folio.name}
+        title={folio.name}
+        artist={count}
+        imgStyle={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+        matteStyle={{ position: "absolute", inset: 0, gap: 9, padding: 18 }}
+        matteTitleStyle={{ fontFamily: "var(--serif)", fontStyle: "italic", fontSize: 17, lineHeight: 1.15 }}
+        matteArtistStyle={{ fontFamily: "var(--sans)", fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase" }}
+      />
+    );
+  }
+  return (
+    <span
+      style={{
+        position: "absolute",
+        inset: 0,
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 9,
+        padding: 18,
+        textAlign: "center",
+        background: "linear-gradient(155deg, var(--surface-2), var(--surface))",
+      }}
+    >
+      <span style={{ color: "color-mix(in srgb, var(--ink) 42%, transparent)" }}>
+        <PictureFrameIcon />
+      </span>
+      <span style={{ fontFamily: "var(--serif)", fontStyle: "italic", fontSize: 17, lineHeight: 1.15, color: "color-mix(in srgb, var(--ink) 62%, transparent)" }}>
+        {folio.name}
+      </span>
+      <span style={{ fontFamily: "var(--sans)", fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: "color-mix(in srgb, var(--ink) 48%, transparent)" }}>
+        {count}
+      </span>
     </span>
   );
 }
@@ -529,14 +598,18 @@ function FolioTile({ folio, onRename }: { folio: Folio; onRename: (folio: Folio)
           display: "block",
           position: "relative",
           aspectRatio: "1 / 1",
+          overflow: "hidden",
+          background: "var(--surface)",
+          boxShadow: "0 1px 8px var(--shadow)",
+          cursor: "pointer",
           color: "inherit",
           textDecoration: "none",
         }}
       >
-        <FolioCoverObject folio={folio} ids={coverIds(folio, pieces.data?.photos)} />
+        <WebFolioCover folio={folio} heroId={heroCoverId(folio, pieces.data?.photos)} />
       </Link>
 
-      <div style={{ position: "absolute", top: 8, right: 8, zIndex: 4 }}>
+      <div style={{ position: "absolute", top: 9, right: 9, zIndex: 4 }}>
         <Hov
           as="button"
           aria-label={`Actions for ${folio.name}`}
@@ -901,7 +974,7 @@ export default function Folios() {
             </div>
           </div>
         ) : (
-          <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 250px), 1fr))", gap: "40px 34px" }}>
+          <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(166px, 1fr))", gap: 13 }}>
             {folios.map((folio) => (
               <FolioTile key={folio.id} folio={folio} onRename={setRenameTarget} />
             ))}
