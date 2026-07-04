@@ -434,7 +434,7 @@ export default function AddPieceModal() {
           <div style={{ padding: "26px 28px 26px 16px", display: "flex", flexDirection: "column", gap: 18 }}>
             <Field label="Title" placeholder="Untitled piece" value={title} onChange={setTitle} serif />
             <Field label="Source" placeholder="Where it came from" value={source} onChange={setSource} />
-            <Field label="Author / artist" placeholder="Unknown" value={artist} onChange={setArtist} />
+            <Field label="Author ⁄ artist" placeholder="Unknown" value={artist} onChange={setArtist} />
             <Field label="Date" placeholder="When it was made" value={date} onChange={setDate} />
             <Field label="Notes" placeholder="Why you kept it." value={notes} onChange={setNotes} serif textarea />
           </div>
@@ -462,7 +462,7 @@ export default function AddPieceModal() {
               as="button"
               onClick={handleAdd}
               disabled={!file}
-              style={{ appearance: "none", cursor: !file ? "not-allowed" : "pointer", opacity: !file ? 0.6 : 1, fontFamily: "var(--sans)", fontSize: 13.5, fontWeight: 500, padding: "10px 22px", borderRadius: 99, border: 0, background: "var(--accent)", color: "var(--on-accent)" }}
+              style={{ appearance: "none", cursor: !file ? "not-allowed" : "pointer", opacity: !file ? 0.55 : 1, fontFamily: "var(--sans)", fontSize: 13.5, fontWeight: 500, padding: "10px 22px", borderRadius: 99, border: 0, background: "var(--accent)", color: "var(--on-accent)" }}
               hover={{ filter: "brightness(1.06)" }}
             >
               Add Piece
