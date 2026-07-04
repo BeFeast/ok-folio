@@ -1,14 +1,21 @@
-.PHONY: test coverage coverage-html coverage-report clean help
+.PHONY: test coverage coverage-html coverage-report clean help retirement-preflight
 
 # Default target
 help:
 	@echo "Available targets:"
-	@echo "  test            - Run all tests"
-	@echo "  coverage        - Run tests with coverage"
-	@echo "  coverage-html   - Generate HTML coverage report"
-	@echo "  coverage-report - Show coverage summary"
-	@echo "  clean           - Clean coverage files"
-	@echo "  help            - Show this help message"
+	@echo "  test                  - Run all tests"
+	@echo "  coverage              - Run tests with coverage"
+	@echo "  coverage-html         - Generate HTML coverage report"
+	@echo "  coverage-report       - Show coverage summary"
+	@echo "  retirement-preflight  - Run the read-only Wave 6 legacy-retirement preflight"
+	@echo "  clean                 - Clean coverage files"
+	@echo "  help                  - Show this help message"
+
+# Run the read-only Wave 6 legacy-retirement preflight verifier. Offline by
+# default; pass LIVE_URL=http://host:8080 to also run the read-only connector
+# probe against a running app.
+retirement-preflight:
+	@go run ./cmd/ok-folio-preflight $(if $(LIVE_URL),--live-connectors-url $(LIVE_URL),)
 
 # Run all tests
 test:

@@ -161,6 +161,13 @@ the known-row `downloaded_at` before/after comparison to the second, and an app
 smoke test that the gallery reads the catalog and resolves `file_path` against
 the mounted originals.
 
+Before retiring the remaining legacy services, run the read-only
+legacy-retirement preflight (`make retirement-preflight`, or
+`go run ./cmd/ok-folio-preflight`) to gather the app-decoupling,
+indexing-gating, maintenance-CLI, connector-freshness, and retirement-doc
+evidence in one PASS/WARN/FAIL/PENDING report. It mutates nothing; see
+`docs/legacy-retirement-preflight.md`.
+
 ## Content Hash Pass
 
 Content hashing is ongoing OK Folio catalog maintenance, decoupled from legacy
