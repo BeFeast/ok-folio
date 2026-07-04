@@ -182,63 +182,64 @@ function PickerTile({
 }) {
   const piece = mapPhoto(photo);
   return (
-    <Hov
-      as="button"
+    <button
+      type="button"
+      aria-pressed={selected}
+      aria-label={piece.a ? `${piece.t} — ${piece.a}` : piece.t}
+      title={piece.a ? `${piece.t} — ${piece.a}` : piece.t}
       disabled={disabled}
       onClick={onToggle}
       style={{
-        appearance: "none",
+        position: "relative",
+        aspectRatio: "1 / 1",
+        border: 0,
+        borderRadius: 4,
+        padding: 0,
+        overflow: "hidden",
+        background: "var(--wall)",
         cursor: disabled ? "not-allowed" : "pointer",
         opacity: disabled ? 0.45 : 1,
-        border: selected ? "2px solid var(--accent)" : "1px solid var(--line)",
-        background: "var(--surface)",
-        padding: 0,
-        textAlign: "left",
-        color: "inherit",
+        transition: "transform .12s ease, box-shadow .12s ease",
+        transform: selected ? "scale(0.93)" : "none",
+        boxShadow: selected ? "0 0 0 3px var(--accent)" : "0 1px 5px var(--shadow)",
       }}
-      hover={disabled ? undefined : { borderColor: "var(--accent-line)" }}
     >
-      <span style={{ display: "block", position: "relative", aspectRatio: "1 / 1", overflow: "hidden" }}>
-        <OkfImage
-          src={getPhotoThumbnailUrl(photo.ID, 400)}
-          alt={piece.t}
-          title={piece.t}
-          artist={piece.a}
-          imgStyle={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", zIndex: 1 }}
-          matteStyle={TILE_MATTE}
-          matteTitleStyle={{ fontFamily: "var(--serif)", fontStyle: "italic", fontSize: 13, lineHeight: 1.2, color: "var(--ink)" }}
-          matteArtistStyle={{ fontFamily: "var(--sans)", fontSize: 9, letterSpacing: "0.12em", textTransform: "uppercase", color: "var(--muted)" }}
-        />
+      <OkfImage
+        src={getPhotoThumbnailUrl(photo.ID, 400)}
+        alt={piece.t}
+        title={piece.t}
+        artist={piece.a}
+        imgStyle={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", zIndex: 1 }}
+        matteStyle={TILE_MATTE}
+        matteTitleStyle={{ fontFamily: "var(--serif)", fontStyle: "italic", fontSize: 13, lineHeight: 1.2, color: "var(--ink)" }}
+        matteArtistStyle={{ fontFamily: "var(--sans)", fontSize: 9, letterSpacing: "0.12em", textTransform: "uppercase", color: "var(--muted)" }}
+      />
+      {selected ? <span style={{ position: "absolute", inset: 0, zIndex: 2, background: "var(--accent-soft)" }} /> : null}
+      <span
+        aria-hidden="true"
+        style={{
+          position: "absolute",
+          top: 8,
+          right: 8,
+          zIndex: 4,
+          width: 22,
+          height: 22,
+          borderRadius: 99,
+          border: selected ? 0 : "1.5px solid rgba(255,255,255,0.85)",
+          background: selected ? "var(--accent)" : "rgba(20,16,10,0.28)",
+          color: "var(--on-accent)",
+          display: "grid",
+          placeItems: "center",
+          boxShadow: "0 1px 5px rgba(0,0,0,.22)",
+        }}
+      >
         {selected ? (
-          <span
-            style={{
-              position: "absolute",
-              top: 8,
-              right: 8,
-              zIndex: 4,
-              width: 24,
-              height: 24,
-              borderRadius: 99,
-              background: "var(--accent)",
-              color: "var(--on-accent)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontFamily: "var(--sans)",
-              fontSize: 13,
-            }}
-          >
-            <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
-              <path d="M3.2 8.4l3 3 6.6-7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </span>
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+            <path d="M3.2 8.4l3 3 6.6-7" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
         ) : null}
       </span>
-      <span style={{ display: "block", padding: "9px 10px 11px" }}>
-        <span style={{ display: "block", fontFamily: "var(--serif)", fontSize: 14, lineHeight: 1.2, color: "var(--ink)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{piece.t}</span>
-        <span style={{ display: "block", fontFamily: "var(--sans)", fontSize: 11.5, color: "var(--muted)", marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{piece.a}</span>
-      </span>
-    </Hov>
+    </button>
   );
 }
 
@@ -324,9 +325,15 @@ function AddPiecesPicker({
   const { isMobile } = useViewport();
   const [selected, setSelected] = useState<Set<number>>(() => new Set());
   const [adding, setAdding] = useState(false);
+  const [search, setSearch] = useState("");
+  const [query, setQuery] = useState("");
+  useEffect(() => {
+    const handle = setTimeout(() => setQuery(search.trim()), 220);
+    return () => clearTimeout(handle);
+  }, [search]);
   const catalog = useInfiniteQuery({
-    queryKey: ["folio-piece-picker", folioId],
-    queryFn: ({ pageParam }) => fetchGalleryCatalog(PICKER_PAGE_SIZE, pageParam as number, {}),
+    queryKey: ["folio-piece-picker", folioId, query],
+    queryFn: ({ pageParam }) => fetchGalleryCatalog(PICKER_PAGE_SIZE, pageParam as number, query ? { query } : {}),
     initialPageParam: 0,
     getNextPageParam: (lastPage, allPages) => {
       const loaded = allPages.reduce((n, pg) => n + pg.photos.length, 0);
@@ -449,6 +456,13 @@ function AddPiecesPicker({
     );
   }
 
+  const hasSelection = selected.size > 0;
+  const confirmLabel = adding
+    ? "Adding..."
+    : hasSelection
+      ? `Add ${selected.size.toLocaleString()} ${selected.size === 1 ? "piece" : "pieces"}`
+      : "Add pieces";
+
   return (
     <div
       onClick={onClose}
@@ -456,13 +470,14 @@ function AddPiecesPicker({
         position: "fixed",
         inset: 0,
         zIndex: 100,
-        background: "rgba(12,9,6,0.7)",
-        backdropFilter: "blur(7px)",
-        WebkitBackdropFilter: "blur(7px)",
+        background: "rgba(12,9,6,0.62)",
+        backdropFilter: "blur(6px)",
+        WebkitBackdropFilter: "blur(6px)",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
         padding: 34,
+        animation: "okf-fade .2s ease",
       }}
     >
       <div
@@ -470,34 +485,71 @@ function AddPiecesPicker({
         aria-modal="true"
         aria-label="Add pieces"
         onClick={(e) => e.stopPropagation()}
-        style={{ width: "min(1040px, 95vw)", maxHeight: "90vh", overflow: "auto", background: "var(--surface)", boxShadow: "0 50px 130px rgba(0,0,0,0.5)" }}
+        style={{
+          width: "min(880px, 96vw)",
+          maxHeight: "88vh",
+          display: "flex",
+          flexDirection: "column",
+          borderRadius: 16,
+          overflow: "hidden",
+          background: "var(--surface)",
+          boxShadow: "0 50px 130px rgba(0,0,0,0.5)",
+          animation: "okf-rise .3s cubic-bezier(0.22,1,0.36,1)",
+        }}
       >
-        <div style={{ padding: "24px 30px", borderBottom: "1px solid var(--line)", display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 20 }}>
-          <div>
-            <div style={{ fontFamily: "var(--sans)", fontSize: 11, letterSpacing: "0.2em", textTransform: "uppercase", color: "var(--accent)" }}>Add Pieces</div>
-            <h2 style={{ margin: "9px 0 0", fontFamily: "var(--serif)", fontWeight: 300, fontSize: 27, color: "var(--ink)", letterSpacing: "-0.01em" }}>Choose from the gallery</h2>
+        <div style={{ flex: "none", padding: "22px 26px", borderBottom: "1px solid var(--line)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 20 }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontFamily: "var(--sans)", fontSize: 11, letterSpacing: "0.2em", textTransform: "uppercase", color: "var(--accent)" }}>Add to folio</div>
+            <h2 style={{ margin: "7px 0 0", fontFamily: "var(--serif)", fontWeight: 300, fontSize: 23, color: "var(--ink)", letterSpacing: "-0.01em", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{folioName ?? "folio"}</h2>
           </div>
-          <Hov
-            as="button"
-            onClick={onClose}
-            aria-label="Close"
-            disabled={adding}
-            style={{ appearance: "none", cursor: adding ? "not-allowed" : "pointer", width: 34, height: 34, borderRadius: 99, border: "1px solid var(--line)", background: "transparent", color: "var(--muted)", display: "flex", alignItems: "center", justifyContent: "center", opacity: adding ? 0.6 : 1 }}
-            hover={{ color: "var(--ink)", borderColor: "var(--line-2)" }}
-          >
-            <CloseIcon size={15} />
-          </Hov>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, flex: "none" }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, width: 230, borderRadius: 11, background: "var(--bg)", border: "1px solid var(--line)", padding: "9px 14px" }}>
+              <span aria-hidden="true" style={{ display: "flex", color: "var(--muted)", flex: "none" }}>
+                <svg width="15" height="15" viewBox="0 0 20 20" fill="none">
+                  <circle cx="9" cy="9" r="6" stroke="currentColor" strokeWidth="1.7" />
+                  <path d="M13.5 13.5L18 18" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+                </svg>
+              </span>
+              <input
+                type="text"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Search pieces"
+                aria-label="Search pieces"
+                disabled={adding}
+                style={{ flex: 1, minWidth: 0, border: 0, background: "transparent", outline: "none", fontFamily: "var(--sans)", fontSize: 13.5, color: "var(--ink)" }}
+              />
+            </label>
+            <Hov
+              as="button"
+              onClick={onClose}
+              aria-label="Close"
+              disabled={adding}
+              style={{ appearance: "none", cursor: adding ? "not-allowed" : "pointer", width: 36, height: 36, borderRadius: 99, border: "1px solid var(--line)", background: "transparent", color: "var(--muted)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none", opacity: adding ? 0.6 : 1 }}
+              hover={{ color: "var(--ink)", borderColor: "var(--line-2)" }}
+            >
+              <CloseIcon size={15} />
+            </Hov>
+          </div>
         </div>
 
-        <div style={{ padding: "24px 30px 30px" }}>
+        <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: "18px 22px" }}>
           {catalog.isError ? (
             <div style={{ padding: "50px 0", fontFamily: "var(--serif)", fontStyle: "italic", fontSize: 20, color: "var(--graphite)", textAlign: "center" }}>
               The gallery could not be reached.
             </div>
           ) : catalog.isLoading ? (
-            <div style={{ padding: "50px 0", fontFamily: "var(--sans)", fontSize: 14, color: "var(--muted)", textAlign: "center" }}>Loading pieces...</div>
+            <section style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10 }}>
+              {Array.from({ length: 15 }, (_, index) => (
+                <div key={index} className="okf-shimmer" style={{ aspectRatio: "1 / 1", borderRadius: 4, background: "var(--wall)" }} />
+              ))}
+            </section>
+          ) : photos.length === 0 ? (
+            <div style={{ padding: "50px 0", fontFamily: "var(--sans)", fontSize: 14, color: "var(--muted)", textAlign: "center" }}>
+              {query ? "No pieces match your search." : "No pieces to add yet."}
+            </div>
           ) : (
-            <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(142px, 1fr))", gap: 12 }}>
+            <section style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10 }}>
               {photos.map((photo) => (
                 <PickerTile
                   key={photo.ID}
@@ -510,7 +562,7 @@ function AddPiecesPicker({
             </section>
           )}
           {catalog.hasNextPage ? (
-            <div style={{ display: "flex", justifyContent: "center", padding: "24px 0 0" }}>
+            <div style={{ display: "flex", justifyContent: "center", padding: "24px 0 4px" }}>
               <Hov
                 as="button"
                 onClick={() => void catalog.fetchNextPage()}
@@ -524,30 +576,19 @@ function AddPiecesPicker({
           ) : null}
         </div>
 
-        <div style={{ padding: "18px 30px", borderTop: "1px solid var(--line)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 18 }}>
-          <div style={{ fontFamily: "var(--sans)", fontSize: 12, color: "var(--muted)" }}>
-            {selected.size.toLocaleString()} selected
+        <div style={{ flex: "none", padding: "16px 26px", borderTop: "1px solid var(--line)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 18 }}>
+          <div style={{ fontFamily: "var(--sans)", fontSize: 13, color: "var(--muted)" }}>
+            {hasSelection ? `${selected.size.toLocaleString()} selected` : "Select pieces to add"}
           </div>
-          <div style={{ display: "flex", gap: 11, flex: "none" }}>
-            <Hov
-              as="button"
-              onClick={onClose}
-              disabled={adding}
-              style={{ appearance: "none", cursor: adding ? "not-allowed" : "pointer", fontFamily: "var(--sans)", fontSize: 13.5, padding: "10px 18px", borderRadius: 99, border: 0, background: "transparent", color: "var(--muted)", opacity: adding ? 0.6 : 1 }}
-              hover={{ color: "var(--ink)" }}
-            >
-              Cancel
-            </Hov>
-            <Hov
-              as="button"
-              onClick={() => void addSelected()}
-              disabled={selected.size === 0 || adding}
-              style={{ appearance: "none", cursor: selected.size === 0 || adding ? "not-allowed" : "pointer", opacity: selected.size === 0 || adding ? 0.6 : 1, fontFamily: "var(--sans)", fontSize: 13.5, fontWeight: 500, padding: "10px 22px", borderRadius: 99, border: 0, background: "var(--accent)", color: "var(--on-accent)" }}
-              hover={{ filter: "brightness(1.06)" }}
-            >
-              {adding ? "Adding..." : "Add pieces"}
-            </Hov>
-          </div>
+          <Hov
+            as="button"
+            onClick={() => void addSelected()}
+            disabled={!hasSelection || adding}
+            style={{ appearance: "none", cursor: !hasSelection || adding ? "not-allowed" : "pointer", fontFamily: "var(--sans)", fontSize: 13.5, fontWeight: 500, padding: "11px 22px", borderRadius: 11, border: 0, background: hasSelection ? "var(--accent)" : "var(--line)", color: hasSelection ? "var(--on-accent)" : "var(--muted)", flex: "none" }}
+            hover={hasSelection && !adding ? { filter: "brightness(1.06)" } : undefined}
+          >
+            {confirmLabel}
+          </Hov>
         </div>
       </div>
     </div>
