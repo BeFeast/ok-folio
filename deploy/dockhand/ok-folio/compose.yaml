@@ -91,9 +91,12 @@ services:
       CACHE_HOST: ${VALKEY_HOST:-valkey}
       CACHE_PORT: ${VALKEY_PORT:-6379}
       CACHE_PASSWORD: ${VALKEY_PASSWORD:?VALKEY_PASSWORD is required}
-      LEGACY_DB_HOST: ${LEGACY_DB_HOST:?LEGACY_DB_HOST is required}
-      LEGACY_DB_USER: ${LEGACY_DB_USER:?LEGACY_DB_USER is required}
-      LEGACY_DB_PASSWORD: ${LEGACY_DB_PASSWORD:?LEGACY_DB_PASSWORD is required}
+      # Optional boot-guard hint only. When set, testguard also treats this host
+      # as the legacy MariaDB/MySQL DB and refuses to start if DB_HOST resolves to
+      # it (internal/testguard). It is NOT required for normal boot and defaults to
+      # empty. Legacy DB *credentials* (LEGACY_DB_USER/LEGACY_DB_PASSWORD) belong to
+      # the ETL/admin override (compose.legacy.yaml), never the normal app runtime.
+      LEGACY_DB_HOST: ${LEGACY_DB_HOST:-}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?TELEGRAM_BOT_TOKEN is required}
       TELEGRAM_USERNAME: ${TELEGRAM_USERNAME:?TELEGRAM_USERNAME is required}
       OK_FOLIO_DERIVATIVES_DIR: /derivatives
@@ -109,11 +112,7 @@ services:
       - ${PHOTOPRISM_STORAGE_HOST_PATH:?PHOTOPRISM_STORAGE_HOST_PATH is required}:/photoprism/storage:ro
     networks:
       - ok-folio-private
-      - legacy
 
 networks:
   ok-folio-private:
     internal: true
-  legacy:
-    external: true
-    name: ${LEGACY_DOCKER_NETWORK:?LEGACY_DOCKER_NETWORK is required}

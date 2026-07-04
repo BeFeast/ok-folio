@@ -41,8 +41,13 @@ because those can trigger `FLUSH TABLES WITH READ LOCK` and stall PhotoPrism.
 Binlog coordinates are not used; watermarks live in OK Folio Postgres.
 
 Use the release image's `/app/ok-folio-etl` binary to run ETL in-container. From
-a source checkout, `go run ./cmd/ok-folio-etl` runs the same command. Print the
-exact checks and safe dump arguments before dumping:
+a source checkout, `go run ./cmd/ok-folio-etl` runs the same command. This is an
+ETL/admin path, not part of normal app boot: the normal runtime does not join the
+legacy network. When an in-container dump must reach a live legacy host, apply the
+opt-in override `deploy/dockhand/ok-folio/compose.legacy.yaml`, which re-attaches
+the app to the external legacy network and injects the read-only legacy DB
+credentials (see the dedicated stack runbook). Print the exact checks and safe
+dump arguments before dumping:
 
 ```bash
 go run ./cmd/ok-folio-etl print-legacy-checks --legacy-database "$LEGACY_DB_NAME"

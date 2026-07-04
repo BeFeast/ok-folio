@@ -8,6 +8,7 @@ vault copy or any rendered `.env` file.
 ## Repository Artifacts
 
 - Compose template: `deploy/dockhand/ok-folio/compose.yaml`
+- Legacy ETL/admin override (opt-in only): `deploy/dockhand/ok-folio/compose.legacy.yaml`
 - Valkey config template: `deploy/dockhand/ok-folio/valkey.conf.template`
 - OK Folio runtime config template: `deploy/dockhand/ok-folio/config.yaml.template`
 - Postgres initdb: `deploy/dockhand/ok-folio/initdb/010-vector-extensions.sh`
@@ -107,10 +108,6 @@ VALKEY_PORT=6379
 VALKEY_PASSWORD=<ok-folio-valkey-password>
 VALKEY_MAXMEMORY=<host-budget-placeholder>
 VALKEY_MAXMEMORY_POLICY=<host-budget-placeholder>
-LEGACY_DB_HOST=<legacy-mariadb-container-name>
-LEGACY_DB_USER=<legacy-read-user>
-LEGACY_DB_PASSWORD=<legacy-read-password>
-LEGACY_DOCKER_NETWORK=<external-legacy-network-name>
 PHOTO_ORIGINALS_HOST_PATH=<photo-originals-host-path>
 PHOTO_DAILY_HOST_PATH=<photo-daily-host-path>
 PHOTOPRISM_STORAGE_HOST_PATH=<photoprism-storage-host-path>
@@ -126,6 +123,18 @@ REGISTRY_PASSWORD=<push-scoped-ci-password>
 
 Add any net-new values under the OK Folio Infisical path as path references, not
 literal values copied into git, issue comments, or PR bodies.
+
+The normal app runtime does not require any legacy DB env or the external legacy
+Docker network. The keys below are used only when applying the ETL/admin override
+`compose.legacy.yaml` (see Legacy ETL/Admin Override below) and must not be
+required for a normal boot:
+
+```dotenv
+LEGACY_DB_HOST=<legacy-mariadb-container-name>
+LEGACY_DB_USER=<legacy-read-user>
+LEGACY_DB_PASSWORD=<legacy-read-password>
+LEGACY_DOCKER_NETWORK=<external-legacy-network-name>
+```
 
 ## Stack Services
 
@@ -151,9 +160,10 @@ argument.
 The app image is always pinned as `ok-folio:<immutable-commit-sha>`. The CLIP
 embedder sidecar is pinned separately as
 `ok-folio-embedder:<immutable-commit-sha>` and stays on the private stack
-network with no published ports. The app joins the private stack network and
-the external legacy Docker network. The app talks to Postgres, Valkey, and the
-embedder by service name; published ports are for operations only.
+network with no published ports. The app joins only the private stack network in
+the normal runtime; it does not require the external legacy Docker network to
+boot. The app talks to Postgres, Valkey, and the embedder by service name;
+published ports are for operations only.
 
 All legacy mounts are kernel-enforced read-only:
 
@@ -165,6 +175,30 @@ The app also has one writable, rebuildable mount at `/derivatives` for
 generated thumbnails. Its growth is bounded by `storage.derivatives_max_bytes`
 in `config.yaml`; the API evicts least-recently-used derivative files when the
 configured byte cap is exceeded.
+
+## Legacy ETL/Admin Override
+
+The normal stack decouples from the legacy stack: connectors own ingestion, and
+PhotoPrism plus MariaDB are stopped/startable fallback components rather than app
+dependencies. `compose.yaml` therefore boots without any `LEGACY_DB_*` value and
+without the external legacy Docker network.
+
+Legacy connectivity is isolated behind the opt-in override
+`compose.legacy.yaml`. Apply it only for explicit ETL/admin one-off paths that
+must reach a temporarily started legacy stack — for example running
+`ok-folio-etl load-dump` in-container against a live legacy host, or exercising
+the PhotoPrism index admin endpoint. The override re-attaches the app to the
+external legacy network and injects the read-only legacy DB credentials for the
+duration of that task:
+
+```bash
+docker compose -f compose.yaml -f compose.legacy.yaml up -d
+```
+
+The legacy DB is only ever read via `mariadb-dump` on stdin; these credentials
+never open a live GORM connection from the app (see `internal/testguard`). Docker
+lifecycle for this stack still goes through Dockhand; the override command shape
+above documents the merge contract, not a manual `docker compose up`.
 
 ## Render And Assert
 
