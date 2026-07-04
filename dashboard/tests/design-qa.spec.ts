@@ -198,6 +198,36 @@ for (const theme of ["light", "dark"] as Theme[]) {
       await expect(page.getByRole("status").filter({ hasText: /Adding piece to folio|Couldn’t add piece to folio/ })).toHaveCount(0);
     });
 
+    test("folio add-pieces picker matches the desktop redesign", async ({ page }, testInfo) => {
+      test.skip(/mobile/i.test(testInfo.project.name), "the redesigned picker dialog is the desktop branch");
+
+      await page.goto("/folios/1");
+      await expect(page.locator("body")).toContainText(/Reference Walls|Add pieces/);
+      await page.getByRole("button", { name: /^Add pieces$/i }).first().click();
+
+      const picker = page.getByRole("dialog", { name: "Add pieces" });
+      await expect(picker).toBeVisible();
+      await expect(picker.getByText("Add to folio")).toBeVisible();
+      await expect(picker.getByRole("heading", { name: "Reference Walls" })).toBeVisible();
+      await expect(picker.getByPlaceholder("Search pieces")).toBeVisible();
+      await expect(picker.getByText("Select pieces to add")).toBeVisible();
+      await expect(picker.getByRole("button", { name: /^Add pieces$/ })).toBeDisabled();
+
+      await picker.getByRole("button", { name: /Catalog Fragment/i }).click();
+      await picker.getByRole("button", { name: /Studio Shelf/i }).click();
+      await expect(picker.getByText("2 selected")).toBeVisible();
+      const confirm = picker.getByRole("button", { name: /^Add 2 pieces$/ });
+      await expect(confirm).toBeEnabled();
+
+      await page.evaluate(() => document.fonts.ready);
+      const outDir = path.join(screenshotRoot, testInfo.project.name, theme);
+      mkdirSync(outDir, { recursive: true });
+      await page.screenshot({
+        path: path.join(outDir, "folio-add-pieces-picker.png"),
+        animations: "disabled",
+      });
+    });
+
     test("viewer edit mode keeps one chrome cluster and Escape exits edit first", async ({ page }, testInfo) => {
       await page.goto("/");
       await expect(page.locator("body")).toContainText(/Gallery|Recently gathered|Red Room Study/);
