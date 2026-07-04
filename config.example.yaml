@@ -17,6 +17,15 @@ storage:
   # cap is exceeded; set to -1 only for local experiments with no pruning.
   derivatives_directory: "/derivatives"
   derivatives_max_bytes: 21474836480
+  # Optional, read-only legacy PhotoPrism storage fallback. Leave empty for the
+  # normal runtime: OK Folio serves thumbnails from its own originals and the
+  # derivative cache without any legacy mount. When set (only while the opt-in
+  # deploy/dockhand/ok-folio/compose.legacy-storage.yaml override is applied) it
+  # points at the read-only legacy PhotoPrism storage mount, and OK Folio falls
+  # back to a pre-rendered legacy thumbnail only when it cannot generate one from
+  # its own original. Every fallback hit is counted as the `legacy_storage` tier
+  # on GET /api/v1/stats/thumbnail-tiers. Also settable via OK_FOLIO_LEGACY_THUMB_DIR.
+  legacy_thumb_directory: ""
   # Warm gallery thumbnails as soon as a new photo is ingested so first gallery
   # paint hits the derivative cache instead of generating thumbnails on demand.
   warm_on_ingest: true

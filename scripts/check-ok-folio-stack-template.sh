@@ -4,6 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 compose_file="$repo_root/deploy/dockhand/ok-folio/compose.yaml"
 legacy_override_file="$repo_root/deploy/dockhand/ok-folio/compose.legacy.yaml"
+legacy_storage_override_file="$repo_root/deploy/dockhand/ok-folio/compose.legacy-storage.yaml"
 initdb_file="$repo_root/deploy/dockhand/ok-folio/initdb/010-vector-extensions.sh"
 valkey_template="$repo_root/deploy/dockhand/ok-folio/valkey.conf.template"
 config_template="$repo_root/deploy/dockhand/ok-folio/config.yaml.template"
@@ -24,6 +25,7 @@ require_grep() {
 
 [ -f "$compose_file" ] || fail "missing $compose_file"
 [ -f "$legacy_override_file" ] || fail "missing $legacy_override_file"
+[ -f "$legacy_storage_override_file" ] || fail "missing $legacy_storage_override_file"
 [ -f "$initdb_file" ] || fail "missing $initdb_file"
 [ -f "$valkey_template" ] || fail "missing $valkey_template"
 [ -f "$config_template" ] || fail "missing $config_template"
@@ -118,9 +120,36 @@ fi
 
 require_grep 'PHOTO_ORIGINALS_HOST_PATH.*:/photoprism/originals[[:space:]]*$' "$compose_file" "originals mount must be writable"
 require_grep 'PHOTO_DAILY_HOST_PATH.*:/photoprism/_daily[[:space:]]*$' "$compose_file" "daily mount must be writable"
-require_grep 'PHOTOPRISM_STORAGE_HOST_PATH.*:/photoprism/storage:ro' "$compose_file" "legacy storage mount must end in :ro"
 
-for template in "$compose_file" "$legacy_override_file"; do
+# The legacy PhotoPrism storage/thumb fallback is optional. Normal runtime must
+# boot and serve thumbnails without it, so the base compose must neither require
+# the PHOTOPRISM_STORAGE_HOST_PATH variable nor mount /photoprism/storage. The
+# mount lives only in the opt-in compose.legacy-storage.yaml override.
+if grep -Eq -- '\$\{PHOTOPRISM_STORAGE_HOST_PATH:\?' "$compose_file"; then
+  fail "normal runtime compose must not require PHOTOPRISM_STORAGE_HOST_PATH; keep the legacy storage fallback in the opt-in compose.legacy-storage.yaml override"
+fi
+if grep -Eq -- '^[[:space:]]*-[[:space:]].*:/photoprism/storage' "$compose_file"; then
+  fail "normal runtime compose must not mount /photoprism/storage; the legacy storage fallback is opt-in via compose.legacy-storage.yaml"
+fi
+
+# The opt-in legacy storage override mounts the fallback read-only and points the
+# app at it so the measured legacy_storage thumbnail tier is only active while the
+# override is applied.
+require_grep 'PHOTOPRISM_STORAGE_HOST_PATH.*:/photoprism/storage:ro' "$legacy_storage_override_file" "legacy storage override must mount /photoprism/storage read-only"
+require_grep 'OK_FOLIO_LEGACY_THUMB_DIR:[[:space:]]*/photoprism/storage' "$legacy_storage_override_file" "legacy storage override must point OK_FOLIO_LEGACY_THUMB_DIR at the read-only mount"
+
+# Any /photoprism/storage mount in any compose file must be kernel-enforced
+# read-only. This keeps rejecting a writable legacy storage mount even though the
+# base runtime no longer mounts it at all.
+for template in "$compose_file" "$legacy_override_file" "$legacy_storage_override_file"; do
+  writable_storage="$(grep -E -- '^[[:space:]]*-[[:space:]].*:/photoprism/storage' "$template" | grep -Ev -- ':/photoprism/storage:ro([[:space:]]*$|[[:space:]]+#)' || true)"
+  if [ -n "$writable_storage" ]; then
+    echo "$writable_storage" >&2
+    fail "legacy storage mount must be read-only (:ro) in $template"
+  fi
+done
+
+for template in "$compose_file" "$legacy_override_file" "$legacy_storage_override_file"; do
   if grep -Eq '([0-9]{1,3}\.){3}[0-9]{1,3}|/mnt/|/tank/|/pool/|/var/lib/docker|/home/' "$template"; then
     fail "compose template must not contain concrete IPs or host paths: $template"
   fi

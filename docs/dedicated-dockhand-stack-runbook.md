@@ -9,6 +9,7 @@ vault copy or any rendered `.env` file.
 
 - Compose template: `deploy/dockhand/ok-folio/compose.yaml`
 - Legacy ETL/admin override (opt-in only): `deploy/dockhand/ok-folio/compose.legacy.yaml`
+- Legacy storage fallback override (opt-in only): `deploy/dockhand/ok-folio/compose.legacy-storage.yaml`
 - Valkey config template: `deploy/dockhand/ok-folio/valkey.conf.template`
 - OK Folio runtime config template: `deploy/dockhand/ok-folio/config.yaml.template`
 - Postgres initdb: `deploy/dockhand/ok-folio/initdb/010-vector-extensions.sh`
@@ -32,7 +33,7 @@ Record these concrete values in the vault runbook before first deploy:
 | Config file host path | `<ok-folio-config-host-path>` |
 | Originals host path | `<photo-originals-host-path>` |
 | Daily host path | `<photo-daily-host-path>` |
-| PhotoPrism storage host path | `<photoprism-storage-host-path>` |
+| PhotoPrism storage host path (optional legacy thumb fallback) | `<photoprism-storage-host-path>` |
 | External legacy Docker network name | `<legacy-network-name>` |
 | Verified-free app ops port | `<app-port>` |
 | Verified-free Postgres ops port | `<postgres-port>` |
@@ -110,7 +111,6 @@ VALKEY_MAXMEMORY=<host-budget-placeholder>
 VALKEY_MAXMEMORY_POLICY=<host-budget-placeholder>
 PHOTO_ORIGINALS_HOST_PATH=<photo-originals-host-path>
 PHOTO_DAILY_HOST_PATH=<photo-daily-host-path>
-PHOTOPRISM_STORAGE_HOST_PATH=<photoprism-storage-host-path>
 TELEGRAM_BOT_TOKEN=<telegram-bot-token>
 TELEGRAM_CHAT_ID=<telegram-chat-id>
 TELEGRAM_USERNAME=<telegram-username>
@@ -134,6 +134,17 @@ LEGACY_DB_HOST=<legacy-mariadb-container-name>
 LEGACY_DB_USER=<legacy-read-user>
 LEGACY_DB_PASSWORD=<legacy-read-password>
 LEGACY_DOCKER_NETWORK=<external-legacy-network-name>
+```
+
+The legacy PhotoPrism storage/thumb fallback is also opt-in and is not required
+for a normal boot. The key below is used only when applying the storage-fallback
+override `compose.legacy-storage.yaml` (see Legacy Storage Fallback And Thumbnail
+Tier Measurement below), which mounts the legacy PhotoPrism storage tree
+read-only and sets `OK_FOLIO_LEGACY_THUMB_DIR=/photoprism/storage` inside the app
+container:
+
+```dotenv
+PHOTOPRISM_STORAGE_HOST_PATH=<photoprism-storage-host-path>
 ```
 
 ## Stack Services
@@ -165,16 +176,22 @@ the normal runtime; it does not require the external legacy Docker network to
 boot. The app talks to Postgres, Valkey, and the embedder by service name;
 published ports are for operations only.
 
-All legacy mounts are kernel-enforced read-only:
+The normal runtime mounts only OK Folio's own media and cache:
 
-- originals: `/photoprism/originals:ro`
-- daily export: `/photoprism/_daily:ro`
-- PhotoPrism storage/thumb tier: `/photoprism/storage:ro`
+- originals: `/photoprism/originals` (writable — OK Folio downloads originals here)
+- daily export: `/photoprism/_daily` (writable — OK Folio writes daily symlinks here)
+- derivatives cache: `/derivatives` (writable, rebuildable)
 
-The app also has one writable, rebuildable mount at `/derivatives` for
-generated thumbnails. Its growth is bounded by `storage.derivatives_max_bytes`
-in `config.yaml`; the API evicts least-recently-used derivative files when the
-configured byte cap is exceeded.
+The writable derivatives cache holds generated thumbnails. Its growth is bounded
+by `storage.derivatives_max_bytes` in `config.yaml`; the API evicts
+least-recently-used derivative files when the configured byte cap is exceeded.
+
+The legacy PhotoPrism storage/thumb tier is **not** mounted by the normal
+runtime. It is an optional, kernel-enforced read-only fallback added only by the
+opt-in `compose.legacy-storage.yaml` override during retirement (see Legacy
+Storage Fallback And Thumbnail Tier Measurement):
+
+- PhotoPrism storage/thumb tier: `/photoprism/storage:ro` (opt-in override only)
 
 ## Legacy ETL/Admin Override
 
@@ -205,6 +222,76 @@ legacy-retirement preflight to gather PASS/WARN/FAIL/PENDING evidence in one
 place (`make retirement-preflight`; see `docs/legacy-retirement-preflight.md`).
 The preflight performs no Docker/Dockhand/systemctl/Maestro lifecycle mutation.
 
+## Legacy Storage Fallback And Thumbnail Tier Measurement
+
+OK Folio serves thumbnails from its own originals and derivative cache. It does
+not require the legacy PhotoPrism storage mount to boot or to serve thumbnails,
+so `PHOTOPRISM_STORAGE_HOST_PATH` is not a normal-runtime requirement and the base
+`compose.yaml` does not mount `/photoprism/storage`.
+
+The legacy PhotoPrism storage/thumb tier is kept only as a measurable, optional
+fallback during retirement, behind the opt-in override `compose.legacy-storage.yaml`.
+Applied alongside the base compose, the override mounts the legacy storage tree
+read-only and sets `OK_FOLIO_LEGACY_THUMB_DIR=/photoprism/storage` so OK Folio
+falls back to a pre-rendered legacy thumbnail only when it cannot generate one
+from its own original (for example a piece whose original has not been migrated
+yet):
+
+```bash
+docker compose -f compose.yaml -f compose.legacy-storage.yaml up -d
+```
+
+The fallback is strictly read-only: OK Folio only ever reads from
+`/photoprism/storage`, never writes, and both the stack-template check and the
+rendered legacy mount assertion reject a writable `/photoprism/storage` mount.
+
+### Measuring whether the fallback is still hit
+
+The app exposes process-lifetime thumbnail source tier counts:
+
+```bash
+curl -s http://<lan-host>:<app-port>/api/v1/stats/thumbnail-tiers
+```
+
+```json
+{
+  "tiers": {
+    "valkey_hit": 0,
+    "disk_hit": 0,
+    "generated": 0,
+    "legacy_storage": 0
+  },
+  "legacy_storage_fallback_configured": true
+}
+```
+
+- `valkey_hit` / `disk_hit`: served from the Valkey hot tier or the own disk
+  derivative cache.
+- `generated`: freshly generated from an OK Folio original (its own cache could
+  produce the thumbnail).
+- `legacy_storage`: served from the read-only legacy PhotoPrism storage fallback.
+  This is the tier that proves whether the legacy mount is still doing work.
+- `legacy_storage_fallback_configured` reflects whether `OK_FOLIO_LEGACY_THUMB_DIR`
+  is set (i.e. whether the override is applied).
+
+### Evidence required before removing the mount
+
+Before dropping the legacy storage mount in a later deploy, capture in the vault
+runbook:
+
+1. `legacy_storage_fallback_configured: true` for the window (the override was
+   actually applied, so any real hits would have been counted).
+2. `legacy_storage` holding at zero across a full reconcile window (see the ETL
+   runbook cutover gate), sampled at the start and end of the window so the delta
+   is zero, not just a single instantaneous read.
+3. Gallery smoke confirming thumbnails still render for a sample of pieces while
+   the counter stays at zero.
+
+Once that evidence is recorded, retire the mount by deploying with only
+`-f compose.yaml` (drop the `compose.legacy-storage.yaml` override) and removing
+`PHOTOPRISM_STORAGE_HOST_PATH` from the rendered `.env`. No app image change or
+config change is required to drop the mount.
+
 ## Render And Assert
 
 Render on the deployment host from Infisical and the vault path references. Do
@@ -227,13 +314,21 @@ envsubst '$DB_USER $DB_PASSWORD $DB_NAME $VALKEY_PASSWORD $TELEGRAM_BOT_TOKEN $T
   < config.yaml.template > "$OK_FOLIO_CONFIG_HOST_PATH"
 chown 1000:1000 "$OK_FOLIO_CONFIG_HOST_PATH"
 chmod 0400 "$OK_FOLIO_CONFIG_HOST_PATH"
-envsubst '$PHOTO_ORIGINALS_HOST_PATH $PHOTO_DAILY_HOST_PATH $PHOTOPRISM_STORAGE_HOST_PATH' \
+envsubst '$PHOTO_ORIGINALS_HOST_PATH $PHOTO_DAILY_HOST_PATH' \
   < compose.yaml > compose.mounts.rendered.yaml
 ./assert-rendered-legacy-mounts-ro.sh compose.mounts.rendered.yaml
+
+# Only while the optional legacy storage fallback override is applied during the
+# measurement window, also assert its merged storage mount is read-only:
+envsubst '$PHOTOPRISM_STORAGE_HOST_PATH' \
+  < compose.legacy-storage.yaml > compose.legacy-storage.rendered.yaml
+./assert-rendered-legacy-mounts-ro.sh compose.legacy-storage.rendered.yaml
 ```
 
-The assertion must fail deployment if any legacy path is mounted without a
-trailing `:ro`.
+The base compose no longer mounts `/photoprism/storage`, so the first assertion
+passes trivially there (no legacy storage mount to check). The assertion must
+fail deployment if the legacy storage mount is ever rendered without a trailing
+`:ro`.
 
 ## Dockhand Deploy Contract
 

@@ -64,26 +64,36 @@ func (s *Server) handleImageThumbnail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := os.Stat(filePath); err != nil {
-		s.logger.Error().Err(err).Str("file_path", photo.FilePath).Msg("Failed to stat image file")
-		s.writeError(w, http.StatusNotFound, "Image file not found")
-		return
-	}
-
 	entry := s.thumbCache.Entry(photo, size, baseETag)
-	if s.serveThumbnailFromCache(w, r, entry) {
+	if tier, ok := s.serveThumbnailFromCache(w, r, entry); ok {
+		s.thumbnailTiers.record(tier)
 		return
 	}
-	w.Header().Set("X-OK-Folio-Thumbnail-Cache", "miss")
 
+	// Cache miss: generate from OK Folio's own original. This is the normal path
+	// and needs no legacy PhotoPrism storage mount.
 	data, err := derivatives.GenerateThumbnail(r.Context(), filePath, size)
-	if err != nil {
-		s.logger.Error().Err(err).Str("file_path", photo.FilePath).Msg("Failed to generate thumbnail")
-		s.writeError(w, http.StatusNotFound, "Image file not found")
+	if err == nil {
+		w.Header().Set("X-OK-Folio-Thumbnail-Cache", "miss")
+		s.storeThumbnail(entry, data)
+		s.thumbnailTiers.record(thumbnailTierGenerated)
+		_, _ = w.Write(data)
 		return
 	}
-	s.storeThumbnail(entry, data)
-	_, _ = w.Write(data)
+
+	// The own original is unavailable or undecodable. Fall back to the optional,
+	// read-only legacy PhotoPrism storage thumbnail when one is configured and
+	// present. This tier is measured so operators can see whether the legacy mount
+	// is still needed before dropping it.
+	if legacyData, ok := derivatives.LegacyThumbnail(s.cfg.Storage.LegacyThumbDirectory, photo, baseETag); ok {
+		w.Header().Set("X-OK-Folio-Thumbnail-Cache", "legacy-storage")
+		s.thumbnailTiers.record(thumbnailTierLegacyStorage)
+		_, _ = w.Write(legacyData)
+		return
+	}
+
+	s.logger.Error().Err(err).Str("file_path", photo.FilePath).Msg("Failed to generate thumbnail")
+	s.writeError(w, http.StatusNotFound, "Image file not found")
 }
 
 // handleImageFull serves the full-size image
