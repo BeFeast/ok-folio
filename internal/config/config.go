@@ -125,12 +125,26 @@ type EXIFConfig struct {
 	SetTitle  bool `yaml:"set_title"`
 }
 
+// PhotoPrismConfig configures the legacy PhotoPrism integration. During Wave 6
+// legacy retirement PhotoPrism is a stopped-but-startable fallback, so this
+// integration is disabled by default and stays out of the normal OK Folio
+// product path. Enabled gates the whole integration (client creation and the
+// admin-only manual index route); AutoIndex additionally opts the download flow
+// into triggering PhotoPrism indexing after new downloads.
 type PhotoPrismConfig struct {
 	Enabled    bool   `yaml:"enabled"`
 	ServiceURL string `yaml:"service_url"`
 	AutoIndex  bool   `yaml:"auto_index"`
 	Username   string `yaml:"username"`
 	Password   string `yaml:"password"`
+}
+
+// AutoIndexEnabled reports whether new downloads should automatically trigger
+// legacy PhotoPrism indexing. It stays off unless an operator explicitly opts in
+// with both photoprism.enabled and photoprism.auto_index, keeping PhotoPrism
+// indexing out of the normal OK Folio download path.
+func (c PhotoPrismConfig) AutoIndexEnabled() bool {
+	return c.Enabled && c.AutoIndex
 }
 
 type TelegramConfig struct {

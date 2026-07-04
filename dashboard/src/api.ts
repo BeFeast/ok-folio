@@ -388,16 +388,6 @@ export async function fetchArtistDetail(
   return response.json();
 }
 
-export async function triggerPhotoprismIndex(): Promise<void> {
-  const response = await fetch(`${API_BASE}/photoprism/index`, {
-    method: "POST",
-  });
-  if (!response.ok) {
-    throw new Error("Failed to trigger PhotoPrism indexing");
-  }
-  await clearOfflineCaches([API_GET_CACHE_NAME, PIECE_IMAGE_CACHE_NAME]);
-}
-
 export async function fetchTodayPhotos(
   limit: number = 50,
   offset: number = 0,

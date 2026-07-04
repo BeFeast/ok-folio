@@ -15,7 +15,6 @@ export default function ImageModal({ photoId, photoIds = [], onClose, onNavigate
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [favoriteError, setFavoriteError] = useState<string | null>(null);
-  const legacyPhotoPrismPort = import.meta.env.VITE_PHOTOPRISM_PORT;
 
   const {
     data: photo,
@@ -30,7 +29,6 @@ export default function ImageModal({ photoId, photoIds = [], onClose, onNavigate
     queryKey: ["favorite", photoId],
     queryFn: () => getFavoriteStatus(photoId),
     staleTime: 30000,
-    enabled: Boolean(legacyPhotoPrismPort),
   });
 
   const addFavoriteMutation = useMutation({
@@ -113,7 +111,7 @@ export default function ImageModal({ photoId, photoIds = [], onClose, onNavigate
   };
 
   const isFavorite = favoriteStatus?.favorite ?? false;
-  const isPhotoprismAvailable = Boolean(legacyPhotoPrismPort) && (favoriteStatus?.available ?? false);
+  const isFavoriteAvailable = favoriteStatus?.available ?? false;
   const isFavoriteLoading = addFavoriteMutation.isPending || removeFavoriteMutation.isPending;
 
   return (
@@ -222,33 +220,8 @@ export default function ImageModal({ photoId, photoIds = [], onClose, onNavigate
 
               {/* Action buttons */}
               <div className="mt-4 flex flex-wrap gap-3 items-center">
-                {legacyPhotoPrismPort && (
-                  <a
-                    href={`http://${window.location.hostname}:${legacyPhotoPrismPort}/library/browse?q=${encodeURIComponent(`name:"${photo.file_name}"`)}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-md text-sm font-medium"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <svg
-                      className="w-4 h-4 mr-2"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
-                      />
-                    </svg>
-                    Open legacy PhotoPrism
-                  </a>
-                )}
-
                 {/* Favorite button */}
-                {isPhotoprismAvailable && (
+                {isFavoriteAvailable && (
                   <button
                     onClick={(e) => { e.stopPropagation(); toggleFavorite(); }}
                     disabled={isFavoriteLoading}

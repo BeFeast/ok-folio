@@ -265,6 +265,50 @@ download:
 	}
 }
 
+func TestPhotoPrismAutoIndexEnabled(t *testing.T) {
+	tests := []struct {
+		name    string
+		enabled bool
+		auto    bool
+		want    bool
+	}{
+		{name: "default zero value stays disabled", enabled: false, auto: false, want: false},
+		{name: "enabled without auto_index stays disabled", enabled: true, auto: false, want: false},
+		{name: "auto_index without enabled stays disabled", enabled: false, auto: true, want: false},
+		{name: "both flags opt in", enabled: true, auto: true, want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := PhotoPrismConfig{Enabled: tt.enabled, AutoIndex: tt.auto}
+			if got := cfg.AutoIndexEnabled(); got != tt.want {
+				t.Fatalf("AutoIndexEnabled() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLoad_DefaultsPhotoPrismIndexingDisabled(t *testing.T) {
+	// A runtime config with no photoprism section must keep PhotoPrism indexing
+	// off so the normal OK Folio path never triggers legacy indexing.
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte(completeConfig("")), 0644); err != nil {
+		t.Fatalf("Failed to write config: %v", err)
+	}
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Failed to load config: %v", err)
+	}
+	if cfg.PhotoPrism.Enabled {
+		t.Fatalf("Expected PhotoPrism disabled by default, got enabled")
+	}
+	if cfg.PhotoPrism.AutoIndexEnabled() {
+		t.Fatalf("Expected PhotoPrism auto-indexing disabled by default")
+	}
+}
+
 func TestLoad_FileNotFound(t *testing.T) {
 	_, err := Load("/nonexistent/config.yaml")
 	if err == nil {

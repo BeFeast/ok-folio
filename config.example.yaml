@@ -80,6 +80,12 @@ exif:
   set_date: true
   set_title: true
 
+# Legacy PhotoPrism integration. During legacy retirement PhotoPrism is a
+# stopped-but-startable fallback and is kept out of the normal OK Folio product
+# path, so it stays disabled by default. `enabled` gates the whole integration
+# and the admin-only POST /api/v1/photoprism/index escape hatch (which returns a
+# disabled response when off); `auto_index` additionally lets new downloads
+# trigger PhotoPrism indexing. Leave both false for normal OK Folio runtime.
 photoprism:
   enabled: false
   service_url: "http://localhost:2342"

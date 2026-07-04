@@ -3762,3 +3762,112 @@ func TestHandleExtractPage_QueueFull(t *testing.T) {
 		t.Errorf("Expected status 429, got %d", w.Code)
 	}
 }
+
+// TestHandleTriggerIndex_DisabledByDefault asserts the legacy PhotoPrism index
+// route is out of the normal product path: with the default (disabled) config it
+// returns a deterministic disabled response instead of pretending to index.
+func TestHandleTriggerIndex_DisabledByDefault(t *testing.T) {
+	server, _ := setupTestServer(t)
+	defer safeShutdown(server)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/photoprism/index", nil)
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 disabled response, got %d body=%q", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode disabled response: %v", err)
+	}
+	if resp["status"] != "disabled" {
+		t.Fatalf("expected status \"disabled\", got %#v", resp)
+	}
+}
+
+// TestHandleTriggerIndex_EnabledEscapeHatch asserts the retained admin escape
+// hatch still works when an operator explicitly opts in via photoprism.enabled,
+// reaching the (fake) PhotoPrism backend exactly once.
+func TestHandleTriggerIndex_EnabledEscapeHatch(t *testing.T) {
+	var sessions, indexes int
+	pp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/session":
+			sessions++
+			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "fixture-token", "expires_in": 3600})
+		case "/api/v1/index":
+			indexes++
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected PhotoPrism request path: %s", r.URL.Path)
+		}
+	}))
+	defer pp.Close()
+
+	server := newPhotoprismEscapeHatchServer(t, pp.URL)
+	defer safeShutdown(server)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/photoprism/index", nil)
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 from enabled escape hatch, got %d body=%q", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode triggered response: %v", err)
+	}
+	if resp["status"] != "triggered" {
+		t.Fatalf("expected status \"triggered\", got %#v", resp)
+	}
+	if indexes != 1 {
+		t.Fatalf("expected exactly one PhotoPrism index call, got %d (sessions=%d)", indexes, sessions)
+	}
+}
+
+// newPhotoprismEscapeHatchServer builds a server whose config explicitly enables
+// the legacy PhotoPrism integration (but not auto_index) so the gated admin
+// escape hatch can be exercised against a fake PhotoPrism backend. auto_index
+// stays off so testguard keeps passing and the normal download path is untouched.
+func newPhotoprismEscapeHatchServer(t *testing.T, serviceURL string) *Server {
+	t.Helper()
+
+	gormDB, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		t.Fatalf("Failed to create test database: %v", err)
+	}
+	if err := gormDB.AutoMigrate(&database.DownloadedPhoto{}, &database.ExtractionRun{}, &database.InboxItem{}, &database.ConnectorState{}, &database.ConnectorSource{}, &database.Folio{}, &database.FolioPiece{}); err != nil {
+		t.Fatalf("Failed to migrate test database: %v", err)
+	}
+	db := &database.DB{DB: gormDB}
+
+	storageDir := t.TempDir()
+	cfg := &config.Config{
+		API: config.APIConfig{Host: "0.0.0.0", Port: 8080},
+		Storage: config.StorageConfig{
+			BaseDirectory:        filepath.Join(storageDir, "originals"),
+			DailyDirectory:       filepath.Join(storageDir, "daily"),
+			DerivativesDirectory: filepath.Join(storageDir, "derivatives"),
+			DerivativesMaxBytes:  50 * 1024 * 1024,
+		},
+		Download: config.DownloadConfig{Timeout: 5 * time.Second, UserAgent: "OK-Folio-Test/1.0"},
+		PhotoPrism: config.PhotoPrismConfig{
+			Enabled:    true,
+			AutoIndex:  false,
+			ServiceURL: serviceURL,
+			Username:   "admin",
+			Password:   "fixture-secret",
+		},
+	}
+	if err := testguard.ValidateConfig(cfg); err != nil {
+		t.Fatalf("unsafe escape-hatch test config: %v", err)
+	}
+
+	testLogger := zerolog.New(os.Stderr).Level(zerolog.Disabled)
+	scr := scraper.New(cfg, db, testLogger)
+	return New(cfg, db, scr, testLogger)
+}

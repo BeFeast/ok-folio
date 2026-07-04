@@ -215,7 +215,9 @@ func (s *Server) setupRoutes() {
 		r.Post("/folios/{id}/pieces", s.handleAddFolioPiece)
 		r.Delete("/folios/{id}/pieces/{photoId}", s.handleRemoveFolioPiece)
 
-		// PhotoPrism integration
+		// Legacy PhotoPrism admin escape hatch (disabled by default). Kept out of
+		// the normal product path during Wave 6 retirement; returns a disabled
+		// response unless photoprism.enabled is explicitly set.
 		r.Post("/photoprism/index", s.handleTriggerIndex)
 
 		// Real-time streaming

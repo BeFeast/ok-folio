@@ -1,10 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import {
-  triggerExtraction,
-  triggerPagesExtraction,
-  triggerPhotoprismIndex,
-} from "../api";
+import { triggerExtraction, triggerPagesExtraction } from "../api";
 
 export default function Controls() {
   const [message, setMessage] = useState<{
@@ -35,24 +31,6 @@ export default function Controls() {
       setMessage({
         type: "error",
         text: `Failed to start extraction: ${error.message}`,
-      });
-      setTimeout(() => setMessage(null), 5000);
-    },
-  });
-
-  const indexMutation = useMutation({
-    mutationFn: triggerPhotoprismIndex,
-    onSuccess: () => {
-      setMessage({
-        type: "success",
-        text: "Gallery index request sent.",
-      });
-      setTimeout(() => setMessage(null), 5000);
-    },
-    onError: (error: Error) => {
-      setMessage({
-        type: "error",
-        text: `Failed to trigger indexing: ${error.message}`,
       });
       setTimeout(() => setMessage(null), 5000);
     },
@@ -109,17 +87,6 @@ export default function Controls() {
             }`}
           >
             {extractMutation.isPending ? "Starting" : "Start default run"}
-          </button>
-          <button
-            onClick={() => indexMutation.mutate()}
-            disabled={indexMutation.isPending}
-            className={`rounded-md border px-4 py-2 text-sm font-medium transition-colors ${
-              indexMutation.isPending
-                ? "border-gray-200 bg-gray-100 text-gray-500 cursor-not-allowed"
-                : "border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
-            }`}
-          >
-            {indexMutation.isPending ? "Indexing" : "Request gallery index"}
           </button>
           {message && (
             <div
