@@ -1878,6 +1878,133 @@ func TestHandleConnectorStatus(t *testing.T) {
 	}
 }
 
+func TestHandleConnectorStatusCollapsesSourceScopedWebGallery(t *testing.T) {
+	server, db := setupTestServer(t)
+	defer safeShutdown(server)
+
+	// Historical family-level `webgallery` catalog row alongside an active
+	// source-scoped `webgallery:1` row. The full path (GetConnectorSourceStats
+	// grouping by the stored provider column, then aggregation) must collapse
+	// both onto one Web Gallery card.
+	photos := []database.DownloadedPhoto{
+		{
+			URL:          "webgallery:old/kept",
+			Provider:     "webgallery",
+			SourcePage:   "https://gallery.example.com/old",
+			Title:        "Historical Piece",
+			FilePath:     filepath.Join(server.cfg.Storage.BaseDirectory, "old.jpg"),
+			FileName:     "old.jpg",
+			DownloadedAt: ptrTime(time.Date(2026, 6, 29, 0, 0, 2, 0, time.UTC)),
+			Status:       "downloaded",
+		},
+		{
+			URL:          "webgallery:new/kept",
+			Provider:     "webgallery:1",
+			SourcePage:   "https://gallery.example.com/new",
+			Title:        "Active Piece",
+			FilePath:     filepath.Join(server.cfg.Storage.BaseDirectory, "new.jpg"),
+			FileName:     "new.jpg",
+			DownloadedAt: ptrTime(time.Date(2026, 7, 3, 12, 0, 3, 0, time.UTC)),
+			Status:       "downloaded",
+		},
+	}
+	for _, photo := range photos {
+		if err := db.Create(&photo).Error; err != nil {
+			t.Fatalf("Failed to create photo: %v", err)
+		}
+	}
+
+	staleRun := time.Date(2026, 6, 29, 0, 0, 2, 0, time.UTC)
+	activeRun := time.Date(2026, 7, 3, 12, 0, 3, 0, time.UTC)
+	states := []database.ConnectorState{
+		{ProviderID: "webgallery", LastRunAt: &staleRun, LastStatus: "completed"},
+		{ProviderID: "webgallery:1", LastRunAt: &activeRun, LastStatus: "completed"},
+	}
+	for _, state := range states {
+		if err := db.Create(&state).Error; err != nil {
+			t.Fatalf("Failed to create connector state: %v", err)
+		}
+	}
+
+	runs := []database.ExtractionRun{
+		{
+			StartTime: ptrTime(time.Date(2026, 6, 29, 0, 0, 0, 0, time.UTC)),
+			EndTime:   &staleRun,
+			Provider:  "webgallery",
+			Status:    "completed",
+		},
+		{
+			StartTime:      ptrTime(time.Date(2026, 7, 3, 12, 0, 0, 0, time.UTC)),
+			EndTime:        &activeRun,
+			Provider:       "webgallery:1",
+			Status:         "completed",
+			PagesProcessed: 3,
+			PhotosFound:    72,
+			PhotosSkipped:  72,
+		},
+	}
+	var activeRunID uint64
+	for i := range runs {
+		if err := db.Create(&runs[i]).Error; err != nil {
+			t.Fatalf("Failed to create extraction run: %v", err)
+		}
+		if runs[i].Provider == "webgallery:1" {
+			activeRunID = runs[i].ID
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/streams/connectors/status", nil)
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d", w.Code)
+	}
+
+	var response connectorStatusResponse
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode connector status: %v", err)
+	}
+
+	var webgallery *connectorStatus
+	familyCards := 0
+	for i := range response.Connectors {
+		if strings.Contains(response.Connectors[i].ID, ":") {
+			t.Fatalf("Expected no source-scoped top-level connector, got %#v", response.Connectors[i])
+		}
+		if response.Connectors[i].ID == "webgallery" {
+			familyCards++
+			webgallery = &response.Connectors[i]
+		}
+	}
+	if familyCards != 1 || webgallery == nil {
+		t.Fatalf("Expected exactly one Web Gallery card, got %#v", response.Connectors)
+	}
+	if webgallery.LastSync == nil || !webgallery.LastSync.Equal(activeRun) {
+		t.Fatalf("Expected active source-scoped last sync %v, got %v", activeRun, webgallery.LastSync)
+	}
+	if webgallery.Health != "healthy" || webgallery.State != "Healthy" {
+		t.Fatalf("Expected healthy family card, got health=%q state=%q", webgallery.Health, webgallery.State)
+	}
+	if webgallery.Counts.Downloaded != 2 {
+		t.Fatalf("Expected downloads aggregated across sources, got %#v", webgallery.Counts)
+	}
+	if len(webgallery.Sources) != 2 {
+		t.Fatalf("Expected historical and source-scoped source rows, got %#v", webgallery.Sources)
+	}
+	var sawScopedSource bool
+	for _, source := range webgallery.Sources {
+		if source.ProviderID == "webgallery:1" {
+			sawScopedSource = true
+		}
+	}
+	if !sawScopedSource {
+		t.Fatalf("Expected a source row scoped to webgallery:1, got %#v", webgallery.Sources)
+	}
+	if len(webgallery.RecentRuns) != 2 || webgallery.RecentRuns[0].ID != activeRunID {
+		t.Fatalf("Expected source-scoped run to lead the family card runs, got %#v", webgallery.RecentRuns)
+	}
+}
+
 func TestHandleConnectorStatusRendersKnownConnectorsWithoutCatalogRows(t *testing.T) {
 	server, _ := setupTestServer(t)
 	defer safeShutdown(server)
@@ -2065,6 +2192,147 @@ func TestConnectorHealth(t *testing.T) {
 				t.Fatalf("connectorHealth() = %q, %q; want %q, %q", health, state, tt.wantHealth, tt.wantState)
 			}
 		})
+	}
+}
+
+func TestBuildConnectorStatusesCollapsesWebGalleryFamily(t *testing.T) {
+	// Mixed historical `webgallery` and active source-scoped `webgallery:1` rows
+	// across catalog source stats, extraction runs, and connector state. The
+	// states are ordered adversarially (active before stale) so a naive
+	// last-write-wins would surface the stale family-level sync.
+	staleActivity := time.Date(2026, 6, 29, 0, 0, 2, 0, time.UTC)
+	activeActivity := time.Date(2026, 7, 3, 12, 0, 3, 0, time.UTC)
+	sourceStats := []database.ConnectorSourceStats{
+		{
+			Provider:     "webgallery",
+			SourcePage:   "https://gallery.example.com/old",
+			URL:          "webgallery:old/1",
+			Status:       "downloaded",
+			Count:        5,
+			LastActivity: &staleActivity,
+		},
+		{
+			Provider:     "webgallery:1",
+			SourcePage:   "https://gallery.example.com/new",
+			URL:          "webgallery:new/1",
+			Status:       "downloaded",
+			Count:        72,
+			LastActivity: &activeActivity,
+		},
+	}
+
+	activeRunStart := time.Date(2026, 7, 3, 12, 0, 0, 0, time.UTC)
+	activeRunEnd := time.Date(2026, 7, 3, 12, 0, 3, 0, time.UTC)
+	staleRunStart := time.Date(2026, 6, 29, 0, 0, 0, 0, time.UTC)
+	staleRunEnd := time.Date(2026, 6, 29, 0, 0, 2, 0, time.UTC)
+	runs := []database.ExtractionRun{
+		{
+			ID:             1212,
+			Provider:       "webgallery:1",
+			StartTime:      &activeRunStart,
+			EndTime:        &activeRunEnd,
+			Status:         "completed",
+			PagesProcessed: 3,
+			PhotosFound:    72,
+			PhotosSkipped:  72,
+		},
+		{
+			ID:        900,
+			Provider:  "webgallery",
+			StartTime: &staleRunStart,
+			EndTime:   &staleRunEnd,
+			Status:    "completed",
+		},
+	}
+
+	staleStateRun := staleActivity
+	activeStateRun := activeActivity
+	states := []database.ConnectorState{
+		{ProviderID: "webgallery:1", LastRunAt: &activeStateRun, LastStatus: "completed"},
+		{ProviderID: "webgallery", LastRunAt: &staleStateRun, LastStatus: "completed"},
+	}
+
+	connectors := buildConnectorStatuses(sourceStats, runs, states, nil)
+
+	for _, connector := range connectors {
+		if strings.Contains(connector.ID, ":") {
+			t.Fatalf("Expected no source-scoped top-level connector, got %#v", connector)
+		}
+	}
+
+	var webgallery *connectorStatus
+	familyCards := 0
+	for i := range connectors {
+		if connectors[i].ID == "webgallery" {
+			familyCards++
+			webgallery = &connectors[i]
+		}
+	}
+	if familyCards != 1 || webgallery == nil {
+		t.Fatalf("Expected exactly one Web Gallery family card, got %#v", connectors)
+	}
+	if webgallery.DisplayName != "Web Gallery" {
+		t.Fatalf("Expected Web Gallery display name, got %q", webgallery.DisplayName)
+	}
+	if webgallery.LastSync == nil || !webgallery.LastSync.Equal(activeActivity) {
+		t.Fatalf("Expected family card to report active source-scoped last sync %v, got %v", activeActivity, webgallery.LastSync)
+	}
+	if webgallery.Health != "healthy" || webgallery.State != "Healthy" {
+		t.Fatalf("Expected active completed run/state to keep the family healthy, got health=%q state=%q", webgallery.Health, webgallery.State)
+	}
+	if webgallery.Counts.Downloaded != 77 || webgallery.Counts.Total != 77 {
+		t.Fatalf("Expected family counts aggregated across sources, got %#v", webgallery.Counts)
+	}
+
+	if len(webgallery.RecentRuns) != 2 {
+		t.Fatalf("Expected both family and source-scoped runs under the card, got %#v", webgallery.RecentRuns)
+	}
+	if webgallery.RecentRuns[0].ID != 1212 {
+		t.Fatalf("Expected the active source-scoped run first, got %#v", webgallery.RecentRuns)
+	}
+
+	if len(webgallery.Sources) != 2 {
+		t.Fatalf("Expected historical and source-scoped rows nested under the card, got %#v", webgallery.Sources)
+	}
+	var sawScopedSource bool
+	for _, source := range webgallery.Sources {
+		if source.ProviderID == "webgallery:1" {
+			sawScopedSource = true
+		}
+	}
+	if !sawScopedSource {
+		t.Fatalf("Expected a source row to preserve the source-scoped provider identity, got %#v", webgallery.Sources)
+	}
+}
+
+func TestBuildConnectorStatusesActiveSourceStateOverridesStaleFamilyState(t *testing.T) {
+	// Only connector_state rows: a stale family-level `webgallery` state must not
+	// override the newer source-scoped `webgallery:2` state on the family card,
+	// regardless of slice ordering.
+	staleRun := time.Date(2026, 6, 29, 0, 0, 2, 0, time.UTC)
+	activeRun := time.Date(2026, 7, 3, 12, 0, 3, 0, time.UTC)
+	states := []database.ConnectorState{
+		{ProviderID: "webgallery:2", LastRunAt: &activeRun, LastStatus: "completed"},
+		{ProviderID: "webgallery", LastRunAt: &staleRun, LastStatus: "permission_halt"},
+	}
+
+	connectors := buildConnectorStatuses(nil, nil, states, nil)
+
+	var webgallery *connectorStatus
+	for i := range connectors {
+		if connectors[i].ID == "webgallery" {
+			webgallery = &connectors[i]
+			break
+		}
+	}
+	if webgallery == nil {
+		t.Fatalf("Expected Web Gallery connector, got %#v", connectors)
+	}
+	if webgallery.LastSync == nil || !webgallery.LastSync.Equal(activeRun) {
+		t.Fatalf("Expected newest source-scoped last sync, got %v", webgallery.LastSync)
+	}
+	if webgallery.Health != "healthy" || webgallery.State != "Healthy" {
+		t.Fatalf("Expected the active completed state to win over the stale permission halt, got health=%q state=%q", webgallery.Health, webgallery.State)
 	}
 }
 
