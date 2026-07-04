@@ -27,6 +27,14 @@ type connectorStatus struct {
 	RecentErrors []connectorErrorStatus  `json:"recent_errors"`
 	hasState     bool
 	lastStatus   string
+	// activeStateAt records the LastRunAt of the connector_state row currently
+	// driving hasState/lastStatus. It lets the family card prefer the newest
+	// source-scoped state over a stale family-level one regardless of the order
+	// in which rows arrive.
+	activeStateAt *time.Time
+	// activeStateProviderID records the provider ID of that same state row so
+	// ties on LastRunAt can prefer a source-scoped row over a family-level one.
+	activeStateProviderID string
 }
 
 type connectorCounts struct {
@@ -137,7 +145,7 @@ func buildConnectorStatuses(sourceStats []database.ConnectorSourceStats, runs []
 				providerID = "webgallery"
 			}
 		}
-		connector := ensureConnectorStatus(byConnector, providerID)
+		connector := ensureConnectorStatus(byConnector, connectorFamilyID(providerID))
 		sourceID := connectorSourceID(stat.SourcePage, stat.URL, providerID)
 		sourceKey := providerID + "\x00" + sourceID
 
@@ -165,7 +173,7 @@ func buildConnectorStatuses(sourceStats []database.ConnectorSourceStats, runs []
 
 	for _, run := range runs {
 		providerID := connectorRunProviderID(run)
-		connector := ensureConnectorStatus(byConnector, providerID)
+		connector := ensureConnectorStatus(byConnector, connectorFamilyID(providerID))
 		if runLastSync := extractionRunLastSync(run); runLastSync != nil {
 			connector.LastSync = maxTime(connector.LastSync, *runLastSync)
 		}
@@ -206,12 +214,22 @@ func buildConnectorStatuses(sourceStats []database.ConnectorSourceStats, runs []
 		if providerID == "" {
 			providerID = "webgallery"
 		}
-		connector := ensureConnectorStatus(byConnector, providerID)
-		connector.hasState = true
-		connector.lastStatus = state.LastStatus
-		connector.LastSync = state.LastRunAt
+		connector := ensureConnectorStatus(byConnector, connectorFamilyID(providerID))
+		// A family card can back multiple state rows (a stale family-level
+		// `webgallery` and an active `webgallery:<source_id>`). Drive the card's
+		// health from the newest state so historical rows never mark it stale.
+		if connectorStateIsNewer(state, providerID, connector) {
+			connector.hasState = true
+			connector.lastStatus = state.LastStatus
+			connector.activeStateAt = state.LastRunAt
+			connector.activeStateProviderID = providerID
+		}
+		if state.LastRunAt != nil && !state.LastRunAt.IsZero() {
+			connector.LastSync = maxTime(connector.LastSync, *state.LastRunAt)
+		}
 	}
 
+	providersWithMediaError := make(map[string]bool)
 	for _, connectorError := range recentErrors {
 		providerID := connectorProviderIDFromStored(connectorError.Provider)
 		if providerID == "unknown" {
@@ -220,7 +238,8 @@ func buildConnectorStatuses(sourceStats []database.ConnectorSourceStats, runs []
 				providerID = "webgallery"
 			}
 		}
-		connector := ensureConnectorStatus(byConnector, providerID)
+		providersWithMediaError[providerID] = true
+		connector := ensureConnectorStatus(byConnector, connectorFamilyID(providerID))
 		sourceID := connectorSourceID(connectorError.SourcePage, connectorError.URL, providerID)
 		message := connectorError.ErrorMessage
 		if message == "" {
@@ -235,9 +254,13 @@ func buildConnectorStatuses(sourceStats []database.ConnectorSourceStats, runs []
 			OccurredAt: connectorError.OccurredAt,
 		})
 	}
+	// Surface each source-scoped run-error fallback independently. A family card
+	// can back several `webgallery:<source_id>` providers, so suppress a fallback
+	// only when that same provider already has a media-level error to show —
+	// never let one source's error hide another source's failed-run message.
 	for providerID, fallback := range runErrorFallbacks {
-		connector := ensureConnectorStatus(byConnector, providerID)
-		if len(connector.RecentErrors) == 0 {
+		connector := ensureConnectorStatus(byConnector, connectorFamilyID(providerID))
+		if !providersWithMediaError[providerID] {
 			connector.RecentErrors = append(connector.RecentErrors, fallback)
 		}
 	}
@@ -289,6 +312,54 @@ func connectorRunProviderID(run database.ExtractionRun) string {
 		return "webgallery"
 	}
 	return run.Provider
+}
+
+// connectorFamilyID collapses a source-scoped provider key
+// (`webgallery:<source_id>`) onto its provider family (`webgallery`) so Streams
+// renders one connector card per family with source-scoped rows nested under it.
+// Bare provider IDs (`webgallery`, `telegram`) are returned unchanged.
+func connectorFamilyID(providerID string) string {
+	providerID = strings.TrimSpace(providerID)
+	if providerID == "" {
+		return "webgallery"
+	}
+	if family, _, ok := strings.Cut(providerID, ":"); ok && family != "" {
+		return family
+	}
+	return providerID
+}
+
+// connectorStateIsNewer reports whether a connector_state row should replace the
+// one currently driving the family card's health. The newest LastRunAt wins so a
+// stale family-level state cannot override an active source-scoped state.
+func connectorStateIsNewer(state database.ConnectorState, providerID string, connector *connectorStatus) bool {
+	if !connector.hasState {
+		return true
+	}
+	if state.LastRunAt == nil || state.LastRunAt.IsZero() {
+		return false
+	}
+	if connector.activeStateAt == nil {
+		return true
+	}
+	if state.LastRunAt.After(*connector.activeStateAt) {
+		return true
+	}
+	// On equal LastRunAt, prefer a source-scoped row (`webgallery:<id>`) over a
+	// family-level one (`webgallery`). States arrive ordered by provider ID, so
+	// the stale family row would otherwise win the tie and keep the card halted
+	// even when the active source-scoped state is completed.
+	if state.LastRunAt.Equal(*connector.activeStateAt) {
+		return connectorProviderIsSourceScoped(providerID) &&
+			!connectorProviderIsSourceScoped(connector.activeStateProviderID)
+	}
+	return false
+}
+
+// connectorProviderIsSourceScoped reports whether a provider ID carries a source
+// suffix (`webgallery:<source_id>`) rather than being a bare provider family.
+func connectorProviderIsSourceScoped(providerID string) bool {
+	return strings.Contains(providerID, ":")
 }
 
 func extractionRunIsNewer(candidate database.ExtractionRun, current database.ExtractionRun) bool {
