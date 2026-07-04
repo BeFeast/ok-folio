@@ -82,13 +82,13 @@ require_grep 'OK_FOLIO_CONFIG_HOST_PATH.*:/config/config.yaml:ro' "$compose_file
 
 # The normal runtime must boot without legacy DB env or the external legacy
 # Docker network. No LEGACY_* variable (LEGACY_DB_*, LEGACY_DOCKER_NETWORK, or any
-# future/misspelled legacy-prefixed knob) may be a mandatory (:?) substitution in
+# future/misspelled legacy-prefixed knob) may be a mandatory (?) substitution in
 # the base compose, and the base compose must not attach the app to an external
 # network. Match the LEGACY_ prefix generally rather than an allowlist so a new
 # required legacy var cannot silently re-tie normal app boot to the legacy stack.
-if grep -Eq -- '\$\{LEGACY_[A-Z0-9_]*:\?' "$compose_file"; then
-  grep -Eno -- '\$\{LEGACY_[A-Z0-9_]*:\?' "$compose_file" >&2
-  fail "no LEGACY_* variable may be a required (:?) variable in the normal runtime compose (legacy DB env and the legacy network are an ETL/admin override, not an app boot requirement)"
+if grep -Eq -- '\$\{LEGACY_[A-Z0-9_]*:?\?' "$compose_file"; then
+  grep -Eno -- '\$\{LEGACY_[A-Z0-9_]*:?\?' "$compose_file" >&2
+  fail "no LEGACY_* variable may be a required (?) variable in the normal runtime compose (legacy DB env and the legacy network are an ETL/admin override, not an app boot requirement)"
 fi
 if grep -Eq -- 'external:[[:space:]]*true' "$compose_file"; then
   fail "normal runtime compose must not require an external network; keep legacy connectivity in compose.legacy.yaml"
