@@ -200,6 +200,11 @@ never open a live GORM connection from the app (see `internal/testguard`). Docke
 lifecycle for this stack still goes through Dockhand; the override command shape
 above documents the merge contract, not a manual `docker compose up`.
 
+Before retiring the remaining legacy services, run the read-only
+legacy-retirement preflight to gather PASS/WARN/FAIL/PENDING evidence in one
+place (`make retirement-preflight`; see `docs/legacy-retirement-preflight.md`).
+The preflight performs no Docker/Dockhand/systemctl/Maestro lifecycle mutation.
+
 ## Render And Assert
 
 Render on the deployment host from Infisical and the vault path references. Do
