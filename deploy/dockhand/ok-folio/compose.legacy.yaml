@@ -1,0 +1,32 @@
+# Optional legacy/admin override — NOT part of the normal OK Folio runtime.
+#
+# The normal stack (compose.yaml) boots without any legacy DB env or the external
+# legacy Docker network: connectors own ingestion and PhotoPrism/MariaDB are
+# stopped/startable fallback components, not app dependencies.
+#
+# Apply this override only for explicit ETL/admin one-off paths that must reach
+# the (temporarily started) legacy stack — e.g. running `ok-folio-etl load-dump`
+# in-container against a live legacy host, or exercising the PhotoPrism index
+# admin endpoint. It re-attaches the app to the external legacy network and
+# injects the read-only legacy DB credentials for the duration of that task:
+#
+#   docker compose -f compose.yaml -f compose.legacy.yaml up -d
+#
+# The legacy DB is only ever read via mariadb-dump on stdin; these credentials
+# are never used to open a live GORM connection from the app (see
+# internal/testguard). Do not commit rendered values for any of these variables.
+name: ok-folio
+
+services:
+  app:
+    environment:
+      LEGACY_DB_HOST: ${LEGACY_DB_HOST:?LEGACY_DB_HOST is required for the legacy admin override}
+      LEGACY_DB_USER: ${LEGACY_DB_USER:?LEGACY_DB_USER is required for the legacy admin override}
+      LEGACY_DB_PASSWORD: ${LEGACY_DB_PASSWORD:?LEGACY_DB_PASSWORD is required for the legacy admin override}
+    networks:
+      - legacy
+
+networks:
+  legacy:
+    external: true
+    name: ${LEGACY_DOCKER_NETWORK:?LEGACY_DOCKER_NETWORK is required for the legacy admin override}

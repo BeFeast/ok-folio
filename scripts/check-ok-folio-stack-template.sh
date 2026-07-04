@@ -3,6 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 compose_file="$repo_root/deploy/dockhand/ok-folio/compose.yaml"
+legacy_override_file="$repo_root/deploy/dockhand/ok-folio/compose.legacy.yaml"
 initdb_file="$repo_root/deploy/dockhand/ok-folio/initdb/010-vector-extensions.sh"
 valkey_template="$repo_root/deploy/dockhand/ok-folio/valkey.conf.template"
 config_template="$repo_root/deploy/dockhand/ok-folio/config.yaml.template"
@@ -22,6 +23,7 @@ require_grep() {
 }
 
 [ -f "$compose_file" ] || fail "missing $compose_file"
+[ -f "$legacy_override_file" ] || fail "missing $legacy_override_file"
 [ -f "$initdb_file" ] || fail "missing $initdb_file"
 [ -f "$valkey_template" ] || fail "missing $valkey_template"
 [ -f "$config_template" ] || fail "missing $config_template"
@@ -75,9 +77,26 @@ require_grep 'valkey-cli.*ping' "$compose_file" "valkey must have a ping healthc
 
 require_grep 'ok-folio:\$\{OK_FOLIO_IMAGE_SHA:\?' "$compose_file" "app image must be pinned by OK_FOLIO_IMAGE_SHA"
 require_grep 'condition: service_healthy' "$compose_file" "app must depend on healthy services"
-require_grep 'external: true' "$compose_file" "legacy network must be external"
 require_grep 'OK_FOLIO_DERIVATIVES_HOST_PATH.*:/derivatives[[:space:]]*$' "$compose_file" "app must mount the writable derivatives cache at /derivatives"
 require_grep 'OK_FOLIO_CONFIG_HOST_PATH.*:/config/config.yaml:ro' "$compose_file" "app config must be mounted read-only"
+
+# The normal runtime must boot without legacy DB env or the external legacy
+# Docker network. None of these may be a mandatory (:?) variable in the base
+# compose, and the base compose must not attach the app to an external network.
+for legacy_var in LEGACY_DB_HOST LEGACY_DB_USER LEGACY_DB_PASSWORD LEGACY_DOCKER_NETWORK; do
+  if grep -Eq -- "\\\$\{${legacy_var}:\?" "$compose_file"; then
+    fail "$legacy_var must not be a required variable in the normal runtime compose (it is an ETL/admin override, not an app boot requirement)"
+  fi
+done
+if grep -Eq -- 'external:[[:space:]]*true' "$compose_file"; then
+  fail "normal runtime compose must not require an external network; keep legacy connectivity in compose.legacy.yaml"
+fi
+
+# Legacy connectivity is isolated behind the explicit ETL/admin override. It must
+# stay external (never a stack-managed network) and keep the read-only legacy DB
+# credentials scoped to that override only.
+require_grep 'external:[[:space:]]*true' "$legacy_override_file" "legacy admin override must keep the legacy network external"
+require_grep 'name:[[:space:]]*\$\{LEGACY_DOCKER_NETWORK:\?' "$legacy_override_file" "legacy admin override must name the external legacy network from LEGACY_DOCKER_NETWORK"
 
 require_grep 'base_url:[[:space:]]*"https://sight\.photo/photos/category/15/"' "$config_template" "runtime config template must scrape the sight.photo category listing"
 require_grep 'category_id:[[:space:]]*15' "$config_template" "runtime config template must set the sight.photo category id"
@@ -99,8 +118,10 @@ require_grep 'PHOTO_ORIGINALS_HOST_PATH.*:/photoprism/originals[[:space:]]*$' "$
 require_grep 'PHOTO_DAILY_HOST_PATH.*:/photoprism/_daily[[:space:]]*$' "$compose_file" "daily mount must be writable"
 require_grep 'PHOTOPRISM_STORAGE_HOST_PATH.*:/photoprism/storage:ro' "$compose_file" "legacy storage mount must end in :ro"
 
-if grep -Eq '([0-9]{1,3}\.){3}[0-9]{1,3}|/mnt/|/tank/|/pool/|/var/lib/docker|/home/' "$compose_file"; then
-  fail "compose template must not contain concrete IPs or host paths"
-fi
+for template in "$compose_file" "$legacy_override_file"; do
+  if grep -Eq '([0-9]{1,3}\.){3}[0-9]{1,3}|/mnt/|/tank/|/pool/|/var/lib/docker|/home/' "$template"; then
+    fail "compose template must not contain concrete IPs or host paths: $template"
+  fi
+done
 
 echo "ok-folio stack template check passed"
