@@ -32,7 +32,7 @@ Record these concrete values in the vault runbook before first deploy:
 | Originals host path | `<photo-originals-host-path>` |
 | Daily host path | `<photo-daily-host-path>` |
 | PhotoPrism storage host path | `<photoprism-storage-host-path>` |
-| External legacy Docker network name | `<legacy-network-name>` |
+| External legacy Docker network name (ETL/admin one-off only) | `<legacy-network-name>` |
 | Verified-free app ops port | `<app-port>` |
 | Verified-free Postgres ops port | `<postgres-port>` |
 | Verified-free Valkey ops port | `<valkey-port>` |
@@ -107,10 +107,6 @@ VALKEY_PORT=6379
 VALKEY_PASSWORD=<ok-folio-valkey-password>
 VALKEY_MAXMEMORY=<host-budget-placeholder>
 VALKEY_MAXMEMORY_POLICY=<host-budget-placeholder>
-LEGACY_DB_HOST=<legacy-mariadb-container-name>
-LEGACY_DB_USER=<legacy-read-user>
-LEGACY_DB_PASSWORD=<legacy-read-password>
-LEGACY_DOCKER_NETWORK=<external-legacy-network-name>
 PHOTO_ORIGINALS_HOST_PATH=<photo-originals-host-path>
 PHOTO_DAILY_HOST_PATH=<photo-daily-host-path>
 PHOTOPRISM_STORAGE_HOST_PATH=<photoprism-storage-host-path>
@@ -126,6 +122,29 @@ REGISTRY_PASSWORD=<push-scoped-ci-password>
 
 Add any net-new values under the OK Folio Infisical path as path references, not
 literal values copied into git, issue comments, or PR bodies.
+
+### Legacy ETL/Admin Env (Not Required For App Boot)
+
+The normal app runtime boots without any legacy database env vars or the external
+legacy Docker network. The following values belong only to the one-off legacy
+ETL/admin path in `docs/legacy-etl-runbook.md`; they are injected into that
+operator command's shell (or a MariaDB defaults file), never rendered into the
+normal app service `.env`:
+
+```dotenv
+LEGACY_DB_NAME=<legacy-database-name>
+LEGACY_DB_HOST=<legacy-mariadb-container-name>
+LEGACY_DB_USER=<legacy-read-user>
+LEGACY_DB_PASSWORD=<legacy-read-password>
+LEGACY_SOURCE_TZ=<verified-iana-source-timezone>
+```
+
+`LEGACY_DB_HOST` may optionally also be set in the app service purely as an extra
+boot-guard host name (`internal/testguard`) to refuse; the guard already blocks
+the well-known legacy hosts without it, so it is never required. If a one-off ETL
+run needs the app container attached to the legacy MariaDB network, attach it as
+an explicit, temporary admin override instead of joining the legacy network in
+the normal stack.
 
 ## Stack Services
 
@@ -151,9 +170,11 @@ argument.
 The app image is always pinned as `ok-folio:<immutable-commit-sha>`. The CLIP
 embedder sidecar is pinned separately as
 `ok-folio-embedder:<immutable-commit-sha>` and stays on the private stack
-network with no published ports. The app joins the private stack network and
-the external legacy Docker network. The app talks to Postgres, Valkey, and the
-embedder by service name; published ports are for operations only.
+network with no published ports. The app joins the private stack network and an
+owned egress network (`ok-folio-egress`) for its outbound provider traffic; it no
+longer joins any external legacy Docker network. The app talks to Postgres,
+Valkey, and the embedder by service name on the private network; published ports
+are for operations only.
 
 All legacy mounts are kernel-enforced read-only:
 

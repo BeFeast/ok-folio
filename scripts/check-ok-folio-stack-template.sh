@@ -21,6 +21,15 @@ require_grep() {
   fi
 }
 
+refute_grep() {
+  local pattern="$1"
+  local file="$2"
+  local message="$3"
+  if grep -Eq -- "$pattern" "$file"; then
+    fail "$message"
+  fi
+}
+
 [ -f "$compose_file" ] || fail "missing $compose_file"
 [ -f "$initdb_file" ] || fail "missing $initdb_file"
 [ -f "$valkey_template" ] || fail "missing $valkey_template"
@@ -75,7 +84,17 @@ require_grep 'valkey-cli.*ping' "$compose_file" "valkey must have a ping healthc
 
 require_grep 'ok-folio:\$\{OK_FOLIO_IMAGE_SHA:\?' "$compose_file" "app image must be pinned by OK_FOLIO_IMAGE_SHA"
 require_grep 'condition: service_healthy' "$compose_file" "app must depend on healthy services"
-require_grep 'external: true' "$compose_file" "legacy network must be external"
+
+# Wave 6 Phase C1: the normal app runtime must render and boot without legacy DB
+# env vars or an external legacy Docker network. Assert the decoupling holds so a
+# regression cannot silently re-tie the app to the legacy stack.
+refute_grep '^[[:space:]]+LEGACY_DB_[A-Z]+:[[:space:]]*\$\{LEGACY_DB_[A-Z]+:\?' "$compose_file" "app must not require any LEGACY_DB_* env var to boot"
+refute_grep '^[[:space:]]+LEGACY_DB_USER:' "$compose_file" "normal app service must not declare legacy dump credentials (ETL/admin-only path)"
+refute_grep '^[[:space:]]+LEGACY_DB_PASSWORD:' "$compose_file" "normal app service must not declare legacy dump credentials (ETL/admin-only path)"
+refute_grep '\$\{LEGACY_DOCKER_NETWORK' "$compose_file" "normal runtime must not require an external legacy Docker network"
+refute_grep '^[[:space:]]+external:[[:space:]]*true' "$compose_file" "normal runtime compose must not join an external (legacy) network"
+require_grep 'ok-folio-private' "$compose_file" "app must share the private ok-folio network with postgres, valkey, and the embedder"
+require_grep 'ok-folio-egress' "$compose_file" "app must use an owned egress network in place of the legacy network"
 require_grep 'OK_FOLIO_DERIVATIVES_HOST_PATH.*:/derivatives[[:space:]]*$' "$compose_file" "app must mount the writable derivatives cache at /derivatives"
 require_grep 'OK_FOLIO_CONFIG_HOST_PATH.*:/config/config.yaml:ro' "$compose_file" "app config must be mounted read-only"
 

@@ -6,6 +6,12 @@ through GORM or a live MySQL client in the app. Extraction is an operator-run
 `mariadb-dump` stream; loading connects only to OK Folio Postgres and consumes
 SQL from stdin.
 
+This is an ETL/admin one-off path, not an app boot requirement. The normal app
+runtime boots without any legacy DB env vars (`LEGACY_DB_*`) or the external
+legacy Docker network. The legacy DB name, host, and read credentials below are
+injected into this operator command's shell (or a MariaDB defaults file) only
+for the duration of a dump; they are never part of the normal app service.
+
 ## Preconditions
 
 Run these checks through the host's container-exec path because the legacy DB

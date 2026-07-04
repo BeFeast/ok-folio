@@ -91,9 +91,14 @@ services:
       CACHE_HOST: ${VALKEY_HOST:-valkey}
       CACHE_PORT: ${VALKEY_PORT:-6379}
       CACHE_PASSWORD: ${VALKEY_PASSWORD:?VALKEY_PASSWORD is required}
-      LEGACY_DB_HOST: ${LEGACY_DB_HOST:?LEGACY_DB_HOST is required}
-      LEGACY_DB_USER: ${LEGACY_DB_USER:?LEGACY_DB_USER is required}
-      LEGACY_DB_PASSWORD: ${LEGACY_DB_PASSWORD:?LEGACY_DB_PASSWORD is required}
+      # Legacy DB access is NOT part of normal app boot. LEGACY_DB_HOST is
+      # optional and consumed only by the boot guard (internal/testguard) as an
+      # extra host name to refuse if DB_HOST is ever misconfigured to point at
+      # the legacy MariaDB/MySQL host; the guard already blocks the well-known
+      # legacy hosts without it. Legacy dump credentials (LEGACY_DB_USER /
+      # LEGACY_DB_PASSWORD) belong to the one-off ETL/admin path documented in
+      # docs/legacy-etl-runbook.md and are never required by the normal app.
+      LEGACY_DB_HOST: ${LEGACY_DB_HOST:-}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?TELEGRAM_BOT_TOKEN is required}
       TELEGRAM_USERNAME: ${TELEGRAM_USERNAME:?TELEGRAM_USERNAME is required}
       OK_FOLIO_DERIVATIVES_DIR: /derivatives
@@ -109,11 +114,15 @@ services:
       - ${PHOTOPRISM_STORAGE_HOST_PATH:?PHOTOPRISM_STORAGE_HOST_PATH is required}:/photoprism/storage:ro
     networks:
       - ok-folio-private
-      - legacy
+      - ok-folio-egress
 
 networks:
+  # Internal stack network: Postgres, Valkey, and the embedder never need egress
+  # and stay isolated here with the app. No published ports leave this network.
   ok-folio-private:
     internal: true
-  legacy:
-    external: true
-    name: ${LEGACY_DOCKER_NETWORK:?LEGACY_DOCKER_NETWORK is required}
+  # Owned egress network for the app's outbound provider traffic (sight.photo,
+  # Telegram). This replaces the previous dependency on the external legacy
+  # Docker network; the normal runtime no longer joins any legacy network.
+  ok-folio-egress:
+    driver: bridge
