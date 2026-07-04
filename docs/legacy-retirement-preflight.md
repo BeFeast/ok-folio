@@ -56,7 +56,7 @@ reported as `WARN`, not `FAIL`.
 | `normal-stack-decoupled` | The normal `compose.yaml` boots without required `LEGACY_*` env, an external legacy network, or writable legacy storage. | `FAIL` blocks |
 | `photoprism-indexing-gated` | `photoprism.enabled`/`auto_index` default to `false` in the rendered and example config; the admin index route is a gated escape hatch. | `FAIL` blocks |
 | `maintenance-commands-decoupled` | Ongoing maintenance commands live in `ok-folio-admin` (Phase C3). Absent → `PENDING`. | `PENDING` until C3 |
-| `derivative-fallback-measured` | Legacy PhotoPrism storage is optional (mounted `:ro`) and its fallback is measured in the derivative path (Phase C4). Not yet measured → `PENDING`. | `PENDING` until C4 |
+| `derivative-fallback-measured` | Legacy PhotoPrism storage is genuinely optional (no longer a required `${PHOTOPRISM_STORAGE_HOST_PATH:?}` substitution — a read-only mount alone is *not* optional) **and** its fallback is measured in the derivative path (Phase C4). Still required for boot or not yet measured → `PENDING`. | `PENDING` until C4 |
 | `connector-state-surfaces` | Connector status surfaces per-source ids (`webgallery:1`) and Telegram freshness from durable `connector_state`, not the legacy extractor. | `FAIL` blocks |
 | `legacy-extractor-retirement-documented` | Retirement is documented as expected stopped/startable (no lifecycle mutation is performed). | `WARN` if undocumented |
 

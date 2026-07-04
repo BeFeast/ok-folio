@@ -194,6 +194,21 @@ func TestDerivativeFallbackPendingWhenNoMarker(t *testing.T) {
 	}
 }
 
+func TestDerivativeFallbackPendingWhenStorageStillRequired(t *testing.T) {
+	// A read-only mount that is still a required (?) substitution is NOT
+	// optional: the normal stack cannot boot without the legacy storage path.
+	// Even with a fallback marker present the check must stay PENDING, never a
+	// false PASS/READY.
+	root := writeFixtureRepo(t, map[string]string{
+		composePath:                   "services:\n  app:\n    volumes:\n      - ${PHOTOPRISM_STORAGE_HOST_PATH:?PHOTOPRISM_STORAGE_HOST_PATH is required}:/photoprism/storage:ro\n",
+		derivativesDir + "/warmer.go": "package derivatives\n// uses legacy storage fallback and increments a metric\n",
+	})
+	res := checkDerivativeFallbackMeasured(root)
+	if res.Status != StatusPending {
+		t.Fatalf("expected PENDING while legacy storage is still a required substitution, got %s (%s)", res.Status, res.Summary)
+	}
+}
+
 func TestConnectorStateSurfacesFailsWhenMissing(t *testing.T) {
 	root := writeFixtureRepo(t, map[string]string{
 		streamsPath:    "package api\n// nothing here\n",
@@ -242,6 +257,32 @@ func TestProbeConnectorsWarnsWhenWebgalleryMissing(t *testing.T) {
 	res := ProbeConnectors(context.Background(), srv.Client(), srv.URL)
 	if res.Status != StatusWarn {
 		t.Fatalf("live probe = %s, want WARN when webgallery id absent", res.Status)
+	}
+}
+
+func TestProbeConnectorsWarnsWhenOnlyAggregateWebgallery(t *testing.T) {
+	// A source that only exposes the bare aggregate provider id "webgallery"
+	// (no per-source :<id> suffix) must NOT satisfy the promised webgallery:<id>
+	// check; the probe must WARN, not PASS.
+	now := time.Now().UTC()
+	body := map[string]any{
+		"connectors": []map[string]any{
+			{
+				"id":        "webgallery",
+				"last_sync": now,
+				"sources": []map[string]any{
+					{"id": "webgallery", "provider_id": "webgallery"},
+				},
+			},
+			{"id": "telegram", "last_sync": now, "sources": []map[string]any{}},
+		},
+	}
+	srv := connectorStubServer(t, body)
+	defer srv.Close()
+
+	res := ProbeConnectors(context.Background(), srv.Client(), srv.URL)
+	if res.Status != StatusWarn {
+		t.Fatalf("live probe = %s, want WARN when only the aggregate webgallery id is surfaced (%s)", res.Status, res.Summary)
 	}
 }
 

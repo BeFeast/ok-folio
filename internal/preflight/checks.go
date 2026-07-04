@@ -32,6 +32,12 @@ var requiredLegacyVarRe = regexp.MustCompile(`\$\{LEGACY_[A-Z0-9_]*:?\?`)
 // externalNetworkRe matches an external Docker network declaration.
 var externalNetworkRe = regexp.MustCompile(`external:\s*true`)
 
+// requiredPhotoStorageRe matches PHOTOPRISM_STORAGE_HOST_PATH used as a
+// mandatory (?) substitution, e.g. ${PHOTOPRISM_STORAGE_HOST_PATH:?...}. A
+// required substitution means the normal stack still cannot boot without the
+// legacy storage path, regardless of whether the mount is read-only.
+var requiredPhotoStorageRe = regexp.MustCompile(`\$\{PHOTOPRISM_STORAGE_HOST_PATH:?\?`)
+
 // checkNormalStackDecoupled verifies the normal runtime template boots without
 // legacy DB env, the external legacy network, or writable legacy storage.
 func checkNormalStackDecoupled(root string) Result {
@@ -191,21 +197,48 @@ func checkMaintenanceCommandsDecoupled(root string) Result {
 	return res
 }
 
-// checkDerivativeFallbackMeasured verifies the legacy PhotoPrism storage
-// fallback is measured in the derivative path (Phase C4). The storage mount is
-// already optional/read-only today; the measurement lands with C4, so when the
-// derivatives package carries no fallback measurement this reports PENDING.
+// checkDerivativeFallbackMeasured verifies both halves of Phase C4: the legacy
+// PhotoPrism storage mount is truly optional (the normal stack boots without it)
+// AND its fallback is measured in the derivative path. A read-only mount alone
+// is NOT optional — while PHOTOPRISM_STORAGE_HOST_PATH remains a required (?)
+// substitution the normal stack still cannot boot without the legacy storage
+// path, so the check reports PENDING (never a false PASS) until C4 removes that
+// hard dependency and lands the measurement.
 func checkDerivativeFallbackMeasured(root string) Result {
 	res := Result{ID: "derivative-fallback-measured", Title: "Legacy PhotoPrism storage fallback is optional and measured (Phase C4)"}
 
-	// The optional/read-only half is already true regardless of C4.
+	storageRequired := false
+	storageReadOnly := false
 	if compose, err := readRepoFile(root, composePath); err == nil {
-		if strings.Contains(compose, "/photoprism/storage:ro") {
-			res.Evidence = append(res.Evidence, fmt.Sprintf("%s: legacy PhotoPrism storage is optional (mounted read-only)", composePath))
-		}
+		storageRequired = requiredPhotoStorageRe.MatchString(compose)
+		storageReadOnly = strings.Contains(compose, "/photoprism/storage:ro")
 	}
 
 	markers := derivativeFallbackMarkers(root)
+
+	// A required substitution keeps legacy storage a hard boot dependency; the
+	// read-only flag only stops the app writing to it, it does not make the
+	// mount optional. Do not report the fallback as optional until C4 lands.
+	if storageRequired {
+		res.Status = StatusPending
+		res.Summary = "Phase C4 not complete: legacy PhotoPrism storage is still a required boot dependency"
+		res.Evidence = append(res.Evidence, fmt.Sprintf("%s: ${PHOTOPRISM_STORAGE_HOST_PATH:?...} is still required, so the normal stack cannot boot without legacy storage (read-only mount is not optional)", composePath))
+		if len(markers) == 0 {
+			res.Evidence = append(res.Evidence, fmt.Sprintf("%s: no derivative fallback measurement found", derivativesDir))
+		} else {
+			res.Evidence = append(res.Evidence, markers...)
+		}
+		return res
+	}
+
+	// Storage is no longer a required substitution: the mount is genuinely
+	// optional. Note whether it also stays read-only for supporting evidence.
+	if storageReadOnly {
+		res.Evidence = append(res.Evidence, fmt.Sprintf("%s: legacy PhotoPrism storage mount is optional (not a required substitution) and read-only", composePath))
+	} else {
+		res.Evidence = append(res.Evidence, fmt.Sprintf("%s: legacy PhotoPrism storage is no longer a required boot dependency", composePath))
+	}
+
 	if len(markers) == 0 {
 		res.Status = StatusPending
 		res.Summary = "Phase C4 (measured legacy storage fallback) is not merged yet"

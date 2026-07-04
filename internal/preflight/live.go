@@ -14,9 +14,11 @@ import (
 // queries. The probe only ever issues a GET against it.
 const ConnectorStatusPath = "/api/v1/streams/connectors/status"
 
-// webgallerySourceIDRe matches the webgallery:<id> per-source id shape, e.g.
-// webgallery:1.
-var webgallerySourceIDRe = regexp.MustCompile(`^webgallery(:[0-9A-Za-z._-]+)?$`)
+// webgallerySourceIDRe matches the per-source webgallery:<id> shape, e.g.
+// webgallery:1. The :<id> suffix is mandatory: the bare aggregate provider id
+// "webgallery" does NOT prove any per-source id is surfaced, so accepting it
+// would let the live probe pass without the evidence it promises.
+var webgallerySourceIDRe = regexp.MustCompile(`^webgallery:[0-9A-Za-z._-]+$`)
 
 // liveConnector is the subset of the connector-status response the probe reads.
 type liveConnector struct {
