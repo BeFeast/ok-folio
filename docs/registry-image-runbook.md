@@ -19,10 +19,12 @@ Docker daemon, runs the container locally, checks that
 either image in the registry, and only then tags and pushes both images as
 `${GITHUB_SHA}` and `dev`.
 
-The release image ships both `/app/extractor` and `/app/ok-folio-etl`. The
-workflow also runs `/app/ok-folio-etl print-legacy-checks --legacy-database
-ok_folio_smoke` from the smoke image before any push, so the documented ETL
-commands cannot regress to a source-only binary.
+The release image ships `/app/extractor`, the ongoing maintenance CLI
+`/app/ok-folio-admin`, and the legacy `/app/ok-folio-etl`. The workflow runs
+`/app/ok-folio-etl print-legacy-checks --legacy-database ok_folio_smoke` and
+exercises `/app/ok-folio-admin` maintenance subcommands from the smoke image
+before any push, so the documented commands cannot regress to a source-only
+binary.
 
 Do not rerun the workflow for a commit after changing the Docker build context outside that commit. The workflow refuses to push when the `${GITHUB_SHA}` tag already exists because commit tags must never point at different content.
 

@@ -37,8 +37,10 @@ COPY . .
 # Copy built frontend into embed location
 COPY --from=frontend-builder /build/dashboard/dist ./internal/dashboard/dist
 
-# Build the application and operator ETL CLI from source.
+# Build the application, the OK Folio maintenance CLI, and the legacy ETL CLI
+# from source.
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o extractor ./cmd/extractor
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o ok-folio-admin ./cmd/ok-folio-admin
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o ok-folio-etl ./cmd/ok-folio-etl
 
 # Runtime stage
@@ -58,6 +60,7 @@ WORKDIR /app
 
 # Copy binaries from builder
 COPY --from=backend-builder /build/extractor /app/extractor
+COPY --from=backend-builder /build/ok-folio-admin /app/ok-folio-admin
 COPY --from=backend-builder /build/ok-folio-etl /app/ok-folio-etl
 
 # Create directories for volumes

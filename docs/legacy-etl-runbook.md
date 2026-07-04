@@ -6,6 +6,20 @@ through GORM or a live MySQL client in the app. Extraction is an operator-run
 `mariadb-dump` stream; loading connects only to OK Folio Postgres and consumes
 SQL from stdin.
 
+## CLI Split: Legacy ETL vs Ongoing Maintenance
+
+Two CLIs are shipped in the release image:
+
+- `ok-folio-etl` hosts only the legacy migration commands, `load-dump` and
+  `print-legacy-checks`. This binary retires with the Wave 6 legacy cutover.
+- `ok-folio-admin` hosts the ongoing OK Folio catalog maintenance commands that
+  outlive the legacy cutover: `hash-content`, `warm-thumbnails`,
+  `audit-originals`, and `smoke-read-paths`.
+
+From a source checkout, `go run ./cmd/ok-folio-etl <command>` and
+`go run ./cmd/ok-folio-admin <command>` run the same commands the image ships as
+`/app/ok-folio-etl` and `/app/ok-folio-admin`.
+
 ## Preconditions
 
 Run these checks through the host's container-exec path because the legacy DB
@@ -149,23 +163,41 @@ the mounted originals.
 
 ## Content Hash Pass
 
-Content hashing is decoupled from DB extraction:
+Content hashing is ongoing OK Folio catalog maintenance, decoupled from legacy
+DB extraction, and runs from the non-legacy maintenance CLI:
 
 ```bash
-go run ./cmd/ok-folio-etl hash-content --config /config/config.yaml --originals-root /originals-ro --limit 500
+go run ./cmd/ok-folio-admin hash-content --config /config/config.yaml --originals-root /originals-ro --limit 500
 ```
 
 The pass reads file bytes from the read-only originals mount for rows where
 `content_hash IS NULL` and writes the raw 32-byte sha256 to OK Folio Postgres.
 It performs no legacy database or file writes and can be re-run safely.
 
+## Thumbnail Warming And Originals Audit
+
+Thumbnail warming and the originals audit are also ongoing catalog maintenance
+and run from the same non-legacy maintenance CLI:
+
+```bash
+go run ./cmd/ok-folio-admin warm-thumbnails --config /config/config.yaml --widths 400,700
+go run ./cmd/ok-folio-admin audit-originals --config /config/config.yaml
+```
+
+`warm-thumbnails` pre-generates the gallery derivative widths and exits non-zero
+if any generation failed. `audit-originals` sniffs stored originals for
+undecodable files; add `--exclude` to mark undecodable rows so gallery, warm,
+and backfill sweeps skip them. Both flag sets and output lines are unchanged
+from the previous `ok-folio-etl` commands.
+
 ## Wave-1 Read-Path Smoke/Perf Gate
 
 After the full legacy backfill has loaded the real catalog, run the read-path
-smoke before opening connector or cache-depth work:
+smoke before opening connector or cache-depth work. This is ongoing maintenance,
+so it runs from the non-legacy maintenance CLI:
 
 ```bash
-go run ./cmd/ok-folio-etl smoke-read-paths \
+go run ./cmd/ok-folio-admin smoke-read-paths \
   --config /config/config.yaml \
   --expected-rows 50338 \
   --expected-artists 1953 \
