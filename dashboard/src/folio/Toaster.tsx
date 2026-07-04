@@ -56,6 +56,14 @@ const CARD: CSSProperties = {
   animation: "okf-rise 0.28s ease",
 };
 
+// Desktop toasts read as an inverted "ink" pill anchored bottom-center, per the
+// design. Mobile keeps the surface card above the tab bar (untouched here).
+const DESKTOP_PILL: CSSProperties = {
+  background: "var(--ink)",
+  border: "1px solid transparent",
+  borderRadius: 999,
+};
+
 export default function Toaster() {
   const { toasts, dismissToast } = useFolio();
   const { isMobile } = useViewport();
@@ -65,8 +73,8 @@ export default function Toaster() {
     <div
       style={{
         position: "fixed",
-        left: isMobile ? "calc(20px + var(--safe-left))" : undefined,
-        right: isMobile ? "calc(20px + var(--safe-right))" : 24,
+        left: isMobile ? "calc(20px + var(--safe-left))" : 0,
+        right: isMobile ? "calc(20px + var(--safe-right))" : 0,
         bottom: isMobile ? "calc(var(--mobile-tab-height) + var(--safe-bottom) + 14px)" : 24,
         zIndex: 200,
         display: "flex",
@@ -77,7 +85,7 @@ export default function Toaster() {
           : "calc(100dvh - 96px)",
         overflowY: "auto",
         pointerEvents: "none",
-        alignItems: isMobile ? "center" : undefined,
+        alignItems: "center",
       }}
     >
       {toasts.map((t) => {
@@ -86,7 +94,7 @@ export default function Toaster() {
           <div
             key={t.id}
             role="status"
-            style={{ ...CARD, width: isMobile ? "100%" : undefined }}
+            style={{ ...CARD, width: isMobile ? "100%" : undefined, ...(isMobile ? null : DESKTOP_PILL) }}
           >
             <span
               style={{
@@ -96,19 +104,23 @@ export default function Toaster() {
                 justifyContent: "center",
                 width: 18,
                 height: 18,
-                color: t.status === "error" ? "var(--danger, #b42318)" : "var(--accent)",
+                color: isMobile
+                  ? t.status === "error"
+                    ? "var(--danger, #b42318)"
+                    : "var(--accent)"
+                  : "var(--bg)",
               }}
             >
               {glyph(t.status)}
             </span>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontFamily: "var(--sans)", fontSize: 13.5, fontWeight: 500, color: "var(--ink)" }}>{t.title}</div>
+              <div style={{ fontFamily: "var(--sans)", fontSize: 13.5, fontWeight: 500, color: isMobile ? "var(--ink)" : "var(--bg)" }}>{t.title}</div>
               {t.detail ? (
                 <div
                   style={{
                     fontFamily: "var(--sans)",
                     fontSize: 12,
-                    color: "var(--muted)",
+                    color: isMobile ? "var(--muted)" : "var(--faint)",
                     marginTop: 2,
                     overflow: "hidden",
                     textOverflow: "ellipsis",

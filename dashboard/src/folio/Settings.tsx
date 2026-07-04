@@ -2,6 +2,7 @@ import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { createConnectorSource, deleteConnectorSource, fetchConnectorSources, fetchConnectorStatus, updateConnectorSource } from "../api";
 import type { ConnectorSourceSetting, ConnectorSourceStatus } from "../types";
 import { useStorageEstimate } from "../hooks/useStorageEstimate";
+import { APP_VERSION } from "../version";
 import { useFolio, formatBytes } from "./context";
 import DestinationControls, { destinationGateMessage } from "./DestinationControls";
 import { BrandMark, Hov, PageHeader } from "./ui";
@@ -424,7 +425,7 @@ export default function Settings() {
             focus={{ borderColor: "var(--accent)" }}
           />
         </Row>
-        <Row title="Address" desc="Current self-hosted address.">
+        <Row title="Address" desc="Self-hosted, on your own machine.">
           <div style={{ fontFamily: "var(--sans)", fontSize: 13.5, color: "var(--graphite)", display: "flex", alignItems: "center", gap: 8 }}>
             <span style={{ width: 6, height: 6, borderRadius: 99, background: "var(--accent)" }} />
             <span style={{ overflowWrap: "anywhere" }}>{currentHost}</span>
@@ -606,7 +607,7 @@ export default function Settings() {
             A beautiful folio for visual discoveries.
           </p>
           <div style={{ fontFamily: "var(--sans)", fontSize: 12.5, color: "var(--muted)", marginTop: 14 }}>
-            MIT License · Open source · Self-hosted
+            Version {APP_VERSION} · MIT License · Open source · Self-hosted
           </div>
         </div>
       </section>
