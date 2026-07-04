@@ -2143,6 +2143,127 @@ func TestBuildConnectorStatusesIgnoresOlderRunErrorAfterSuccessfulRun(t *testing
 	}
 }
 
+func TestBuildConnectorStatusesSurfacesEachSourceRunErrorFallback(t *testing.T) {
+	// Two source-scoped webgallery runs fail during discovery (no failed
+	// downloaded_photos rows) and a third source has a media-level error. Once
+	// these collapse onto one family card, each source's failed-run fallback must
+	// still surface: one source's error must not hide another source's fallback.
+	base := time.Date(2026, 7, 3, 12, 0, 0, 0, time.UTC)
+	runs := []database.ExtractionRun{
+		{
+			ID:           101,
+			Provider:     "webgallery:1",
+			StartTime:    ptrTime(base),
+			EndTime:      ptrTime(base.Add(1 * time.Minute)),
+			Status:       "failed",
+			ErrorMessage: "discovery failed for source 1",
+		},
+		{
+			ID:           102,
+			Provider:     "webgallery:2",
+			StartTime:    ptrTime(base.Add(2 * time.Minute)),
+			EndTime:      ptrTime(base.Add(3 * time.Minute)),
+			Status:       "failed",
+			ErrorMessage: "discovery failed for source 2",
+		},
+	}
+	recentErrors := []database.ConnectorError{
+		{
+			ID:           9,
+			Provider:     "webgallery:3",
+			SourcePage:   "https://gallery.example.test/3",
+			ErrorMessage: "download failed for source 3",
+			OccurredAt:   base.Add(4 * time.Minute),
+		},
+	}
+
+	connectors := buildConnectorStatuses(nil, runs, nil, recentErrors)
+
+	var webgallery *connectorStatus
+	for i := range connectors {
+		if connectors[i].ID == "webgallery" {
+			webgallery = &connectors[i]
+			break
+		}
+	}
+	if webgallery == nil {
+		t.Fatalf("Expected Web Gallery connector, got %#v", connectors)
+	}
+	messages := make(map[string]bool)
+	for _, e := range webgallery.RecentErrors {
+		messages[e.Message] = true
+	}
+	if len(webgallery.RecentErrors) != 3 {
+		t.Fatalf("Expected media error plus both source-scoped run fallbacks, got %#v", webgallery.RecentErrors)
+	}
+	for _, want := range []string{
+		"discovery failed for source 1",
+		"discovery failed for source 2",
+		"download failed for source 3",
+	} {
+		if !messages[want] {
+			t.Fatalf("Expected recent errors to include %q, got %#v", want, webgallery.RecentErrors)
+		}
+	}
+}
+
+func TestBuildConnectorStatusesSuppressesFallbackOnlyForSameSourceMediaError(t *testing.T) {
+	// A source-scoped run fails and that same source already has a media-level
+	// error. The real error is preferred for that source, but a second source's
+	// failed-run fallback must still surface under the family card.
+	base := time.Date(2026, 7, 3, 12, 0, 0, 0, time.UTC)
+	runs := []database.ExtractionRun{
+		{
+			ID:           201,
+			Provider:     "webgallery:1",
+			StartTime:    ptrTime(base),
+			EndTime:      ptrTime(base.Add(1 * time.Minute)),
+			Status:       "failed",
+			ErrorMessage: "run fallback for source 1",
+		},
+		{
+			ID:           202,
+			Provider:     "webgallery:2",
+			StartTime:    ptrTime(base.Add(2 * time.Minute)),
+			EndTime:      ptrTime(base.Add(3 * time.Minute)),
+			Status:       "failed",
+			ErrorMessage: "run fallback for source 2",
+		},
+	}
+	recentErrors := []database.ConnectorError{
+		{
+			ID:           9,
+			Provider:     "webgallery:1",
+			SourcePage:   "https://gallery.example.test/1",
+			ErrorMessage: "media error for source 1",
+			OccurredAt:   base.Add(4 * time.Minute),
+		},
+	}
+
+	connectors := buildConnectorStatuses(nil, runs, nil, recentErrors)
+
+	var webgallery *connectorStatus
+	for i := range connectors {
+		if connectors[i].ID == "webgallery" {
+			webgallery = &connectors[i]
+			break
+		}
+	}
+	if webgallery == nil {
+		t.Fatalf("Expected Web Gallery connector, got %#v", connectors)
+	}
+	messages := make(map[string]bool)
+	for _, e := range webgallery.RecentErrors {
+		messages[e.Message] = true
+	}
+	if messages["run fallback for source 1"] {
+		t.Fatalf("Expected source 1 run fallback suppressed by its own media error, got %#v", webgallery.RecentErrors)
+	}
+	if !messages["media error for source 1"] || !messages["run fallback for source 2"] {
+		t.Fatalf("Expected source 1 media error and source 2 run fallback, got %#v", webgallery.RecentErrors)
+	}
+}
+
 func TestConnectorHealth(t *testing.T) {
 	syncingRun := connectorStatus{
 		RecentRuns: []connectorRunStatus{{Status: "running"}},
@@ -2333,6 +2454,34 @@ func TestBuildConnectorStatusesActiveSourceStateOverridesStaleFamilyState(t *tes
 	}
 	if webgallery.Health != "healthy" || webgallery.State != "Healthy" {
 		t.Fatalf("Expected the active completed state to win over the stale permission halt, got health=%q state=%q", webgallery.Health, webgallery.State)
+	}
+}
+
+func TestBuildConnectorStatusesPrefersSourceStateOnEqualTimestamps(t *testing.T) {
+	// GetConnectorStates orders rows by provider_id ASC, so the stale family-level
+	// `webgallery` row arrives before the active `webgallery:1` row. When both
+	// share a LastRunAt, the source-scoped completed state must still win the tie
+	// instead of leaving the card driven by the family-level permission halt.
+	sameRun := time.Date(2026, 7, 3, 12, 0, 3, 0, time.UTC)
+	states := []database.ConnectorState{
+		{ProviderID: "webgallery", LastRunAt: &sameRun, LastStatus: "permission_halt"},
+		{ProviderID: "webgallery:1", LastRunAt: &sameRun, LastStatus: "completed"},
+	}
+
+	connectors := buildConnectorStatuses(nil, nil, states, nil)
+
+	var webgallery *connectorStatus
+	for i := range connectors {
+		if connectors[i].ID == "webgallery" {
+			webgallery = &connectors[i]
+			break
+		}
+	}
+	if webgallery == nil {
+		t.Fatalf("Expected Web Gallery connector, got %#v", connectors)
+	}
+	if webgallery.Health != "healthy" || webgallery.State != "Healthy" {
+		t.Fatalf("Expected the source-scoped completed state to win the timestamp tie, got health=%q state=%q", webgallery.Health, webgallery.State)
 	}
 }
 
