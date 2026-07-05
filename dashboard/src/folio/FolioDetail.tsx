@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useState, type CSSProperties, type MouseEvent } from "react";
+import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { fetchFolioPieces, fetchFolios, fetchGalleryCatalog, getPhotoThumbnailUrl } from "../api";
 import type { Folio, Photo } from "../types";
 import BulkEditBar from "./BulkEditBar";
 import { mapPhoto, useFolio, type PieceVM } from "./context";
-import { ChevronIcon, CloseIcon, DotsIcon, Hov, OkfImage, OutlineButton, PageHeader, PlusIcon } from "./ui";
+import { FolioNameModal } from "./Folios";
+import { BrandMark, ChevronIcon, CloseIcon, ConfirmationDialog, DotsIcon, Hov, OkfImage, PageHeader, PlusIcon } from "./ui";
 import { useViewport } from "./useViewport";
 
 const PAGE_SIZE = 100;
@@ -38,14 +39,11 @@ function updatedLabel(value?: string): string {
   return `updated ${date.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
 }
 
-function PieceTile({ piece, folioId }: { piece: PieceVM; folioId: number }) {
-  const { openPiece, removePieceFromFolioAction } = useFolio();
-  const [hover, setHover] = useState(false);
+function PieceTile({ piece }: { piece: PieceVM }) {
+  const { openPiece } = useFolio();
   return (
     <figure
       onClick={() => openPiece(piece.id)}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
       style={{ margin: 0, position: "relative", aspectRatio: "1 / 1", cursor: "zoom-in", overflow: "hidden", background: "var(--surface)", boxShadow: "0 1px 8px var(--shadow)" }}
     >
       <OkfImage
@@ -58,50 +56,6 @@ function PieceTile({ piece, folioId }: { piece: PieceVM; folioId: number }) {
         matteTitleStyle={{ fontFamily: "var(--serif)", fontStyle: "italic", fontSize: 14, lineHeight: 1.2, color: "var(--ink)" }}
         matteArtistStyle={{ fontFamily: "var(--sans)", fontSize: 9.5, letterSpacing: "0.12em", textTransform: "uppercase", color: "var(--muted)" }}
       />
-      <Hov
-        as="button"
-        aria-label={`Remove ${piece.t} from folio`}
-        onClick={(event: MouseEvent<HTMLButtonElement>) => {
-          event.stopPropagation();
-          removePieceFromFolioAction(folioId, piece.id);
-        }}
-        style={{
-          position: "absolute",
-          top: 9,
-          right: 9,
-          zIndex: 4,
-          appearance: "none",
-          cursor: "pointer",
-          border: "1px solid rgba(255,255,255,0.28)",
-          background: "rgba(12,10,7,0.42)",
-          color: "#FBF6EE",
-          borderRadius: 99,
-          height: 30,
-          padding: "0 11px",
-          fontFamily: "var(--sans)",
-          fontSize: 12,
-          backdropFilter: "blur(8px)",
-        }}
-        hover={{ background: "rgba(12,10,7,0.68)" }}
-      >
-        Remove
-      </Hov>
-      <figcaption
-        style={{
-          position: "absolute",
-          left: 0,
-          right: 0,
-          bottom: 0,
-          zIndex: 3,
-          padding: "26px 12px 11px",
-          opacity: hover ? 1 : 0,
-          transition: "opacity .2s ease",
-          background: "linear-gradient(to top, rgba(12,10,7,0.78), rgba(12,10,7,0))",
-        }}
-      >
-        <div style={{ fontFamily: "var(--serif)", fontSize: 13.5, lineHeight: 1.2, color: "#FBF6EE" }}>{piece.t}</div>
-        <div style={{ fontFamily: "var(--sans)", fontSize: 10.5, color: "rgba(251,246,238,0.7)", marginTop: 2 }}>{piece.a}</div>
-      </figcaption>
     </figure>
   );
 }
@@ -830,14 +784,217 @@ function MobileFolioDetail({
   );
 }
 
+const SHEET_SCRIM: CSSProperties = {
+  position: "fixed",
+  inset: 0,
+  zIndex: 100,
+  background: "rgba(12,9,6,0.62)",
+  backdropFilter: "blur(6px)",
+  WebkitBackdropFilter: "blur(6px)",
+  display: "grid",
+  placeItems: "center",
+  padding: 34,
+  animation: "okf-fade .2s ease",
+};
+
+const SHEET_CARD: CSSProperties = {
+  width: "min(380px, 94vw)",
+  borderRadius: 16,
+  background: "var(--surface)",
+  color: "var(--ink)",
+  boxShadow: "0 40px 110px rgba(0,0,0,0.4)",
+  overflow: "hidden",
+  animation: "okf-rise .3s cubic-bezier(0.22,1,0.36,1)",
+};
+
+function PencilIcon({ size = 19 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M14.5 5.5l4 4M4 20l1-4 11.5-11.5a2 2 0 0 1 3 0l1 1a2 2 0 0 1 0 3L9 17l-5 3z" />
+    </svg>
+  );
+}
+
+function ImageIcon({ size = 19 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="3.5" y="5" width="17" height="14" rx="2" />
+      <circle cx="8.5" cy="10" r="1.4" />
+      <path d="M5 17l4.5-4 3 3 3-3 4 4" />
+    </svg>
+  );
+}
+
+function TrashIcon({ size = 19 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13" />
+    </svg>
+  );
+}
+
+function FolioCoverThumb({ folio, size = 56 }: { folio: Folio; size?: number }) {
+  if (folio.cover_photo_id) {
+    return (
+      <span style={{ display: "block", width: size, height: size, borderRadius: 6, overflow: "hidden", background: "var(--surface-2)", flex: "none", boxShadow: "0 2px 6px var(--shadow)" }}>
+        <OkfImage
+          src={getPhotoThumbnailUrl(folio.cover_photo_id, 160)}
+          alt={folio.name}
+          title={folio.name}
+          imgStyle={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+          matteStyle={{ width: "100%", height: "100%", display: "grid", placeItems: "center", background: "var(--surface-2)" }}
+        />
+      </span>
+    );
+  }
+  return (
+    <span style={{ display: "grid", placeItems: "center", width: size, height: size, borderRadius: 6, background: "var(--surface-2)", border: "1px dashed var(--line-2)", flex: "none" }}>
+      <BrandMark width={22} height={25} />
+    </span>
+  );
+}
+
+function DesktopFolioActionsSheet({
+  folio,
+  onClose,
+  onRename,
+  onCover,
+  onDelete,
+}: {
+  folio: Folio;
+  onClose: () => void;
+  onRename: () => void;
+  onCover: () => void;
+  onDelete: () => void;
+}) {
+  const menuRow = (icon: ReactNode, label: string, onClick: () => void, danger = false) => (
+    <Hov
+      as="button"
+      onClick={onClick}
+      style={{
+        appearance: "none",
+        cursor: "pointer",
+        width: "100%",
+        display: "flex",
+        alignItems: "center",
+        gap: 15,
+        padding: "15px 22px",
+        border: 0,
+        background: "transparent",
+        color: danger ? "var(--danger)" : "var(--ink)",
+        fontFamily: "var(--sans)",
+        fontSize: 15.5,
+        textAlign: "left",
+      }}
+      hover={{ background: "var(--bg)" }}
+    >
+      {icon}
+      <span>{label}</span>
+    </Hov>
+  );
+
+  return (
+    <div
+      role="presentation"
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+      style={SHEET_SCRIM}
+    >
+      <div role="dialog" aria-modal="true" aria-label={`Folio actions for ${folio.name}`} style={SHEET_CARD}>
+        <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "20px 22px" }}>
+          <FolioCoverThumb folio={folio} />
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontFamily: "var(--serif)", fontSize: 20, lineHeight: 1.15, color: "var(--ink)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{folio.name}</div>
+            <div style={{ fontFamily: "var(--sans)", fontSize: 12.5, color: "var(--muted)", marginTop: 3 }}>{pieceCountLabel(folio.piece_count)}</div>
+          </div>
+        </div>
+        <div style={{ borderTop: "1px solid var(--line)" }}>
+          {menuRow(<PencilIcon />, "Rename", onRename)}
+          {menuRow(<ImageIcon />, "Change cover", onCover)}
+          {menuRow(<TrashIcon />, "Delete folio", onDelete, true)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FolioCoverSheet({ folio, onClose }: { folio: Folio; onClose: () => void }) {
+  const { changeFolioCoverAction } = useFolio();
+  const coverPieces = useQuery({
+    queryKey: ["folio-cover-sheet-pieces", folio.id],
+    queryFn: () => fetchFolioPieces(folio.id, 24, 0),
+    staleTime: 15000,
+  });
+
+  return (
+    <div
+      role="presentation"
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+      style={SHEET_SCRIM}
+    >
+      <div role="dialog" aria-modal="true" aria-label="Change cover" style={SHEET_CARD}>
+        <div style={{ padding: "20px 22px 6px" }}>
+          <div style={{ fontFamily: "var(--sans)", fontSize: 11, letterSpacing: "0.16em", textTransform: "uppercase", color: "var(--accent)" }}>Change cover</div>
+          <h2 style={{ margin: "8px 0 0", fontFamily: "var(--serif)", fontWeight: 300, fontSize: 20, lineHeight: 1.15, color: "var(--ink)" }}>Choose a piece for the cover</h2>
+        </div>
+        <div style={{ maxHeight: 330, overflow: "auto", padding: "14px 18px 18px" }}>
+          {coverPieces.isLoading ? (
+            <div style={{ padding: "24px 0", textAlign: "center", fontFamily: "var(--sans)", fontSize: 13, color: "var(--muted)" }}>Loading pieces...</div>
+          ) : coverPieces.data?.photos.length ? (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 9 }}>
+              {coverPieces.data.photos.map((photo) => {
+                const piece = mapPhoto(photo);
+                const isCurrent = photo.ID === folio.cover_photo_id;
+                return (
+                  <button
+                    key={photo.ID}
+                    type="button"
+                    aria-label={`Use ${piece.t} as cover`}
+                    onClick={() => {
+                      changeFolioCoverAction(folio.id, photo.ID);
+                      onClose();
+                    }}
+                    style={{ position: "relative", aspectRatio: "1 / 1", border: 0, borderRadius: 4, padding: 0, overflow: "hidden", background: "var(--wall)", cursor: "pointer", boxShadow: isCurrent ? "0 0 0 3px var(--accent)" : "0 1px 5px var(--shadow)", transition: "transform .12s ease" }}
+                    onMouseEnter={(event) => { event.currentTarget.style.transform = "scale(0.97)"; }}
+                    onMouseLeave={(event) => { event.currentTarget.style.transform = "none"; }}
+                  >
+                    <OkfImage src={getPhotoThumbnailUrl(photo.ID, 400)} alt={piece.t} title={piece.t} imgStyle={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} matteStyle={TILE_MATTE} />
+                    {isCurrent ? (
+                      <span aria-hidden="true" style={{ position: "absolute", top: 6, right: 6, zIndex: 3, width: 20, height: 20, borderRadius: 99, background: "var(--accent)", color: "var(--on-accent)", display: "grid", placeItems: "center", boxShadow: "0 1px 4px rgba(0,0,0,.3)" }}>
+                        <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+                          <path d="M3.2 8.4l3 3 6.6-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      </span>
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <div style={{ padding: "24px 0", textAlign: "center", fontFamily: "var(--sans)", fontSize: 13, color: "var(--muted)" }}>Add pieces before choosing a cover.</div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function FolioDetail() {
   const params = useParams();
   const folioId = Number(params.id);
-  const { setViewerPieces } = useFolio();
+  const { setViewerPieces, removePieceFromFolioAction, renameFolioAction, deleteFolioAction } = useFolio();
+  const navigate = useNavigate();
   const { isMobile } = useViewport();
   const [pickerOpen, setPickerOpen] = useState(false);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(() => new Set());
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const [coverOpen, setCoverOpen] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const folios = useQuery({ queryKey: ["folios"], queryFn: fetchFolios });
   const folio = folios.data?.folios.find((item) => item.id === folioId);
   const piecesQuery = useInfiniteQuery({
@@ -869,6 +1026,14 @@ export default function FolioDetail() {
   const toggleSelectionMode = () => {
     setSelectionMode((enabled) => !enabled);
     setSelectedIds(new Set());
+  };
+  const removeSelectedFromFolio = () => {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    for (const id of ids) {
+      removePieceFromFolioAction(folioId, id);
+    }
+    clearSelection();
   };
 
   useEffect(() => {
@@ -906,17 +1071,115 @@ export default function FolioDetail() {
 
   return (
     <div>
-      <PageHeader
-        eyebrow="Folio"
-        title={folio?.name ?? "Loading folio"}
-        subcopy={piecesQuery.isLoading ? "Gathering this folio..." : pieceCountLabel(total)}
-        action={
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <OutlineButton onClick={toggleSelectionMode}>{selectionMode ? "Done" : "Select"}</OutlineButton>
-            <OutlineButton onClick={() => setPickerOpen(true)}>Add pieces</OutlineButton>
+      <Hov
+        as={Link}
+        to="/folios"
+        style={{
+          appearance: "none",
+          cursor: "pointer",
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 8,
+          margin: "34px 0 0",
+          padding: "7px 4px",
+          border: 0,
+          background: "transparent",
+          fontFamily: "var(--sans)",
+          fontSize: 13.5,
+          color: "var(--graphite)",
+          textDecoration: "none",
+        }}
+        hover={{ color: "var(--accent)" }}
+      >
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M15 5l-7 7 7 7" />
+        </svg>
+        All folios
+      </Hov>
+
+      <header
+        style={{
+          padding: "14px 0 24px",
+          display: "flex",
+          alignItems: "flex-end",
+          justifyContent: "space-between",
+          gap: 20,
+          flexWrap: "wrap",
+          borderBottom: "1px solid var(--line)",
+        }}
+      >
+        <div style={{ minWidth: 0 }}>
+          <h1 style={{ margin: 0, fontFamily: "var(--serif)", fontWeight: 300, fontSize: 46, lineHeight: 1.0, letterSpacing: "-0.012em", color: "var(--ink)", overflowWrap: "anywhere" }}>{folio?.name ?? "Loading folio"}</h1>
+          <div style={{ marginTop: 12, fontFamily: "var(--sans)", fontSize: 13.5, color: "var(--muted)" }}>
+            {piecesQuery.isLoading ? "Loading pieces..." : `${pieceCountLabel(total)} · ${updatedLabel(folio?.updated_at)}`}
           </div>
-        }
-      />
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 11 }}>
+          <Hov
+            as="button"
+            onClick={toggleSelectionMode}
+            style={{
+              appearance: "none",
+              cursor: "pointer",
+              fontFamily: "var(--sans)",
+              fontSize: 13.5,
+              fontWeight: 500,
+              padding: "11px 18px",
+              borderRadius: 99,
+              border: "1px solid var(--line-2)",
+              background: selectionMode ? "var(--accent)" : "var(--surface)",
+              color: selectionMode ? "var(--on-accent)" : "var(--ink)",
+            }}
+            hover={selectionMode ? undefined : { borderColor: "var(--accent-line)", color: "var(--accent)" }}
+          >
+            {selectionMode ? "Done" : "Select"}
+          </Hov>
+          <Hov
+            as="button"
+            onClick={() => setPickerOpen(true)}
+            style={{
+              appearance: "none",
+              cursor: "pointer",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 8,
+              fontFamily: "var(--sans)",
+              fontSize: 13.5,
+              fontWeight: 500,
+              padding: "11px 18px",
+              borderRadius: 99,
+              border: 0,
+              background: "var(--accent)",
+              color: "var(--on-accent)",
+            }}
+            hover={{ filter: "brightness(1.07)" }}
+          >
+            <PlusIcon size={14} strokeWidth={2.1} />
+            Add pieces
+          </Hov>
+          <Hov
+            as="button"
+            aria-label={`Actions for ${folio?.name ?? "folio"}`}
+            onClick={() => setActionsOpen(true)}
+            style={{
+              appearance: "none",
+              cursor: "pointer",
+              width: 42,
+              height: 42,
+              borderRadius: 99,
+              border: "1px solid var(--line-2)",
+              background: "var(--surface)",
+              color: "var(--graphite)",
+              display: "grid",
+              placeItems: "center",
+              flex: "none",
+            }}
+            hover={{ borderColor: "var(--accent-line)", color: "var(--accent)" }}
+          >
+            <DotsIcon size={18} />
+          </Hov>
+        </div>
+      </header>
 
       {piecesQuery.isError ? (
         <div style={{ padding: "90px 0", textAlign: "center", fontFamily: "var(--serif)", fontStyle: "italic", fontSize: 22, color: "var(--graphite)" }}>
@@ -925,30 +1188,24 @@ export default function FolioDetail() {
       ) : piecesQuery.isLoading ? (
         <div style={{ padding: "90px 0", textAlign: "center", fontFamily: "var(--sans)", fontSize: 14, color: "var(--muted)" }}>Loading pieces...</div>
       ) : pieces.length === 0 ? (
-        <div style={{ textAlign: "center", padding: "80px 0", color: "var(--muted)" }}>
-          <div style={{ fontFamily: "var(--serif)", fontStyle: "italic", fontSize: 24, color: "var(--graphite)" }}>No pieces in this folio yet.</div>
-          <div style={{ fontFamily: "var(--sans)", fontSize: 14, marginTop: 10 }}>Add pieces from your gallery to start shaping it.</div>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", padding: "104px 0 0" }}>
+          <span style={{ opacity: 0.6, display: "inline-flex" }}>
+            <BrandMark width={58} height={64} tone="muted" />
+          </span>
+          <h2 style={{ margin: "26px 0 0", fontFamily: "var(--serif)", fontWeight: 300, fontSize: 27, lineHeight: 1.15, color: "var(--ink)" }}>Nothing here yet</h2>
+          <div style={{ margin: "11px 0 0", fontFamily: "var(--serif)", fontStyle: "italic", fontSize: 16, color: "var(--graphite)" }}>Add a few pieces to begin this folio.</div>
         </div>
       ) : (
-        <>
-          <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "30px 0 22px", fontFamily: "var(--sans)", fontSize: 13, color: "var(--muted)" }}>
-            <Link to="/folios" style={{ color: "var(--accent)", textDecoration: "none" }}>All folios</Link>
-            <span style={{ opacity: 0.5 }}>·</span>
-            <span>{pieceCountLabel(total)}</span>
-            <span style={{ flex: 1 }} />
-            <span style={{ color: "var(--faint)" }}>{selectionMode ? `${selectedIds.size.toLocaleString()} selected` : "Click to open · remove pieces from the corner"}</span>
-          </div>
-          <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(166px, 1fr))", gap: 13 }}>
-            {pieces.map((piece) => (
-              selectionMode ? (
-                <SelectPieceTile key={piece.id} piece={piece} selected={selectedIds.has(piece.id)} onToggle={() => toggleSelected(piece.id)} />
-              ) : (
-                <PieceTile key={piece.id} piece={piece} folioId={folioId} />
-              )
-            ))}
-          </section>
+        <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(166px, 1fr))", gap: 13, padding: "30px 0 0" }}>
+          {pieces.map((piece) => (
+            selectionMode ? (
+              <SelectPieceTile key={piece.id} piece={piece} selected={selectedIds.has(piece.id)} onToggle={() => toggleSelected(piece.id)} />
+            ) : (
+              <PieceTile key={piece.id} piece={piece} />
+            )
+          ))}
           {piecesQuery.hasNextPage ? (
-            <div style={{ display: "flex", justifyContent: "center", padding: "36px 0 0" }}>
+            <div style={{ display: "flex", justifyContent: "center", padding: "36px 0 0", gridColumn: "1 / -1" }}>
               <Hov
                 as="button"
                 onClick={() => void piecesQuery.fetchNextPage()}
@@ -960,11 +1217,54 @@ export default function FolioDetail() {
               </Hov>
             </div>
           ) : null}
-        </>
+        </section>
       )}
 
       {pickerOpen ? <AddPiecesPicker folioId={folioId} folioName={folio?.name} existingIds={existingIds} onClose={() => setPickerOpen(false)} /> : null}
-      {selectionMode ? <BulkEditBar selectedIds={Array.from(selectedIds)} onClear={clearSelection} /> : null}
+      {selectionMode ? <BulkEditBar selectedIds={Array.from(selectedIds)} onClear={clearSelection} onRemoveFromFolio={removeSelectedFromFolio} /> : null}
+      {actionsOpen && folio ? (
+        <DesktopFolioActionsSheet
+          folio={folio}
+          onClose={() => setActionsOpen(false)}
+          onRename={() => {
+            setActionsOpen(false);
+            setRenameOpen(true);
+          }}
+          onCover={() => {
+            setActionsOpen(false);
+            setCoverOpen(true);
+          }}
+          onDelete={() => {
+            setActionsOpen(false);
+            setDeleteOpen(true);
+          }}
+        />
+      ) : null}
+      {coverOpen && folio ? <FolioCoverSheet folio={folio} onClose={() => setCoverOpen(false)} /> : null}
+      {renameOpen && folio ? (
+        <FolioNameModal
+          mode="rename"
+          initialName={folio.name}
+          onClose={() => setRenameOpen(false)}
+          onSubmitName={(name) => renameFolioAction(folio.id, name)}
+        />
+      ) : null}
+      {deleteOpen && folio ? (
+        <ConfirmationDialog
+          eyebrow="Delete folio"
+          title={`Delete "${folio.name}"?`}
+          description={`This removes the folio. The ${folio.piece_count.toLocaleString()} ${folio.piece_count === 1 ? "piece" : "pieces"} stay in your gallery.`}
+          confirmLabel="Delete"
+          busyLabel="Deleting"
+          destructive
+          onCancel={() => setDeleteOpen(false)}
+          onConfirm={async () => {
+            setDeleteOpen(false);
+            const deleted = await deleteFolioAction(folio.id);
+            if (deleted) navigate("/folios");
+          }}
+        />
+      ) : null}
     </div>
   );
 }

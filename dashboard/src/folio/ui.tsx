@@ -81,6 +81,7 @@ export function ConfirmationDialog({
   const isSubmittingRef = useRef(false);
   const mountedRef = useRef(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [confirmHover, setConfirmHover] = useState(false);
 
   useEffect(() => {
     isSubmittingRef.current = isSubmitting;
@@ -126,13 +127,14 @@ export function ConfirmationDialog({
       style={{
         position: "fixed",
         inset: 0,
-        zIndex: 145,
-        background: "rgba(18,15,10,0.58)",
-        backdropFilter: "blur(7px)",
-        WebkitBackdropFilter: "blur(7px)",
+        zIndex: 100,
+        background: "rgba(12,9,6,0.62)",
+        backdropFilter: "blur(6px)",
+        WebkitBackdropFilter: "blur(6px)",
         display: "grid",
         placeItems: "center",
-        padding: 22,
+        padding: 34,
+        animation: "okf-fade .2s ease",
       }}
     >
       <form
@@ -142,12 +144,14 @@ export function ConfirmationDialog({
         aria-describedby="confirmation-description"
         onSubmit={submit}
         style={{
-          width: "min(420px, calc(100vw - 44px))",
-          borderRadius: 15,
+          width: "min(380px, 94vw)",
+          borderRadius: 16,
           background: "var(--surface)",
           color: "var(--ink)",
-          boxShadow: "0 24px 70px rgba(0,0,0,0.3)",
-          padding: "26px 24px 22px",
+          boxShadow: "0 40px 110px rgba(0,0,0,0.4)",
+          padding: "24px 26px",
+          textAlign: "center",
+          animation: "okf-rise .3s cubic-bezier(0.22,1,0.36,1)",
         }}
       >
         {eyebrow ? (
@@ -168,7 +172,7 @@ export function ConfirmationDialog({
           style={{
             fontFamily: "var(--serif)",
             fontWeight: 300,
-            fontSize: 25,
+            fontSize: 22,
             lineHeight: 1.12,
             color: "var(--ink)",
             margin: eyebrow ? "8px 0 0" : 0,
@@ -179,7 +183,7 @@ export function ConfirmationDialog({
         <div
           id="confirmation-description"
           style={{
-            marginTop: 13,
+            marginTop: 12,
             fontFamily: "var(--sans)",
             fontSize: 14,
             lineHeight: 1.55,
@@ -188,18 +192,17 @@ export function ConfirmationDialog({
         >
           {description}
         </div>
-        <div style={{ display: "flex", gap: 11, marginTop: 24 }}>
+        <div style={{ display: "flex", gap: 11, marginTop: 22 }}>
           <button
             type="button"
             onClick={onCancel}
             disabled={isSubmitting}
             style={{
-              flex: "none",
+              flex: 1,
               appearance: "none",
               cursor: isSubmitting ? "default" : "pointer",
-              height: 50,
-              padding: "0 34px",
-              borderRadius: 13,
+              height: 48,
+              borderRadius: 12,
               border: "1px solid var(--line-2)",
               background: "transparent",
               color: isSubmitting ? "var(--muted)" : "var(--ink)",
@@ -213,19 +216,22 @@ export function ConfirmationDialog({
             ref={confirmRef}
             type="submit"
             disabled={isSubmitting}
+            onMouseEnter={destructive ? () => setConfirmHover(true) : undefined}
+            onMouseLeave={destructive ? () => setConfirmHover(false) : undefined}
             style={{
               flex: 1,
               appearance: "none",
               cursor: isSubmitting ? "default" : "pointer",
-              height: 50,
-              borderRadius: 13,
+              height: 48,
+              borderRadius: 12,
               border: 0,
-              background: destructive ? "var(--accent)" : "var(--ink)",
-              color: destructive ? "var(--on-accent)" : "var(--surface)",
+              background: destructive ? "var(--danger)" : "var(--ink)",
+              color: destructive ? "var(--on-danger)" : "var(--surface)",
               fontFamily: "var(--sans)",
               fontSize: 15,
               fontWeight: 600,
               opacity: isSubmitting ? 0.72 : 1,
+              filter: destructive && confirmHover && !isSubmitting ? "brightness(1.08)" : undefined,
             }}
           >
             {isSubmitting ? busyLabel || confirmLabel : confirmLabel}
@@ -376,9 +382,9 @@ export function MoonIcon() {
   );
 }
 
-export function PlusIcon({ size = 13 }: { size?: number }) {
+export function PlusIcon({ size = 13, strokeWidth = 2 }: { size?: number; strokeWidth?: number } = {}) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth}>
       <path d="M12 5 V19 M5 12 H19" />
     </svg>
   );
@@ -400,9 +406,9 @@ export function ChevronIcon({ dir }: { dir: "left" | "right" }) {
   );
 }
 
-export function DotsIcon() {
+export function DotsIcon({ size = 16 }: { size?: number } = {}) {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
       <circle cx="5" cy="12" r="1.7" />
       <circle cx="12" cy="12" r="1.7" />
       <circle cx="19" cy="12" r="1.7" />
@@ -519,11 +525,21 @@ export function PictureFrameIcon({ size = 32 }: { size?: number }) {
 }
 
 /** The stacked-folio brand mark. */
-export function BrandMark({ width = 22, height = 25 }: { width?: number; height?: number }) {
+export function BrandMark({
+  width = 22,
+  height = 25,
+  tone = "accent",
+}: {
+  width?: number;
+  height?: number;
+  tone?: "accent" | "muted";
+}) {
+  const backStroke = tone === "muted" ? "var(--muted)" : "var(--accent)";
+  const frontStroke = tone === "muted" ? "var(--graphite)" : "var(--ink)";
   return (
     <svg width={width} height={height} viewBox="0 0 22 25" fill="none" style={{ display: "block", flex: "none" }}>
-      <rect x="6.4" y="3.3" width="12.4" height="15.6" rx="0.6" fill="var(--bg)" stroke="var(--accent)" strokeWidth="1.3" />
-      <rect x="3.2" y="5.4" width="12.4" height="15.6" rx="0.6" fill="var(--bg)" stroke="var(--ink)" strokeWidth="1.4" />
+      <rect x="6.4" y="3.3" width="12.4" height="15.6" rx="0.6" fill="var(--bg)" stroke={backStroke} strokeWidth="1.3" />
+      <rect x="3.2" y="5.4" width="12.4" height="15.6" rx="0.6" fill="var(--bg)" stroke={frontStroke} strokeWidth="1.4" />
     </svg>
   );
 }
