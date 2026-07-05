@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent, type ReactNode } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { fetchFolioPieces, fetchFolios, getPhotoThumbnailUrl } from "../api";
 import type { Folio, Photo } from "../types";
@@ -302,6 +302,7 @@ function MobileFolioSheet({
   onSwitch: (state: FolioSheetState) => void;
 }) {
   const { createFolioAction, renameFolioAction, changeFolioCoverAction, deleteFolioAction } = useFolio();
+  const navigate = useNavigate();
   const [name, setName] = useState(state.mode === "rename" ? state.folio.name : "");
   const [nameError, setNameError] = useState("");
   const [isSubmittingName, setIsSubmittingName] = useState(false);
@@ -330,6 +331,7 @@ function MobileFolioSheet({
       const created = await createFolioAction(trimmed);
       if (created) {
         onClose();
+        navigate(`/folios/${created.id}`);
         return;
       }
       setNameError("Folio could not be created. Try again.");
@@ -703,7 +705,7 @@ function FolioTile({ folio, onRename }: { folio: Folio; onRename: (folio: Folio)
         <ConfirmationDialog
           eyebrow="Delete folio"
           title={`Delete "${folio.name}"?`}
-          description="The folio will be removed, but its pieces stay in your gallery."
+          description={`This removes the folio. The ${folio.piece_count.toLocaleString()} ${folio.piece_count === 1 ? "piece" : "pieces"} stay in your gallery.`}
           confirmLabel="Delete"
           busyLabel="Deleting"
           destructive
@@ -749,7 +751,7 @@ function MenuButton({ children, onClick }: { children: ReactNode; onClick: () =>
   );
 }
 
-function FolioNameModal({
+export function FolioNameModal({
   mode,
   initialName = "",
   onClose,
@@ -763,6 +765,7 @@ function FolioNameModal({
   const [name, setName] = useState(initialName);
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [borderFocused, setBorderFocused] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const trimmed = name.trim();
   const isRename = mode === "rename";
@@ -813,13 +816,13 @@ function FolioNameModal({
       style={{
         position: "fixed",
         inset: 0,
-        zIndex: 140,
-        background: "rgba(18,15,10,0.58)",
-        backdropFilter: "blur(7px)",
-        WebkitBackdropFilter: "blur(7px)",
+        zIndex: 100,
+        background: "rgba(12,9,6,0.62)",
+        backdropFilter: "blur(6px)",
+        WebkitBackdropFilter: "blur(6px)",
         display: "grid",
         placeItems: "center",
-        padding: 22,
+        padding: 34,
         animation: "okf-fade .2s ease",
       }}
     >
@@ -830,11 +833,11 @@ function FolioNameModal({
         aria-describedby={error ? "folio-name-error" : undefined}
         onSubmit={submit}
         style={{
-          width: "min(380px, calc(100vw - 44px))",
-          borderRadius: 15,
+          width: "min(380px, 94vw)",
+          borderRadius: 16,
           background: "var(--surface)",
           color: "var(--ink)",
-          boxShadow: "0 24px 70px rgba(0,0,0,0.3)",
+          boxShadow: "0 40px 110px rgba(0,0,0,0.4)",
           padding: "26px 24px 22px",
           animation: "okf-rise .3s cubic-bezier(0.22,1,0.36,1)",
         }}
@@ -861,15 +864,17 @@ function FolioNameModal({
             margin: "8px 0 0",
           }}
         >
-          {isRename ? "Rename folio" : "Name your folio"}
+          {isRename ? "Give it a new name" : "Name your folio"}
         </h2>
         <input
           ref={inputRef}
           value={name}
           onChange={(event) => setName(event.target.value)}
           disabled={isSubmitting}
-          placeholder="e.g. Reference – hands"
+          placeholder="Folio name"
           aria-label="Folio name"
+          onFocus={() => setBorderFocused(true)}
+          onBlur={() => setBorderFocused(false)}
           style={{
             width: "100%",
             appearance: "none",
@@ -877,16 +882,17 @@ function FolioNameModal({
             fontSize: 22,
             color: "var(--ink)",
             border: 0,
-            borderBottom: "1.5px solid var(--line-2)",
+            borderBottom: `1.5px solid ${borderFocused ? "var(--accent)" : "var(--line-2)"}`,
             background: "transparent",
             outline: "none",
             opacity: isSubmitting ? 0.72 : 1,
             padding: "14px 0 10px",
             marginTop: 14,
+            transition: "border-color .15s ease",
           }}
         />
         {error ? (
-          <div id="folio-name-error" role="alert" style={{ marginTop: 12, fontFamily: "var(--sans)", fontSize: 13, color: "var(--danger, #C0392B)" }}>
+          <div id="folio-name-error" role="alert" style={{ marginTop: 12, fontFamily: "var(--sans)", fontSize: 13, color: "var(--danger)" }}>
             {error}
           </div>
         ) : null}
@@ -896,12 +902,11 @@ function FolioNameModal({
             onClick={onClose}
             disabled={isSubmitting}
             style={{
-              flex: "none",
+              flex: 1,
               appearance: "none",
               cursor: isSubmitting ? "default" : "pointer",
-              height: 50,
-              padding: "0 56px",
-              borderRadius: 13,
+              height: 48,
+              borderRadius: 12,
               border: "1px solid var(--line-2)",
               background: "transparent",
               color: isSubmitting ? "var(--muted)" : "var(--ink)",
@@ -918,8 +923,8 @@ function FolioNameModal({
               flex: 1,
               appearance: "none",
               cursor: trimmed && !isSubmitting ? "pointer" : "default",
-              height: 50,
-              borderRadius: 13,
+              height: 48,
+              borderRadius: 12,
               border: 0,
               background: trimmed && !isSubmitting ? "var(--accent)" : "var(--line)",
               color: trimmed && !isSubmitting ? "var(--on-accent)" : "var(--muted)",
@@ -928,7 +933,7 @@ function FolioNameModal({
               fontWeight: 500,
             }}
           >
-            {isSubmitting ? (isRename ? "Renaming" : "Creating") : isRename ? "Rename" : "Create"}
+            {isSubmitting ? (isRename ? "Renaming" : "Creating") : isRename ? "Save" : "Create"}
           </button>
         </div>
       </form>
@@ -939,6 +944,7 @@ function FolioNameModal({
 export default function Folios() {
   const { createFolioAction, renameFolioAction } = useFolio();
   const { isMobile } = useViewport();
+  const navigate = useNavigate();
   const [createOpen, setCreateOpen] = useState(false);
   const [renameTarget, setRenameTarget] = useState<Folio | null>(null);
   const { data, isLoading, isError } = useQuery({
@@ -985,8 +991,13 @@ export default function Folios() {
         <FolioNameModal
           mode="create"
           onClose={() => setCreateOpen(false)}
-          onSubmitName={(name) => {
-            return createFolioAction(name);
+          onSubmitName={async (name) => {
+            const folio = await createFolioAction(name);
+            if (folio) {
+              navigate(`/folios/${folio.id}`);
+              return true;
+            }
+            return false;
           }}
         />
       ) : null}

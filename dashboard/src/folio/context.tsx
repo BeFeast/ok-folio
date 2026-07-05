@@ -39,7 +39,7 @@ import {
   type CreatePieceInput,
   type PieceMetadataPatch,
 } from "../api";
-import type { FolioPiecesResponse, GalleryCatalogResponse, Photo } from "../types";
+import type { Folio, FolioPiecesResponse, GalleryCatalogResponse, Photo } from "../types";
 import {
   applyTheme,
   readStoredInfoPanelMode,
@@ -310,7 +310,7 @@ interface FolioContextValue {
   keepInboxAction: (id: number) => void;
   skipInboxAction: (id: number) => void;
   moveInboxToFolioAction: (id: number, folioId: number, photoId?: number) => void;
-  createFolioAction: (name: string) => Promise<boolean>;
+  createFolioAction: (name: string) => Promise<Folio | null>;
   renameFolioAction: (id: number, name: string) => Promise<boolean>;
   changeFolioCoverAction: (id: number, photoId: number | null) => void;
   deleteFolioAction: (id: number) => Promise<boolean>;
@@ -586,6 +586,7 @@ export function FolioProvider({ children }: { children: ReactNode }) {
           void queryClient.invalidateQueries({ queryKey: ["inbox-counts"] });
           void queryClient.invalidateQueries({ queryKey: ["folios"] });
           void queryClient.invalidateQueries({ queryKey: ["folio-pieces", folioId] });
+          void queryClient.invalidateQueries({ queryKey: ["folio-cover-sheet-pieces", folioId] });
         })
         .catch((err: unknown) => {
           setToasts((prev) =>
@@ -606,15 +607,15 @@ export function FolioProvider({ children }: { children: ReactNode }) {
       const label = name.trim();
       setToasts((prev) => [...prev, { id, status: "loading", title: "Creating folio", detail: label }]);
       return createFolio({ name: label })
-        .then(() => {
+        .then((folio: Folio) => {
           setToasts((prev) =>
-            prev.map((t) => (t.id === id ? { ...t, status: "success", title: "Folio created", detail: label } : t)),
+            prev.map((t) => (t.id === id ? { ...t, status: "success", title: `Folio "${label}" created`, detail: label } : t)),
           );
           window.setTimeout(() => {
             setToasts((prev) => prev.filter((t) => t.id !== id));
           }, 2800);
           void queryClient.invalidateQueries({ queryKey: ["folios"] });
-          return true;
+          return folio;
         })
         .catch((err: unknown) => {
           setToasts((prev) =>
@@ -624,7 +625,7 @@ export function FolioProvider({ children }: { children: ReactNode }) {
                 : t,
             ),
           );
-          return false;
+          return null;
         });
     },
     [queryClient],
@@ -638,7 +639,7 @@ export function FolioProvider({ children }: { children: ReactNode }) {
       return updateFolio(folioId, { name: label })
         .then(() => {
           setToasts((prev) =>
-            prev.map((t) => (t.id === id ? { ...t, status: "success", title: "Folio renamed", detail: label } : t)),
+            prev.map((t) => (t.id === id ? { ...t, status: "success", title: `Renamed to “${label}”`, detail: label } : t)),
           );
           window.setTimeout(() => {
             setToasts((prev) => prev.filter((t) => t.id !== id));
@@ -667,7 +668,7 @@ export function FolioProvider({ children }: { children: ReactNode }) {
       updateFolio(folioId, { cover_photo_id: photoId })
         .then(() => {
           setToasts((prev) =>
-            prev.map((t) => (t.id === id ? { ...t, status: "success", title: "Folio cover changed" } : t)),
+            prev.map((t) => (t.id === id ? { ...t, status: "success", title: "Cover updated" } : t)),
           );
           window.setTimeout(() => {
             setToasts((prev) => prev.filter((t) => t.id !== id));
@@ -731,6 +732,7 @@ export function FolioProvider({ children }: { children: ReactNode }) {
           }, 2800);
           void queryClient.invalidateQueries({ queryKey: ["folio-pieces", folioId] });
           void queryClient.invalidateQueries({ queryKey: ["folios"] });
+          void queryClient.invalidateQueries({ queryKey: ["folio-cover-sheet-pieces", folioId] });
         })
         .catch((err: unknown) => {
           setToasts((prev) =>
@@ -805,6 +807,7 @@ export function FolioProvider({ children }: { children: ReactNode }) {
         if (result.added > 0) {
           void queryClient.invalidateQueries({ queryKey: ["folio-pieces", folioId] });
           void queryClient.invalidateQueries({ queryKey: ["folios"] });
+          void queryClient.invalidateQueries({ queryKey: ["folio-cover-sheet-pieces", folioId] });
         }
         return false;
       }
@@ -822,6 +825,7 @@ export function FolioProvider({ children }: { children: ReactNode }) {
       }, 2800);
       void queryClient.invalidateQueries({ queryKey: ["folio-pieces", folioId] });
       void queryClient.invalidateQueries({ queryKey: ["folios"] });
+      void queryClient.invalidateQueries({ queryKey: ["folio-cover-sheet-pieces", folioId] });
       return true;
     },
     [queryClient],
@@ -841,6 +845,7 @@ export function FolioProvider({ children }: { children: ReactNode }) {
           }, 2800);
           void queryClient.invalidateQueries({ queryKey: ["folio-pieces", folioId] });
           void queryClient.invalidateQueries({ queryKey: ["folios"] });
+          void queryClient.invalidateQueries({ queryKey: ["folio-cover-sheet-pieces", folioId] });
         })
         .catch((err: unknown) => {
           setToasts((prev) =>

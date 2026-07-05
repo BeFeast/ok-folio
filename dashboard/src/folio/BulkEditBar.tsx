@@ -24,9 +24,11 @@ function splitKeywords(value: string): string[] {
 export default function BulkEditBar({
   selectedIds,
   onClear,
+  onRemoveFromFolio,
 }: {
   selectedIds: number[];
   onClear: () => void;
+  onRemoveFromFolio?: () => void;
 }) {
   const { bulkEditPieces } = useFolio();
   const [artist, setArtist] = useState("");
@@ -34,6 +36,7 @@ export default function BulkEditBar({
   const [addKeywords, setAddKeywords] = useState("");
   const [removeKeywords, setRemoveKeywords] = useState("");
   const [busy, setBusy] = useState(false);
+  const [removing, setRemoving] = useState(false);
   const count = selectedIds.length;
   const canApply = count > 0 && (artist.trim() || date.trim() || addKeywords.trim() || removeKeywords.trim());
 
@@ -54,6 +57,14 @@ export default function BulkEditBar({
       setAddKeywords("");
       setRemoveKeywords("");
       onClear();
+    });
+  };
+
+  const removePieces = () => {
+    if (removing || count === 0 || !onRemoveFromFolio) return;
+    setRemoving(true);
+    Promise.resolve(onRemoveFromFolio()).finally(() => {
+      setRemoving(false);
     });
   };
 
@@ -93,6 +104,15 @@ export default function BulkEditBar({
       >
         {busy ? "Applying..." : "Apply"}
       </button>
+      {onRemoveFromFolio ? (
+        <button
+          type="button"
+          onClick={removePieces}
+          disabled={count === 0 || removing}
+          style={{ minHeight: 44, borderRadius: 8, border: "1px solid var(--danger)", background: "transparent", color: "var(--danger)", opacity: count === 0 || removing ? 0.55 : 1, padding: "0 14px", fontFamily: "var(--sans)", fontSize: 13.5, fontWeight: 800, cursor: count === 0 || removing ? "not-allowed" : "pointer", whiteSpace: "nowrap" }}
+        >
+          {removing ? "Removing..." : `Remove ${count} from folio`}
+        </button> ) : null}
       <button type="button" onClick={onClear} style={{ minHeight: 44, borderRadius: 8, border: "1px solid var(--line)", background: "transparent", color: "var(--ink)", padding: "0 14px", fontFamily: "var(--sans)", fontSize: 13.5, fontWeight: 800, cursor: "pointer" }}>
         Clear
       </button>
