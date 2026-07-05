@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
 import { fetchFolios, fetchInbox, fetchInboxCounts, getPhotoThumbnailUrl, skipInboxItem } from "../api";
 import type { InboxItem } from "../types";
-import { useFolio } from "./context";
+import { useFolio, pieceStub } from "./context";
 import { useViewport } from "./useViewport";
 import { CloseIcon, Hov, OkfImage, PageHeader } from "./ui";
 
@@ -125,8 +124,7 @@ const ACTION_SECONDARY: CSSProperties = { ...ACTION_BASE, width: "100%", border:
 const ACTION_TERTIARY: CSSProperties = { ...ACTION_BASE, border: 0, background: "transparent", color: "var(--muted)" };
 
 function InboxRow({ item }: { item: InboxItem }) {
-  const navigate = useNavigate();
-  const { keepInboxAction, skipInboxAction, moveInboxToFolioAction } = useFolio();
+  const { keepInboxAction, skipInboxAction, moveInboxToFolioAction, openPiece } = useFolio();
   const folios = useQuery({ queryKey: ["folios"], queryFn: fetchFolios });
   const [pickerOpen, setPickerOpen] = useState(false);
   const title = item.title.trim() || "Untitled piece";
@@ -167,7 +165,7 @@ function InboxRow({ item }: { item: InboxItem }) {
       {coverPhotoId != null ? (
         <button
           type="button"
-          onClick={() => navigate(`/pieces/${coverPhotoId}`)}
+          onClick={() => openPiece(coverPhotoId, pieceStub(coverPhotoId, { title, artist, thumb: getPhotoThumbnailUrl(coverPhotoId, 400) }))}
           aria-label={`Open matched piece: ${title}`}
           title="Open matched piece"
           style={{ ...THUMB_BOX, position: "relative", padding: 0, border: 0, cursor: "zoom-in", display: "block" }}
@@ -412,8 +410,7 @@ function PlaceholderGlyph() {
 }
 
 function MobileInboxRow({ item, onDismiss }: { item: InboxItem; onDismiss: (item: InboxItem) => void }) {
-  const navigate = useNavigate();
-  const { keepInboxAction, moveInboxToFolioAction } = useFolio();
+  const { keepInboxAction, moveInboxToFolioAction, openPiece } = useFolio();
   const folios = useQuery({ queryKey: ["folios"], queryFn: fetchFolios });
   const [dragX, setDragX] = useState(0);
   const [selectedFolio, setSelectedFolio] = useState("");
@@ -491,10 +488,10 @@ function MobileInboxRow({ item, onDismiss }: { item: InboxItem; onDismiss: (item
           boxShadow: "0 8px 22px var(--shadow)",
         }}
       >
-        {item.cover_photo_id != null ? (
+        {coverPhotoId != null ? (
           <button
             type="button"
-            onClick={() => navigate(`/pieces/${item.cover_photo_id}`)}
+            onClick={() => openPiece(coverPhotoId, pieceStub(coverPhotoId, { title, artist, thumb: getPhotoThumbnailUrl(coverPhotoId, 140) }))}
             aria-label={`Open matched piece: ${title}`}
             style={{
               width: 54,
@@ -507,7 +504,7 @@ function MobileInboxRow({ item, onDismiss }: { item: InboxItem; onDismiss: (item
             }}
           >
             <OkfImage
-              src={getPhotoThumbnailUrl(item.cover_photo_id, 140)}
+              src={getPhotoThumbnailUrl(coverPhotoId, 140)}
               alt={`Matched piece for ${title}`}
               title={title}
               artist={artist}
@@ -554,7 +551,7 @@ function MobileInboxRow({ item, onDismiss }: { item: InboxItem; onDismiss: (item
           ) : (
             <button
               type="button"
-              onClick={() => item.cover_photo_id != null && navigate(`/pieces/${item.cover_photo_id}`)}
+              onClick={() => { if (coverPhotoId != null) openPiece(coverPhotoId, pieceStub(coverPhotoId, { title, artist, thumb: getPhotoThumbnailUrl(coverPhotoId, 140) })); }}
               style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 10, padding: 0, border: 0, background: "transparent", color: "var(--accent)", fontFamily: "var(--sans)", fontSize: 13, fontWeight: 700 }}
             >
               <ExternalArrow />

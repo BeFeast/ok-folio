@@ -264,6 +264,20 @@ func (s *Server) handleListFolioPieces(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) handleListPhotoFolios(w http.ResponseWriter, r *http.Request) {
+	photo, ok := s.photoFromRoute(w, r)
+	if !ok {
+		return
+	}
+	folios, err := s.db.ListFoliosForPhoto(photo.ID)
+	if err != nil {
+		s.logger.Error().Err(err).Uint64("id", photo.ID).Msg("Failed to fetch folios for photo")
+		s.writeError(w, http.StatusInternalServerError, "Failed to fetch folios for photo")
+		return
+	}
+	s.writeJSON(w, http.StatusOK, foliosResponse{Folios: folios})
+}
+
 func (s *Server) readFolioRequest(w http.ResponseWriter, r *http.Request) (folioRequest, bool) {
 	var input folioRequest
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxFolioRequestBytes))
