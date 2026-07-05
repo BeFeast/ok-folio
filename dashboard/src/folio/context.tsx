@@ -586,6 +586,7 @@ export function FolioProvider({ children }: { children: ReactNode }) {
           void queryClient.invalidateQueries({ queryKey: ["inbox-counts"] });
           void queryClient.invalidateQueries({ queryKey: ["folios"] });
           void queryClient.invalidateQueries({ queryKey: ["folio-pieces", folioId] });
+          void queryClient.invalidateQueries({ queryKey: ["folio-cover-sheet-pieces", folioId] });
         })
         .catch((err: unknown) => {
           setToasts((prev) =>
@@ -731,6 +732,7 @@ export function FolioProvider({ children }: { children: ReactNode }) {
           }, 2800);
           void queryClient.invalidateQueries({ queryKey: ["folio-pieces", folioId] });
           void queryClient.invalidateQueries({ queryKey: ["folios"] });
+          void queryClient.invalidateQueries({ queryKey: ["folio-cover-sheet-pieces", folioId] });
         })
         .catch((err: unknown) => {
           setToasts((prev) =>
@@ -805,6 +807,7 @@ export function FolioProvider({ children }: { children: ReactNode }) {
         if (result.added > 0) {
           void queryClient.invalidateQueries({ queryKey: ["folio-pieces", folioId] });
           void queryClient.invalidateQueries({ queryKey: ["folios"] });
+          void queryClient.invalidateQueries({ queryKey: ["folio-cover-sheet-pieces", folioId] });
         }
         return false;
       }
@@ -822,6 +825,7 @@ export function FolioProvider({ children }: { children: ReactNode }) {
       }, 2800);
       void queryClient.invalidateQueries({ queryKey: ["folio-pieces", folioId] });
       void queryClient.invalidateQueries({ queryKey: ["folios"] });
+      void queryClient.invalidateQueries({ queryKey: ["folio-cover-sheet-pieces", folioId] });
       return true;
     },
     [queryClient],
@@ -841,6 +845,7 @@ export function FolioProvider({ children }: { children: ReactNode }) {
           }, 2800);
           void queryClient.invalidateQueries({ queryKey: ["folio-pieces", folioId] });
           void queryClient.invalidateQueries({ queryKey: ["folios"] });
+          void queryClient.invalidateQueries({ queryKey: ["folio-cover-sheet-pieces", folioId] });
         })
         .catch((err: unknown) => {
           setToasts((prev) =>
