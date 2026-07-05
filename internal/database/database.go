@@ -384,6 +384,7 @@ func normalizeManualFields(raw Fields) Fields {
 		"artist":   {},
 		"date":     {},
 		"keywords": {},
+		"note":     {},
 	}
 	seen := make(map[string]struct{}, len(raw))
 	fields := make([]string, 0, len(raw))
@@ -975,6 +976,9 @@ func applyManualFieldLocks(photo *DownloadedPhoto, existing DownloadedPhoto) {
 	}
 	if existing.HasManualField("keywords") {
 		photo.Keywords = existing.Keywords
+	}
+	if existing.HasManualField("note") {
+		photo.Notes = existing.Notes
 	}
 }
 
@@ -1940,6 +1944,27 @@ func (db *DB) ListFolioPieces(folioID uint64, limit, offset int) ([]DownloadedPh
 	return photos, total, nil
 }
 
+// ListFoliosForPhoto returns every folio that contains the given photo,
+// ordered by folio name. Used by the piece viewer's "In folios" membership
+// chips. PieceCount is decorated per folio.
+func (db *DB) ListFoliosForPhoto(photoID uint64) ([]Folio, error) {
+	var folios []Folio
+	err := db.
+		Joins("JOIN folio_pieces ON folio_pieces.folio_id = folios.id").
+		Where("folio_pieces.photo_id = ?", photoID).
+		Order("folios.name ASC, folios.id ASC").
+		Find(&folios).Error
+	if err != nil {
+		return nil, err
+	}
+	for i := range folios {
+		if err := db.decorateFolio(&folios[i]); err != nil {
+			return nil, err
+		}
+	}
+	return folios, nil
+}
+
 // GetDownloadStats returns download statistics using a single optimized query
 func (db *DB) GetDownloadStats() (map[string]interface{}, error) {
 	type StatsResult struct {
@@ -2129,11 +2154,12 @@ type PhotoMetadataUpdate struct {
 	Artist     *string
 	UploadDate **time.Time
 	Keywords   *Keywords
+	Note       *string
 	LockFields []string
 }
 
 func (u PhotoMetadataUpdate) empty() bool {
-	return u.Title == nil && u.Artist == nil && u.UploadDate == nil && u.Keywords == nil
+	return u.Title == nil && u.Artist == nil && u.UploadDate == nil && u.Keywords == nil && u.Note == nil
 }
 
 func (db *DB) UpdatePhotoMetadata(id uint64, update PhotoMetadataUpdate) (*DownloadedPhoto, bool, error) {
@@ -2160,6 +2186,9 @@ func (db *DB) UpdatePhotoMetadata(id uint64, update PhotoMetadataUpdate) (*Downl
 		}
 		if update.Keywords != nil {
 			assignments["keywords"] = *update.Keywords
+		}
+		if update.Note != nil {
+			assignments["notes"] = strings.TrimSpace(*update.Note)
 		}
 		lockFields := mergeManualFields(existing.ManualFields, update.LockFields...)
 		assignments["manual_fields"] = lockFields

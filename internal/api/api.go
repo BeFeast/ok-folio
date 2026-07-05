@@ -185,6 +185,7 @@ func (s *Server) setupRoutes() {
 		r.Get("/photos/{id}/favorite", s.handleGetFavoriteStatus)
 		r.Post("/photos/{id}/favorite", s.handleAddFavorite)
 		r.Delete("/photos/{id}/favorite", s.handleRemoveFavorite)
+		r.Get("/photos/{id}/folios", s.handleListPhotoFolios)
 		r.Get("/photos/today", s.handleTodayPhotos)
 		r.Get("/photos/week", s.handleWeekPhotos)
 

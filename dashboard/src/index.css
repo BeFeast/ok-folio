@@ -171,3 +171,29 @@ img {
   animation-iteration-count: 1 !important;
   transition-duration: 0.001ms !important;
 }
+
+/* Piece Viewer chrome — cream-tinted buttons brighten on hover. Active
+   (pressed/open) buttons keep their accent fill and do not brighten. */
+.okf-chrome-btn:hover:not(.okf-chrome-btn--active) {
+  background: rgba(251, 246, 238, 0.24);
+}
+
+/* Prev/next arrows brighten on hover. */
+.okf-chrome-arrow:hover {
+  background: rgba(251, 246, 238, 0.24);
+}
+
+/* In-folios dashed "Add to folio" chip hover. */
+.okf-folio-add-chip:hover {
+  color: #dc8a70;
+  border-color: rgba(220, 138, 112, 0.6);
+}
+
+/* Museum-label note affordance: subtle hover/focus wash. */
+.okf-panel-heart:hover {
+  background: rgba(251, 246, 238, 0.12);
+}
+
+.okf-note-box:hover {
+  background: rgba(251, 246, 238, 0.08);
+}

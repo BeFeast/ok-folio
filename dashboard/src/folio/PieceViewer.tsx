@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { fetchFolios, fetchGallerySimilar, type PieceMetadataPatch } from "../api";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { fetchFolios, fetchGallerySimilar, fetchPhotoFolios, type PieceMetadataPatch } from "../api";
 import { mapPhoto, useFolio, type PieceVM } from "./context";
 import { ChevronIcon, CloseIcon, HeartIcon, OkfImage } from "./ui";
 import { useViewport } from "./useViewport";
@@ -86,10 +86,10 @@ const VIEWER_CHROME_SIZE = 42;
 const MOBILE_CHROME_SIZE = 44;
 const VIEWER_CHROME_BUTTON: CSSProperties = {
   appearance: "none",
-  border: "1px solid rgba(251,246,238,0.12)",
-  background: "rgba(20,14,10,.4)",
-  backdropFilter: "blur(14px)",
-  WebkitBackdropFilter: "blur(14px)",
+  border: 0,
+  background: "rgba(251,246,238,0.12)",
+  backdropFilter: "blur(6px)",
+  WebkitBackdropFilter: "blur(6px)",
   color: "#FBF6EE",
   width: VIEWER_CHROME_SIZE,
   height: VIEWER_CHROME_SIZE,
@@ -140,6 +140,53 @@ const SIMILAR_CAPTION: CSSProperties = {
   overflow: "hidden",
   textOverflow: "ellipsis",
   whiteSpace: "nowrap",
+};
+const FOLIO_CHIP: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 7,
+  padding: "6px 13px",
+  borderRadius: 99,
+  border: "1px solid rgba(251,246,238,0.22)",
+  fontFamily: "var(--sans)",
+  fontSize: 12.5,
+  color: "#FBF6EE",
+  whiteSpace: "nowrap",
+};
+const FOLIO_CHIP_DOT: CSSProperties = {
+  flex: "none",
+  width: 5,
+  height: 5,
+  borderRadius: 99,
+  background: "#DC8A70",
+};
+const NOTE_BOX: CSSProperties = {
+  fontFamily: "var(--serif)",
+  fontStyle: "italic",
+  fontSize: 17,
+  lineHeight: 1.5,
+  color: "rgba(251,246,238,0.8)",
+  borderRadius: 3,
+  padding: "4px 6px",
+  margin: "18px 0 0 -6px",
+  minWidth: "calc(100% + 12px)",
+  boxSizing: "border-box",
+  cursor: "text",
+};
+const PANEL_HEART: CSSProperties = {
+  appearance: "none",
+  flex: "none",
+  width: 40,
+  height: 40,
+  borderRadius: 99,
+  border: "1px solid rgba(251,246,238,0.22)",
+  background: "rgba(251,246,238,0.06)",
+  color: "#FBF6EE",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  padding: 0,
+  cursor: "pointer",
 };
 
 function useReducedMotion(): boolean {
@@ -222,6 +269,7 @@ interface EditDraft {
   artist: string;
   date: string;
   keywords: string[];
+  note: string;
 }
 
 function normalizeDraftKeywords(keywords: string[]): string[] {
@@ -274,12 +322,15 @@ export default function PieceViewer() {
   const [editing, setEditing] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
   const [keywordDraft, setKeywordDraft] = useState("");
-  const [editDraft, setEditDraft] = useState<EditDraft>({ title: "", artist: "", date: "", keywords: [] });
+  const [editDraft, setEditDraft] = useState<EditDraft>({ title: "", artist: "", date: "", keywords: [], note: "" });
   const touchStartRef = useRef<{ x: number; y: number; target: "art" | "sheet" } | null>(null);
   const lastTouchDeltaRef = useRef({ x: 0, y: 0 });
   const suppressClickRef = useRef(false);
   const chromeTimerRef = useRef<number | null>(null);
+  const panelFocusRef = useRef(false);
+  const desktopSurfaceRef = useRef<HTMLDivElement | null>(null);
   const folios = useQuery({ queryKey: ["folios"], queryFn: fetchFolios, enabled: !!selected });
+  const queryClient = useQueryClient();
 
   const cancelEditing = useCallback(() => {
     setEditing(false);
@@ -305,10 +356,17 @@ export default function PieceViewer() {
     }
   }, [infoPanelMode, pinnedDesktop, setInfoPanelRememberedOpen]);
   const togglePanel = useCallback(() => setPanelOpen(!panelOpen), [panelOpen, setPanelOpen]);
+  // On desktop, the info panel follows the auto-hiding chrome unless the
+  // product setting pins it open. A pinned panel never auto-hides.
+  const panelVisible = panelOpen && (pinnedDesktop || isMobile || chromeVisible);
   const showChrome = useCallback(() => {
     setChromeVisible(true);
     if (chromeTimerRef.current != null) window.clearTimeout(chromeTimerRef.current);
-    chromeTimerRef.current = window.setTimeout(() => setChromeVisible(false), 2500);
+    chromeTimerRef.current = window.setTimeout(() => {
+      // Focus inside the panel pins chrome open (focus/blur capture).
+      if (panelFocusRef.current) return;
+      setChromeVisible(false);
+    }, 2600);
   }, []);
 
   // Keyed on the piece id (a primitive), NOT the `selected` object — its
@@ -321,6 +379,13 @@ export default function PieceViewer() {
     retry: false,
     staleTime: 60_000,
     select: (data) => data.pieces.map(mapPhoto),
+  });
+  const photoFolios = useQuery({
+    queryKey: ["photo-folios", pieceId],
+    queryFn: () => fetchPhotoFolios(pieceId ?? 0),
+    enabled: pieceId != null,
+    retry: false,
+    staleTime: 30_000,
   });
   useEffect(() => {
     if (infoPanelMode === "hidden") setTransientPanelOpen(false);
@@ -339,7 +404,7 @@ export default function PieceViewer() {
 
   useEffect(() => {
     if (!selected || editing) return;
-    setEditDraft({ title: selected.t, artist: selected.a === "Unknown" ? "" : selected.a, date: selected.editDate, keywords: selected.keywords });
+    setEditDraft({ title: selected.t, artist: selected.a === "Unknown" ? "" : selected.a, date: selected.editDate, keywords: selected.keywords, note: selected.note });
   }, [editing, selected]);
 
   useEffect(() => {
@@ -350,6 +415,29 @@ export default function PieceViewer() {
     if (!selected || !isMobile) return;
     showChrome();
     return () => {
+      if (chromeTimerRef.current != null) window.clearTimeout(chromeTimerRef.current);
+    };
+  }, [selected, isMobile, showChrome]);
+
+  // Desktop auto-hiding chrome: any mousemove shows chrome and restarts the
+  // idle timer; mouseleave hides it immediately. Focus inside the info panel
+  // pins chrome open (focus/blur capture) so editing/inputs never dim.
+  useEffect(() => {
+    if (!selected || isMobile) return;
+    showChrome();
+    const node = desktopSurfaceRef.current;
+    if (!node) return;
+    const onMove = () => showChrome();
+    const onLeave = () => {
+      if (panelFocusRef.current) return;
+      if (chromeTimerRef.current != null) window.clearTimeout(chromeTimerRef.current);
+      setChromeVisible(false);
+    };
+    node.addEventListener("mousemove", onMove);
+    node.addEventListener("mouseleave", onLeave);
+    return () => {
+      node.removeEventListener("mousemove", onMove);
+      node.removeEventListener("mouseleave", onLeave);
       if (chromeTimerRef.current != null) window.clearTimeout(chromeTimerRef.current);
     };
   }, [selected, isMobile, showChrome]);
@@ -388,11 +476,12 @@ export default function PieceViewer() {
   const handleAddToFolio = useCallback((folioId: number, photoId: number) => {
     addPieceToFolioAction(folioId, photoId);
     setFolioPickerOpen(false);
-  }, [addPieceToFolioAction]);
+    void queryClient.invalidateQueries({ queryKey: ["photo-folios", photoId] });
+  }, [addPieceToFolioAction, queryClient]);
 
   const startEditing = useCallback(() => {
     if (!selected || editing) return;
-    setEditDraft({ title: selected.t, artist: selected.a === "Unknown" ? "" : selected.a, date: selected.editDate, keywords: selected.keywords });
+    setEditDraft({ title: selected.t, artist: selected.a === "Unknown" ? "" : selected.a, date: selected.editDate, keywords: selected.keywords, note: selected.note });
     setKeywordDraft("");
     setEditing(true);
   }, [editing, selected]);
@@ -415,11 +504,13 @@ export default function PieceViewer() {
     const nextDate = editDraft.date.trim();
     const nextKeywords = normalizeDraftKeywords(editDraft.keywords);
     const currentKeywords = normalizeDraftKeywords(selected.keywords);
+    const nextNote = editDraft.note.trim();
     const patch: PieceMetadataPatch = {};
     if (nextTitle !== selected.t.trim()) patch.title = nextTitle;
     if (nextArtist !== currentArtist) patch.artist = nextArtist;
     if (nextDate !== selected.editDate) patch.date = nextDate || null;
     if (!sameKeywords(nextKeywords, currentKeywords)) patch.keywords = nextKeywords;
+    if (nextNote !== selected.note.trim()) patch.note = nextNote;
     if (Object.keys(patch).length === 0) {
       setEditing(false);
       return;
@@ -596,6 +687,19 @@ export default function PieceViewer() {
           style={EDIT_INPUT}
         />
       </div>
+      <label style={{ display: "grid" }}>
+        <span style={EDIT_LABEL}>
+          Note
+          {editedMarker(editedFields, "note")}
+        </span>
+        <textarea
+          value={editDraft.note}
+          onChange={(event) => setEditDraft((draft) => ({ ...draft, note: event.target.value }))}
+          placeholder="Add a personal note for this piece…"
+          rows={3}
+          style={{ ...EDIT_INPUT, minHeight: 72, paddingTop: 8, paddingBottom: 8, resize: "vertical", lineHeight: 1.5, fontFamily: "var(--serif)", fontStyle: "italic", fontSize: 15 }}
+        />
+      </label>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 4 }}>
         <button
           type="button"
@@ -1067,6 +1171,7 @@ export default function PieceViewer() {
 
   return (
     <div
+      ref={desktopSurfaceRef}
       role="dialog"
       aria-modal="true"
       aria-label="Piece viewer"
@@ -1115,10 +1220,14 @@ export default function PieceViewer() {
           display: "flex",
           alignItems: "center",
           gap: 8,
+          opacity: chromeVisible ? 1 : 0,
+          pointerEvents: chromeVisible ? "auto" : "none",
+          transition: "opacity .3s ease",
         }}
       >
         <button
           type="button"
+          className={`okf-chrome-btn${folioPickerOpen ? " okf-chrome-btn--active" : ""}`}
           onClick={() => setFolioPickerOpen((open) => !open)}
           aria-label="Add to folio"
           aria-expanded={folioPickerOpen}
@@ -1133,6 +1242,7 @@ export default function PieceViewer() {
         </button>
         <button
           type="button"
+          className="okf-chrome-btn"
           onClick={handleShare}
           aria-label="Share or copy link"
           title="Share or copy link"
@@ -1142,6 +1252,7 @@ export default function PieceViewer() {
         </button>
         <button
           type="button"
+          className={`okf-chrome-btn${panelOpen ? " okf-chrome-btn--active" : ""}`}
           onClick={togglePanel}
           aria-label={panelOpen ? "Hide info" : "Show info"}
           aria-pressed={panelOpen}
@@ -1156,6 +1267,7 @@ export default function PieceViewer() {
         </button>
         <button
           type="button"
+          className={`okf-chrome-btn${editing ? " okf-chrome-btn--active" : ""}`}
           onClick={() => {
             setPanelOpen(true);
             startEditing();
@@ -1172,15 +1284,7 @@ export default function PieceViewer() {
         </button>
         <button
           type="button"
-          onClick={() => toggleFav(p.id)}
-          aria-label={fav ? "Remove favorite" : "Favorite"}
-          title={fav ? "Remove favorite" : "Favorite"}
-          style={{ ...VIEWER_CHROME_BUTTON, cursor: "pointer" }}
-        >
-          <HeartIcon size={19} fill={fav ? "#DC8A70" : "transparent"} stroke={fav ? "#DC8A70" : "#FBF6EE"} strokeWidth={1.6} />
-        </button>
-        <button
-          type="button"
+          className="okf-chrome-btn"
           onClick={closePiece}
           aria-label="Close"
           title="Close"
@@ -1208,6 +1312,7 @@ export default function PieceViewer() {
       </div>
 
       <button
+        className="okf-chrome-arrow"
         onClick={(e) => {
           stop(e);
           stepPiece(-1);
@@ -1232,11 +1337,15 @@ export default function PieceViewer() {
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
+          opacity: chromeVisible ? 1 : 0,
+          pointerEvents: chromeVisible ? "auto" : "none",
+          transition: "opacity .3s ease, background .2s ease",
         }}
       >
         <ChevronIcon dir="left" />
       </button>
       <button
+        className="okf-chrome-arrow"
         onClick={(e) => {
           stop(e);
           stepPiece(1);
@@ -1247,7 +1356,7 @@ export default function PieceViewer() {
           right: panelOpen ? "calc(min(416px, 92vw) + 18px)" : 24,
           top: "50%",
           transform: "translateY(-50%)",
-          transition: "right .35s ease",
+          transition: "right .35s ease, opacity .3s ease, background .2s ease",
           zIndex: 6,
           appearance: "none",
           cursor: "pointer",
@@ -1262,6 +1371,8 @@ export default function PieceViewer() {
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
+          opacity: chromeVisible ? 1 : 0,
+          pointerEvents: chromeVisible ? "auto" : "none",
         }}
       >
         <ChevronIcon dir="right" />
@@ -1278,6 +1389,8 @@ export default function PieceViewer() {
           letterSpacing: "0.1em",
           color: "rgba(251,246,238,0.66)",
           pointerEvents: "none",
+          opacity: chromeVisible ? 1 : 0,
+          transition: "opacity .3s ease",
         }}
       >
         {selIndex >= 0 ? `${selIndex + 1} / ${selCount}` : ""}
@@ -1285,6 +1398,20 @@ export default function PieceViewer() {
 
       <div
         onClick={stop}
+        onFocus={(e) => {
+          // Focus inside the panel pins chrome open (focus/blur capture).
+          if (desktopSurfaceRef.current && desktopSurfaceRef.current.contains(e.target)) {
+            panelFocusRef.current = true;
+            if (chromeTimerRef.current != null) window.clearTimeout(chromeTimerRef.current);
+            setChromeVisible(true);
+          }
+        }}
+        onBlur={(e) => {
+          if (desktopSurfaceRef.current && !desktopSurfaceRef.current.contains(e.relatedTarget as Node | null)) {
+            panelFocusRef.current = false;
+            showChrome();
+          }
+        }}
         style={{
           position: "absolute",
           top: 0,
@@ -1299,16 +1426,27 @@ export default function PieceViewer() {
           WebkitBackdropFilter: "blur(24px)",
           borderLeft: "1px solid rgba(251,246,238,0.12)",
           boxShadow: "-30px 0 80px rgba(0,0,0,0.4)",
-          opacity: panelOpen ? 1 : 0,
-          transform: panelOpen ? "translateX(0)" : "translateX(100%)",
-          transition: "opacity .35s ease, transform .35s ease",
-          pointerEvents: panelOpen ? "auto" : "none",
+          opacity: panelVisible ? 1 : 0,
+          transform: !panelOpen ? "translateX(100%)" : panelVisible ? "translateX(0)" : "translateX(24px)",
+          transition: "opacity .3s ease, transform .3s ease",
+          pointerEvents: panelVisible ? "auto" : "none",
         }}
       >
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, paddingRight: 44 }}>
           <div style={{ fontFamily: "var(--sans)", fontSize: 11, letterSpacing: "0.18em", textTransform: "uppercase", color: "#DC8A70", paddingTop: 6 }}>
             {eyebrow}
           </div>
+          <button
+            type="button"
+            className="okf-panel-heart"
+            onClick={() => toggleFav(p.id)}
+            aria-label={fav ? "Remove favorite" : "Favorite"}
+            aria-pressed={fav}
+            title={fav ? "Remove favorite" : "Favorite"}
+            style={PANEL_HEART}
+          >
+            <HeartIcon size={19} fill={fav ? "#DC8A70" : "transparent"} stroke={fav ? "#DC8A70" : "#FBF6EE"} strokeWidth={1.7} />
+          </button>
         </div>
         {editing ? (
           <div style={{ marginTop: 18 }}>{renderEditForm()}</div>
@@ -1323,9 +1461,17 @@ export default function PieceViewer() {
             </div>
           </>
         )}
-        {p.note ? (
-          <div style={{ fontFamily: "var(--serif)", fontStyle: "italic", fontSize: 17, lineHeight: 1.5, color: "rgba(251,246,238,0.8)", margin: "18px 0 0" }}>
-            {p.note}
+        {!editing ? (
+          <div
+            className="okf-note-box"
+            onClick={() => {
+              setPanelOpen(true);
+              startEditing();
+            }}
+            style={{ ...NOTE_BOX, ...(p.note ? {} : { color: "rgba(251,246,238,0.4)" }) }}
+            title="Edit note"
+          >
+            {p.note || "Add a note…"}
           </div>
         ) : null}
 
@@ -1338,6 +1484,32 @@ export default function PieceViewer() {
                 {keyword}
               </span>
             ))}
+          </div>
+        ) : null}
+
+        {!editing ? (
+          <div style={{ marginTop: 22, display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {(photoFolios.data?.folios ?? []).map((folio) => (
+              <span key={folio.id} style={FOLIO_CHIP}>
+                <span aria-hidden style={FOLIO_CHIP_DOT} />
+                {folio.name}
+              </span>
+            ))}
+            <button
+              type="button"
+              className="okf-folio-add-chip"
+              onClick={() => setFolioPickerOpen(true)}
+              aria-label="Add to folio"
+              style={{
+                ...FOLIO_CHIP,
+                border: "1px dashed rgba(251,246,238,0.26)",
+                background: "transparent",
+                color: "rgba(251,246,238,0.6)",
+                cursor: "pointer",
+              }}
+            >
+              ＋ Add to folio
+            </button>
           </div>
         ) : null}
 

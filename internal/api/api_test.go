@@ -311,6 +311,86 @@ func TestPatchPieceMetadataClearsDateWithNull(t *testing.T) {
 	}
 }
 
+func TestPatchPieceMetadataSetsNoteAndLocksField(t *testing.T) {
+	server, db := setupTestServer(t)
+	defer safeShutdown(server)
+
+	photo := &database.DownloadedPhoto{URL: "https://example.com/note.jpg", Title: "Noteless", FileName: "note.jpg", Status: "downloaded"}
+	if err := db.Create(photo).Error; err != nil {
+		t.Fatalf("Failed to seed photo: %v", err)
+	}
+
+	body := strings.NewReader(`{"note":"  A personal note.  "}`)
+	req := httptest.NewRequest(http.MethodPatch, fmt.Sprintf("/api/v1/photos/%d", photo.ID), body)
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	var updated database.DownloadedPhoto
+	if err := json.NewDecoder(w.Body).Decode(&updated); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+	if updated.Notes != "A personal note." {
+		t.Fatalf("Expected trimmed note, got %q", updated.Notes)
+	}
+	if !updated.HasManualField("note") {
+		t.Fatalf("Expected note manual field lock, got %#v", updated.ManualFields)
+	}
+
+	// Clearing the note via empty string is allowed and keeps the lock.
+	clearBody := strings.NewReader(`{"note":""}`)
+	req = httptest.NewRequest(http.MethodPatch, fmt.Sprintf("/api/v1/photos/%d", photo.ID), clearBody)
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected status 200 on clear, got %d body=%s", w.Code, w.Body.String())
+	}
+	if err := json.NewDecoder(w.Body).Decode(&updated); err != nil {
+		t.Fatalf("Failed to decode clear response: %v", err)
+	}
+	if updated.Notes != "" {
+		t.Fatalf("Expected cleared note, got %q", updated.Notes)
+	}
+	_ = db
+}
+
+func TestListPhotoFoliosMembership(t *testing.T) {
+	server, db := setupTestServer(t)
+	defer safeShutdown(server)
+
+	photo := createAPITestDownloadedPhoto(t, db, "https://example.com/membership.jpg", "Member")
+	onFolio, err := db.CreateFolio(database.Folio{Name: "On this"})
+	if err != nil {
+		t.Fatalf("CreateFolio on: %v", err)
+	}
+	offFolio, err := db.CreateFolio(database.Folio{Name: "Off this"})
+	if err != nil {
+		t.Fatalf("CreateFolio off: %v", err)
+	}
+	if _, err := db.AddPieceToFolioIfMissing(onFolio.ID, photo.ID); err != nil {
+		t.Fatalf("AddPieceToFolioIfMissing: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/photos/%d/folios", photo.ID), nil)
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	var resp foliosResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+	if len(resp.Folios) != 1 || resp.Folios[0].ID != onFolio.ID {
+		t.Fatalf("Expected only the containing folio, got %#v", resp.Folios)
+	}
+	if resp.Folios[0].PieceCount != 1 {
+		t.Fatalf("Expected decorated piece count, got %d", resp.Folios[0].PieceCount)
+	}
+	_ = offFolio
+}
+
 func TestBulkEditCatalogAppliesOperationsAndLocks(t *testing.T) {
 	server, db := setupTestServer(t)
 	defer safeShutdown(server)

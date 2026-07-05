@@ -14,7 +14,7 @@ import {
   type ReactNode,
 } from "react";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   addPieceToFolio,
   addToFavorites,
@@ -214,6 +214,38 @@ export function mapPhoto(p: Photo): PieceVM {
   };
 }
 
+// pieceStub builds a minimal PieceVM for surfaces that only know a photo id
+// and label text (e.g. an Inbox matched cover) but still want to open the
+// fullscreen viewer. Unknown fields fall back to safe defaults so the viewer
+// renders image-first while the real catalog row loads in the background.
+export function pieceStub(id: number, opts: { title?: string; artist?: string; thumb?: string } = {}): PieceVM {
+  return {
+    id,
+    t: (opts.title ?? "").trim(),
+    a: (opts.artist ?? "").trim() || "Unknown",
+    y: "",
+    editDate: "",
+    src: "—",
+    med: "",
+    kind: "",
+    note: "",
+    keywords: [],
+    folio: "",
+    img: getPhotoImageUrl(id),
+    thumb: opts.thumb ?? getPhotoThumbnailUrl(id, 400),
+    fav: false,
+    file: "—",
+    size: "—",
+    dim: "",
+    captured: "",
+    camera: "",
+    lens: "",
+    added: "—",
+    addedExact: "",
+    editedFields: [],
+  };
+}
+
 function normalizeKeywords(keywords: string[]): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
@@ -334,6 +366,7 @@ export function useFolio(): FolioContextValue {
 
 export function FolioProvider({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const queryClient = useQueryClient();
   const [theme, setThemeState] = useState<ThemeName>(() => readStoredTheme());
   const [infoPanelMode, setInfoPanelModeState] = useState<InfoPanelMode>(() => readStoredInfoPanelMode());
@@ -932,6 +965,7 @@ export function FolioProvider({ children }: { children: ReactNode }) {
         input.artist !== undefined ? "artist" : "",
         input.date !== undefined ? "date" : "",
         input.keywords !== undefined ? "keywords" : "",
+        input.note !== undefined ? "note" : "",
       ].filter(Boolean);
       if (fields.length === 0) return Promise.resolve(true);
       const hadPreviousOverride = Object.prototype.hasOwnProperty.call(metadataOverrides, id);
@@ -945,6 +979,7 @@ export function FolioProvider({ children }: { children: ReactNode }) {
         if (input.artist !== undefined) next.a = input.artist.trim() || "Unknown";
         if (input.date !== undefined) next.editDate = input.date ?? "";
         if (input.keywords !== undefined) next.keywords = normalizeKeywords(input.keywords);
+        if (input.note !== undefined) next.note = (input.note ?? "").trim();
         next.editedFields = mergeEditedFields(current.editedFields ?? [], fields);
         return { ...prev, [id]: next };
       });
@@ -1078,6 +1113,12 @@ export function FolioProvider({ children }: { children: ReactNode }) {
     setSelectedId(id);
   }, []);
   const closePiece = useCallback(() => setSelectedId(null), []);
+  // Viewer state resets on navigation between screens. The fullscreen overlay
+  // blocks nav clicks while open, but browser back/forward or programmatic
+  // navigation would otherwise leave the viewer open over the new screen.
+  useEffect(() => {
+    setSelectedId(null);
+  }, [location.pathname]);
   const filterByArtist = useCallback(
     (name: string) => {
       const next = name.trim();

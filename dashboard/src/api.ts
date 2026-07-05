@@ -297,6 +297,14 @@ export async function removePieceFromFolio(folioId: number, photoId: number): Pr
   await clearOfflineCaches();
 }
 
+export async function fetchPhotoFolios(photoId: number): Promise<FoliosResponse> {
+  const response = await fetch(`${API_BASE}/photos/${photoId}/folios`);
+  if (!response.ok) {
+    throw new Error("Failed to fetch folios for piece");
+  }
+  return response.json();
+}
+
 export async function fetchTimeline(
   days: number = 7,
 ): Promise<TimelineResponse> {
@@ -457,6 +465,7 @@ export interface PieceMetadataPatch {
   artist?: string;
   date?: string | null;
   keywords?: string[];
+  note?: string | null;
 }
 
 export interface BulkMetadataEdit {

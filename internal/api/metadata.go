@@ -21,6 +21,7 @@ type pieceMetadataPatch struct {
 	Artist   *string         `json:"artist"`
 	Date     optionalRawDate `json:"date"`
 	Keywords *[]string       `json:"keywords"`
+	Note     *string         `json:"note"`
 }
 
 type optionalRawDate struct {
@@ -83,6 +84,11 @@ func (s *Server) handleUpdatePieceMetadata(w http.ResponseWriter, r *http.Reques
 		keywords := database.NormalizeManualKeywords(*req.Keywords)
 		update.Keywords = &keywords
 		update.LockFields = append(update.LockFields, "keywords")
+	}
+	if req.Note != nil {
+		note := strings.TrimSpace(*req.Note)
+		update.Note = &note
+		update.LockFields = append(update.LockFields, "note")
 	}
 	updated, _, err := s.db.UpdatePhotoMetadata(photo.ID, update)
 	if err != nil {
