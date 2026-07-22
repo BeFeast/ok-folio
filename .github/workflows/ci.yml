@@ -33,6 +33,9 @@ jobs:
           rm -rf internal/dashboard/dist
           cp -R dashboard/dist internal/dashboard/dist
 
+      - name: Stack and release contract checks
+        run: ./scripts/check-ok-folio-stack-template.sh
+
       - name: Lint - no legacy MySQL driver/DSN in production code
         run: |
           # The legacy MariaDB is only ever read via mariadb-dump; no live GORM

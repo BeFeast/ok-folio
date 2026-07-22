@@ -8,6 +8,7 @@ legacy_storage_override_file="$repo_root/deploy/dockhand/ok-folio/compose.legacy
 initdb_file="$repo_root/deploy/dockhand/ok-folio/initdb/010-vector-extensions.sh"
 valkey_template="$repo_root/deploy/dockhand/ok-folio/valkey.conf.template"
 config_template="$repo_root/deploy/dockhand/ok-folio/config.yaml.template"
+release_workflow="$repo_root/.github/workflows/release-image.yml"
 
 fail() {
   echo "ok-folio stack template check failed: $*" >&2
@@ -29,6 +30,7 @@ require_grep() {
 [ -f "$initdb_file" ] || fail "missing $initdb_file"
 [ -f "$valkey_template" ] || fail "missing $valkey_template"
 [ -f "$config_template" ] || fail "missing $config_template"
+[ -f "$release_workflow" ] || fail "missing $release_workflow"
 
 require_grep 'ghcr\.io/tensorchord/vchord-postgres:pg18-v[0-9]+\.[0-9]+\.[0-9]+' "$compose_file" "postgres must use a pinned VectorChord Postgres 18 image"
 require_grep 'PGDATA: /var/lib/postgresql/18/docker' "$compose_file" "postgres must set the Postgres 18 PGDATA path"
@@ -81,6 +83,23 @@ require_grep 'ok-folio:\$\{OK_FOLIO_IMAGE_SHA:\?' "$compose_file" "app image mus
 require_grep 'condition: service_healthy' "$compose_file" "app must depend on healthy services"
 require_grep 'OK_FOLIO_DERIVATIVES_HOST_PATH.*:/derivatives[[:space:]]*$' "$compose_file" "app must mount the writable derivatives cache at /derivatives"
 require_grep 'OK_FOLIO_CONFIG_HOST_PATH.*:/config/config.yaml:ro' "$compose_file" "app config must be mounted read-only"
+
+# The release smoke must exercise the same Postgres-only startup contract as
+# the deployed app. A MariaDB service can never reach /health because the app
+# rejects non-Postgres startup before opening the API listener.
+require_grep '^[[:space:]]+postgres:' "$release_workflow" "release smoke must run a Postgres service"
+require_grep 'image:[[:space:]]*ghcr\.io/tensorchord/vchord-postgres:pg18-v[0-9]+\.[0-9]+\.[0-9]+' "$release_workflow" "release smoke must use the pinned VectorChord Postgres 18 image"
+require_grep 'CREATE EXTENSION IF NOT EXISTS vector' "$release_workflow" "release smoke must create the vector extension before app startup"
+require_grep 'port:[[:space:]]*5432' "$release_workflow" "release smoke app config must connect to Postgres on port 5432"
+require_grep 'sslmode:[[:space:]]*"disable"' "$release_workflow" "release smoke app config must set the local Postgres SSL mode"
+compose_postgres_image="$(awk '/image: ghcr\.io\/tensorchord\/vchord-postgres:/{print $2; exit}' "$compose_file")"
+release_postgres_image="$(awk '/image: ghcr\.io\/tensorchord\/vchord-postgres:/{print $2; exit}' "$release_workflow")"
+if [ "$release_postgres_image" != "$compose_postgres_image" ]; then
+  fail "release smoke Postgres image must match the deployed stack image"
+fi
+if grep -Eq -- 'mariadb:|^[[:space:]]+mysql:|port:[[:space:]]*3306' "$release_workflow"; then
+  fail "release smoke must not use the retired MariaDB/MySQL runtime"
+fi
 
 # The normal runtime must boot without legacy DB env or the external legacy
 # Docker network. No LEGACY_* variable (LEGACY_DB_*, LEGACY_DOCKER_NETWORK, or any
