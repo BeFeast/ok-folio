@@ -15,26 +15,38 @@ jobs:
     name: Build, smoke, and push image
     runs-on: ubuntu-latest
     services:
-      mysql:
-        image: mariadb:11
+      postgres:
+        # Match the deployed VectorChord/Postgres runtime so the smoke database
+        # can own the vector extension before the app migrates. Keep the
+        # bootstrap administrator separate from the app role, as in production.
+        image: ghcr.io/tensorchord/vchord-postgres:pg18-v1.1.1
         env:
-          MYSQL_ROOT_PASSWORD: root-password
-          MYSQL_DATABASE: ok_folio_smoke
-          MYSQL_USER: ok_folio
-          MYSQL_PASSWORD: ok-folio-password
+          POSTGRES_USER: ok_folio_admin
+          POSTGRES_PASSWORD: ok-folio-admin-password
+          POSTGRES_DB: ok_folio_smoke
         ports:
-          - 3306:3306
+          - 5432:5432
         options: >-
-          --health-cmd "healthcheck.sh --connect --innodb_initialized"
-          --health-interval 10s
+          --health-cmd "pg_isready -U ok_folio_admin -d ok_folio_smoke"
+          --health-interval 5s
           --health-timeout 5s
-          --health-retries 12
+          --health-retries 10
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
+
+      - name: Initialize smoke database with production role grants
+        env:
+          PGHOST: localhost
+          PGPASSWORD: ok-folio-admin-password
+          POSTGRES_USER: ok_folio_admin
+          POSTGRES_DB: ok_folio_smoke
+          DB_USER: ok_folio_app
+          DB_PASSWORD: ok-folio-app-password
+        run: ./deploy/dockhand/ok-folio/initdb/010-vector-extensions.sh
 
       - name: Prepare image metadata
         id: image
@@ -99,6 +111,7 @@ jobs:
           config_dir="$(mktemp -d)"
           health_log="$(mktemp)"
           container_name="ok-folio-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          # shellcheck disable=SC2329 # Invoked indirectly by the EXIT trap.
           cleanup() {
             docker rm -f "$container_name" >/dev/null 2>&1 || true
             rm -f "$health_log"
@@ -115,10 +128,11 @@ jobs:
             daily_directory: "/tmp/ok-folio/_daily"
           database:
             host: "127.0.0.1"
-            port: 3306
-            user: "ok_folio"
-            password: "ok-folio-password"
+            port: 5432
+            user: "ok_folio_app"
+            password: "ok-folio-app-password"
             database: "ok_folio_smoke"
+            sslmode: "disable"
             max_open_conns: 2
             max_idle_conns: 1
             conn_max_lifetime: 10m
@@ -203,6 +217,7 @@ jobs:
           response_log="$(mktemp)"
           fixture_image="$(mktemp)"
           container_name="ok-folio-embedder-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          # shellcheck disable=SC2329 # Invoked indirectly by the EXIT trap.
           cleanup() {
             docker rm -f "$container_name" >/dev/null 2>&1 || true
             rm -f "$response_log" "$fixture_image"
