@@ -48,22 +48,18 @@ require_grep 'DB_USER: \$\{DB_USER:\?' "$compose_file" "postgres initdb must rec
 require_grep 'CREATE ROLE %I LOGIN PASSWORD %L' "$initdb_file" "initdb must create the least-privilege app role"
 require_grep 'GRANT USAGE, CREATE ON SCHEMA public TO :"app_user"' "$initdb_file" "initdb must grant schema access to the app role"
 
-if ! command -v rg >/dev/null 2>&1; then
-  fail "ripgrep is required to verify application code does not run CREATE EXTENSION"
-fi
-
 extension_calls_file="$(mktemp)"
 extension_errors_file="$(mktemp)"
 trap 'rm -f "$extension_calls_file" "$extension_errors_file"' EXIT
 
 set +e
-rg -n --glob '!**/*_test.go' 'Exec\(.*CREATE[[:space:]]+EXTENSION|Raw\(.*CREATE[[:space:]]+EXTENSION' "$repo_root/internal" "$repo_root/cmd" >"$extension_calls_file" 2>"$extension_errors_file"
-rg_status=$?
+grep -rEn --include='*.go' --exclude='*_test.go' 'Exec\(.*CREATE[[:space:]]+EXTENSION|Raw\(.*CREATE[[:space:]]+EXTENSION' "$repo_root/internal" "$repo_root/cmd" >"$extension_calls_file" 2>"$extension_errors_file"
+grep_status=$?
 set -e
 
-if [ "$rg_status" -gt 1 ]; then
+if [ "$grep_status" -gt 1 ]; then
   cat "$extension_errors_file" >&2
-  fail "ripgrep failed while checking for application CREATE EXTENSION calls"
+  fail "grep failed while checking for application CREATE EXTENSION calls"
 fi
 
 if [ -s "$extension_calls_file" ]; then
@@ -89,13 +85,24 @@ require_grep 'OK_FOLIO_CONFIG_HOST_PATH.*:/config/config.yaml:ro' "$compose_file
 # rejects non-Postgres startup before opening the API listener.
 require_grep '^[[:space:]]+postgres:' "$release_workflow" "release smoke must run a Postgres service"
 require_grep 'image:[[:space:]]*ghcr\.io/tensorchord/vchord-postgres:pg18-v[0-9]+\.[0-9]+\.[0-9]+' "$release_workflow" "release smoke must use the pinned VectorChord Postgres 18 image"
-require_grep 'CREATE EXTENSION IF NOT EXISTS vector' "$release_workflow" "release smoke must create the vector extension before app startup"
+require_grep 'deploy/dockhand/ok-folio/initdb/010-vector-extensions\.sh' "$release_workflow" "release smoke must initialize Postgres with the production init script"
+require_grep 'POSTGRES_USER:[[:space:]]*[A-Za-z0-9_]+' "$release_workflow" "release smoke must configure a bootstrap administrator"
+require_grep 'DB_USER:[[:space:]]*[A-Za-z0-9_]+' "$release_workflow" "release smoke must configure a separate app role"
 require_grep 'port:[[:space:]]*5432' "$release_workflow" "release smoke app config must connect to Postgres on port 5432"
 require_grep 'sslmode:[[:space:]]*"disable"' "$release_workflow" "release smoke app config must set the local Postgres SSL mode"
 compose_postgres_image="$(awk '/image: ghcr\.io\/tensorchord\/vchord-postgres:/{print $2; exit}' "$compose_file")"
 release_postgres_image="$(awk '/image: ghcr\.io\/tensorchord\/vchord-postgres:/{print $2; exit}' "$release_workflow")"
 if [ "$release_postgres_image" != "$compose_postgres_image" ]; then
   fail "release smoke Postgres image must match the deployed stack image"
+fi
+release_admin_user="$(awk '$1 == "POSTGRES_USER:" {print $2; exit}' "$release_workflow")"
+release_init_app_user="$(awk '$1 == "DB_USER:" {print $2; exit}' "$release_workflow")"
+release_config_app_user="$(awk '$1 == "user:" {gsub(/"/, "", $2); print $2; exit}' "$release_workflow")"
+if [ "$release_admin_user" = "$release_init_app_user" ]; then
+  fail "release smoke bootstrap administrator and app role must be different"
+fi
+if [ "$release_config_app_user" != "$release_init_app_user" ]; then
+  fail "release smoke app config must use the least-privilege role created by initdb"
 fi
 if grep -Eq -- 'mariadb:|^[[:space:]]+mysql:|port:[[:space:]]*3306' "$release_workflow"; then
   fail "release smoke must not use the retired MariaDB/MySQL runtime"
