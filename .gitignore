@@ -64,6 +64,13 @@ dashboard/.vite/
 dashboard/playwright-report/
 dashboard/test-results/
 
+# The Go binary embeds internal/dashboard/dist via `//go:embed dist/*`. Keep a
+# committed fallback index.html so `go build`/`go test` compile on a clean
+# checkout; real build artifacts staged over it stay ignored.
+!internal/dashboard/dist/
+internal/dashboard/dist/*
+!internal/dashboard/dist/index.html
+
 # OS / editor
 .DS_Store
 Thumbs.db
