@@ -1,0 +1,20 @@
+<!doctype html>
+<!--
+  Committed fallback so `//go:embed dist/*` in embed.go compiles on a clean
+  checkout, before the Vite frontend has been built. A real build
+  (see scripts/product-verifier.sh) replaces this file with the compiled app.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OK Folio</title>
+  </head>
+  <body>
+    <main>
+      <h1>OK Folio</h1>
+      <p>The dashboard frontend has not been built for this binary.</p>
+      <p>Run <code>cd dashboard &amp;&amp; npm ci &amp;&amp; npm run build</code> and stage the output into <code>internal/dashboard/dist</code> (see <code>scripts/product-verifier.sh</code>).</p>
+    </main>
+  </body>
+</html>
