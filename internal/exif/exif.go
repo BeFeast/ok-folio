@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"image"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"strings"
@@ -72,11 +73,28 @@ func DecodeEmbeddedMetadata(r io.ReadSeeker) (EmbeddedMetadata, error) {
 	metadata.CameraModel = exifString(exifData, goexif.Model)
 	metadata.LensModel = exifString(exifData, goexif.LensModel)
 	metadata.Orientation = exifString(exifData, goexif.Orientation)
-	if lat, lon, err := exifData.LatLong(); err == nil {
+	if lat, lon, err := exifData.LatLong(); err == nil && validLatitude(lat) && validLongitude(lon) {
 		metadata.GPSLatitude = &lat
 		metadata.GPSLongitude = &lon
 	}
 	return metadata, nil
+}
+
+// validLatitude and validLongitude reject NaN, ±Inf, and out-of-range
+// coordinates. Malformed EXIF GPS rationals (for example a zero denominator)
+// decode to NaN, which Postgres stores happily in a float8 column but
+// encoding/json cannot marshal. A single such row makes every API response
+// that includes it fail to serialize, which surfaces as an empty 200 body.
+func validLatitude(v float64) bool {
+	return isFinite(v) && v >= -90 && v <= 90
+}
+
+func validLongitude(v float64) bool {
+	return isFinite(v) && v >= -180 && v <= 180
+}
+
+func isFinite(v float64) bool {
+	return !math.IsNaN(v) && !math.IsInf(v, 0)
 }
 
 func exifString(exifData *goexif.Exif, field goexif.FieldName) string {
