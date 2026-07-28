@@ -3,9 +3,11 @@ package exif
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/json"
 	"image"
 	"image/color"
 	"image/jpeg"
+	"math"
 	"testing"
 )
 
@@ -49,6 +51,141 @@ func TestDecodeEmbeddedMetadataIgnoresMissingExif(t *testing.T) {
 	}
 	if metadata.CapturedAt != nil || metadata.CameraMake != "" || metadata.CameraModel != "" {
 		t.Fatalf("expected missing EXIF to be empty, got %#v", metadata)
+	}
+}
+
+func TestDecodeEmbeddedMetadataReadsValidGPS(t *testing.T) {
+	// 52 deg 30' 0" N, 13 deg 24' 0" E.
+	imageBytes := jpegWithExif(t, gpsExifTIFF(t,
+		[3][2]uint32{{52, 1}, {30, 1}, {0, 1}},
+		[3][2]uint32{{13, 1}, {24, 1}, {0, 1}},
+	))
+
+	metadata, err := DecodeEmbeddedMetadata(bytes.NewReader(imageBytes))
+	if err != nil {
+		t.Fatalf("DecodeEmbeddedMetadata failed: %v", err)
+	}
+	if metadata.GPSLatitude == nil || metadata.GPSLongitude == nil {
+		t.Fatalf("expected GPS coordinates to be kept, got %#v", metadata)
+	}
+	if *metadata.GPSLatitude != 52.5 || *metadata.GPSLongitude != 13.4 {
+		t.Fatalf("expected 52.5/13.4, got %v/%v", *metadata.GPSLatitude, *metadata.GPSLongitude)
+	}
+}
+
+func TestDecodeEmbeddedMetadataDropsNaNGPS(t *testing.T) {
+	// Zero denominators make goexif divide 0 by 0, yielding NaN without an
+	// error. Such a value must never reach the database: encoding/json cannot
+	// marshal it, so one bad row empties every response that contains it.
+	imageBytes := jpegWithExif(t, gpsExifTIFF(t,
+		[3][2]uint32{{0, 0}, {0, 0}, {0, 0}},
+		[3][2]uint32{{0, 0}, {0, 0}, {0, 0}},
+	))
+
+	metadata, err := DecodeEmbeddedMetadata(bytes.NewReader(imageBytes))
+	if err != nil {
+		t.Fatalf("DecodeEmbeddedMetadata failed: %v", err)
+	}
+	if metadata.GPSLatitude != nil || metadata.GPSLongitude != nil {
+		t.Fatalf("expected NaN GPS to be dropped, got lat=%v lon=%v",
+			*metadata.GPSLatitude, *metadata.GPSLongitude)
+	}
+
+	if _, err := json.Marshal(metadata); err != nil {
+		t.Fatalf("metadata must stay JSON-encodable: %v", err)
+	}
+}
+
+func TestDecodeEmbeddedMetadataDropsOutOfRangeGPS(t *testing.T) {
+	// 200 degrees latitude is finite but not a real coordinate.
+	imageBytes := jpegWithExif(t, gpsExifTIFF(t,
+		[3][2]uint32{{200, 1}, {0, 1}, {0, 1}},
+		[3][2]uint32{{13, 1}, {24, 1}, {0, 1}},
+	))
+
+	metadata, err := DecodeEmbeddedMetadata(bytes.NewReader(imageBytes))
+	if err != nil {
+		t.Fatalf("DecodeEmbeddedMetadata failed: %v", err)
+	}
+	if metadata.GPSLatitude != nil || metadata.GPSLongitude != nil {
+		t.Fatalf("expected out-of-range GPS to be dropped, got %#v", metadata)
+	}
+}
+
+func TestCoordinateValidation(t *testing.T) {
+	nan := math.NaN()
+	inf := math.Inf(1)
+
+	for _, tc := range []struct {
+		name string
+		lat  float64
+		lon  float64
+		want bool
+	}{
+		{"zero", 0, 0, true},
+		{"bounds", -90, 180, true},
+		{"nan latitude", nan, 13.4, false},
+		{"nan longitude", 52.5, nan, false},
+		{"inf latitude", inf, 13.4, false},
+		{"inf longitude", 52.5, -inf, false},
+		{"latitude above range", 90.1, 13.4, false},
+		{"longitude below range", 52.5, -180.1, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := validLatitude(tc.lat) && validLongitude(tc.lon); got != tc.want {
+				t.Fatalf("lat=%v lon=%v: got %v, want %v", tc.lat, tc.lon, got, tc.want)
+			}
+		})
+	}
+}
+
+// gpsExifTIFF builds a minimal TIFF whose IFD0 carries only a GPS sub-IFD with
+// latitude/longitude as three RATIONAL pairs each (degrees, minutes, seconds).
+func gpsExifTIFF(t *testing.T, lat, lon [3][2]uint32) []byte {
+	t.Helper()
+	const (
+		ifd0Offset  = 8
+		ifd0Size    = 2 + 1*12 + 4
+		gpsOffset   = ifd0Offset + ifd0Size
+		gpsEntries  = 4
+		gpsSize     = 2 + gpsEntries*12 + 4
+		latOffset   = gpsOffset + gpsSize
+		ratTriplet  = 3 * 8
+		lonOffset   = latOffset + ratTriplet
+		totalLength = lonOffset + ratTriplet
+	)
+
+	buf := make([]byte, totalLength)
+	copy(buf[0:2], "II")
+	binary.LittleEndian.PutUint16(buf[2:4], 42)
+	binary.LittleEndian.PutUint32(buf[4:8], ifd0Offset)
+
+	binary.LittleEndian.PutUint16(buf[ifd0Offset:ifd0Offset+2], 1)
+	writeIFDEntry(buf, ifd0Offset+2, 0x8825, 4, 1, gpsOffset)
+
+	binary.LittleEndian.PutUint16(buf[gpsOffset:gpsOffset+2], gpsEntries)
+	writeASCIIInline(buf, gpsOffset+2, 0x0001, "N")
+	writeIFDEntry(buf, gpsOffset+14, 0x0002, 5, 3, latOffset)
+	writeASCIIInline(buf, gpsOffset+26, 0x0003, "E")
+	writeIFDEntry(buf, gpsOffset+38, 0x0004, 5, 3, lonOffset)
+
+	writeRationals(buf, latOffset, lat)
+	writeRationals(buf, lonOffset, lon)
+	return buf
+}
+
+func writeASCIIInline(buf []byte, offset int, tag uint16, value string) {
+	binary.LittleEndian.PutUint16(buf[offset:offset+2], tag)
+	binary.LittleEndian.PutUint16(buf[offset+2:offset+4], 2)
+	binary.LittleEndian.PutUint32(buf[offset+4:offset+8], uint32(len(value)+1))
+	copy(buf[offset+8:offset+12], value)
+}
+
+func writeRationals(buf []byte, offset int, values [3][2]uint32) {
+	for i, v := range values {
+		at := offset + i*8
+		binary.LittleEndian.PutUint32(buf[at:at+4], v[0])
+		binary.LittleEndian.PutUint32(buf[at+4:at+8], v[1])
 	}
 }
 
