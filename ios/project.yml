@@ -18,12 +18,51 @@ targets:
     dependencies:
       - package: FolioKit
         product: FolioKit
+      # XcodeGen embeds app-extension dependencies of application targets
+      # by default (embed: true).
+      - target: OKFolioShare
+    # Written by `xcodegen generate` (never committed); sets
+    # CODE_SIGN_ENTITLEMENTS automatically.
+    entitlements:
+      path: App/OKFolio.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.com.befeast.okfolio
     settings:
       base:
         INFOPLIST_FILE: App/Info.plist
         GENERATE_INFOPLIST_FILE: NO
         PRODUCT_BUNDLE_IDENTIFIER: com.befeast.okfolio
         TARGETED_DEVICE_FAMILY: "1,2"
+        SWIFT_VERSION: "5.9"
+        MARKETING_VERSION: 0.1.0
+        CURRENT_PROJECT_VERSION: 1
+        CODE_SIGN_STYLE: Automatic
+        # Resolved from the FOLIO_TEAM_ID build setting passed on the
+        # xcodebuild command line by scripts/m4-build-install.sh.
+        DEVELOPMENT_TEAM: $(FOLIO_TEAM_ID)
+
+  OKFolioShare:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - Share/Sources
+    dependencies:
+      - package: FolioKit
+        product: FolioKit
+    # Written by `xcodegen generate` (never committed); sets
+    # CODE_SIGN_ENTITLEMENTS automatically.
+    entitlements:
+      path: Share/OKFolioShare.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.com.befeast.okfolio
+    settings:
+      base:
+        INFOPLIST_FILE: Share/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        PRODUCT_BUNDLE_IDENTIFIER: com.befeast.okfolio.share
         SWIFT_VERSION: "5.9"
         MARKETING_VERSION: 0.1.0
         CURRENT_PROJECT_VERSION: 1

@@ -334,4 +334,193 @@ final class FolioClientTests: XCTestCase {
             // expected
         }
     }
+
+    // MARK: - Upload
+
+    /// Synthetic PascalCase DownloadedPhoto envelope as pieces.go serializes it.
+    private func uploadResponseJSON(duplicate: Bool) -> Data {
+        let json = """
+        {
+          "photo": {
+            "ID": 77,
+            "URL": "upload://abc123",
+            "Title": "Uploaded piece",
+            "Artist": "artist-u",
+            "Favorite": false,
+            "ImageWidth": 1024,
+            "ImageHeight": 768,
+            "FileName": "upload-0077.png",
+            "Provider": "upload",
+            "Category": "upload",
+            "Status": "downloaded",
+            "DownloadedAt": "2026-01-02T03:04:05Z"
+          },
+          "duplicate": \(duplicate)
+        }
+        """
+        return Data(json.utf8)
+    }
+
+    /// Minimal PNG magic bytes plus trailing garbage — enough for sniffing.
+    private var pngData: Data {
+        Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x01, 0x02, 0x03])
+    }
+
+    func testUploadPieceSuccessDecodesPieceAndDuplicateFalse() async throws {
+        stub(status: 201, data: uploadResponseJSON(duplicate: false))
+
+        let result = try await client.uploadPiece(data: pngData, filename: "photo.png")
+
+        XCTAssertFalse(result.duplicate)
+        XCTAssertEqual(result.piece.id, 77)
+        XCTAssertEqual(result.piece.title, "Uploaded piece")
+        XCTAssertEqual(result.piece.artist, "artist-u")
+        XCTAssertEqual(result.piece.width, 1024)
+        XCTAssertEqual(result.piece.height, 768)
+        XCTAssertEqual(result.piece.fileName, "upload-0077.png")
+        XCTAssertEqual(result.piece.provider, "upload")
+        XCTAssertEqual(result.piece.status, "downloaded")
+        XCTAssertNotNil(result.piece.createdAt)
+        XCTAssertEqual(try lastRequest.httpMethod, "POST")
+        XCTAssertEqual(
+            try lastRequest.url?.absoluteString,
+            "https://folio.test/api/v1/pieces"
+        )
+    }
+
+    func testUploadPieceDuplicate200DecodesDuplicateTrue() async throws {
+        stub(status: 200, data: uploadResponseJSON(duplicate: true))
+
+        let result = try await client.uploadPiece(data: pngData, filename: "photo.png")
+
+        XCTAssertTrue(result.duplicate)
+        XCTAssertEqual(result.piece.id, 77, "duplicate response carries the existing photo")
+    }
+
+    func testUploadPieceBuildsMultipartBodyWithFileAndTitleParts() async throws {
+        stub(status: 201, data: uploadResponseJSON(duplicate: false))
+
+        _ = try await client.uploadPiece(
+            data: pngData, filename: "photo.png", title: "My title"
+        )
+
+        XCTAssertEqual(try lastRequest.httpMethod, "POST")
+        XCTAssertEqual(
+            try lastRequest.url?.absoluteString,
+            "https://folio.test/api/v1/pieces"
+        )
+        let contentType = try XCTUnwrap(
+            try lastRequest.value(forHTTPHeaderField: "Content-Type")
+        )
+        XCTAssertTrue(
+            contentType.hasPrefix("multipart/form-data; boundary="),
+            "unexpected Content-Type: \(contentType)"
+        )
+        let boundary = String(contentType.dropFirst("multipart/form-data; boundary=".count))
+        XCTAssertFalse(boundary.isEmpty)
+
+        // URLSession exposes the body only as httpBodyStream inside
+        // URLProtocol; the stub drains it into recordedBodies.
+        let sentBody = try XCTUnwrap(StubURLProtocol.recordedBodies.last)
+        let bodyText = String(decoding: sentBody, as: UTF8.self)
+        XCTAssertTrue(bodyText.contains("--\(boundary)\r\n"))
+        XCTAssertTrue(bodyText.contains("--\(boundary)--"))
+        XCTAssertTrue(bodyText.contains(
+            "Content-Disposition: form-data; name=\"file\"; filename=\"photo.png\"\r\n"
+        ))
+        XCTAssertTrue(bodyText.contains("Content-Type: image/png\r\n"))
+        XCTAssertTrue(bodyText.contains("Content-Disposition: form-data; name=\"title\"\r\n\r\nMy title\r\n"))
+        XCTAssertFalse(bodyText.contains("name=\"artist\""), "artist part must be omitted when nil")
+        // Raw file bytes are embedded verbatim.
+        XCTAssertNotNil(sentBody.range(of: pngData))
+    }
+
+    func testUploadPieceOmitsTextPartsWhenNilOrEmpty() async throws {
+        stub(status: 201, data: uploadResponseJSON(duplicate: false))
+
+        _ = try await client.uploadPiece(
+            data: pngData, filename: "photo.png", title: "", artist: nil
+        )
+
+        let sentBody = try XCTUnwrap(StubURLProtocol.recordedBodies.last)
+        let bodyText = String(decoding: sentBody, as: UTF8.self)
+        XCTAssertFalse(bodyText.contains("name=\"title\""), "empty title must be omitted")
+        XCTAssertFalse(bodyText.contains("name=\"artist\""))
+        XCTAssertTrue(bodyText.contains("name=\"file\""))
+    }
+
+    func testUploadPieceSniffsContentTypeFromMagicBytes() {
+        XCTAssertEqual(
+            FolioClient.sniffImageContentType(Data([0xFF, 0xD8, 0xFF, 0xE0])),
+            "image/jpeg"
+        )
+        XCTAssertEqual(FolioClient.sniffImageContentType(pngData), "image/png")
+        XCTAssertEqual(
+            FolioClient.sniffImageContentType(Data("GIF89a".utf8)),
+            "image/gif"
+        )
+        XCTAssertEqual(
+            FolioClient.sniffImageContentType(Data("RIFF\0\0\0\0WEBPVP8 ".utf8)),
+            "image/webp"
+        )
+        XCTAssertEqual(
+            FolioClient.sniffImageContentType(Data("plain text".utf8)),
+            "application/octet-stream"
+        )
+    }
+
+    func testUploadPieceHTTP500ThrowsHttpStatus() async throws {
+        stub(status: 500, data: Data(#"{"error": "Failed to import piece"}"#.utf8))
+
+        do {
+            _ = try await client.uploadPiece(data: pngData, filename: "photo.png")
+            XCTFail("Expected FolioError.httpStatus")
+        } catch let FolioError.httpStatus(status, body) {
+            XCTAssertEqual(status, 500)
+            XCTAssertTrue(body.contains("Failed to import piece"))
+        }
+    }
+
+    // MARK: - Error presentation
+
+    func testErrorDescriptionSurfacesServerMessage() {
+        let error = FolioError.httpStatus(400, body: #"{"error": "Unsupported image format"}"#)
+        XCTAssertEqual(error.errorDescription, "Unsupported image format")
+    }
+
+    func testErrorDescriptionFallsBackToStatusAndBody() {
+        XCTAssertEqual(
+            FolioError.httpStatus(502, body: "bad gateway").errorDescription,
+            "HTTP 502: bad gateway"
+        )
+        XCTAssertEqual(FolioError.httpStatus(500, body: "  ").errorDescription, "HTTP 500")
+        XCTAssertEqual(
+            FolioError.decoding(URLError(.cannotParseResponse), path: "/api/v1/stats").errorDescription,
+            "Unexpected response from /api/v1/stats"
+        )
+    }
+
+    // MARK: - Cancellation
+
+    func testCancellationCancelsInFlightRequest() async throws {
+        StubURLProtocol.hang = true
+
+        let inFlight = Task { [client] in
+            _ = try await client!.photo(id: 1)
+        }
+        // Let the request reach the stub before cancelling.
+        for _ in 0..<100 where StubURLProtocol.recorded.isEmpty {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTAssertFalse(StubURLProtocol.recorded.isEmpty, "Request never started")
+        inFlight.cancel()
+
+        switch await inFlight.result {
+        case .success:
+            XCTFail("Expected the cancelled request to fail")
+        case .failure:
+            // URLSession reports NSURLErrorCancelled, wrapped as .transport.
+            break
+        }
+    }
 }

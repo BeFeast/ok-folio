@@ -176,20 +176,28 @@ public struct FolioClient: @unchecked Sendable {
 
     /// Completion-handler bridge instead of `URLSession.data(for:)` so the
     /// same code path works on swift-corelibs-foundation (Linux CI).
+    /// Task cancellation cancels the underlying data task, so a cancelled
+    /// caller does not leave the request running to completion server-side.
     private func perform(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        try await withCheckedThrowingContinuation { continuation in
-            let task = session.dataTask(with: request) { data, response, error in
-                if let error {
-                    continuation.resume(throwing: FolioError.transport(error))
-                    return
+        let box = DataTaskBox()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                let task = session.dataTask(with: request) { data, response, error in
+                    if let error {
+                        continuation.resume(throwing: FolioError.transport(error))
+                        return
+                    }
+                    guard let http = response as? HTTPURLResponse else {
+                        continuation.resume(throwing: FolioError.transport(URLError(.badServerResponse)))
+                        return
+                    }
+                    continuation.resume(returning: (data ?? Data(), http))
                 }
-                guard let http = response as? HTTPURLResponse else {
-                    continuation.resume(throwing: FolioError.transport(URLError(.badServerResponse)))
-                    return
-                }
-                continuation.resume(returning: (data ?? Data(), http))
+                box.store(task)
+                task.resume()
             }
-            task.resume()
+        } onCancel: {
+            box.cancel()
         }
     }
 
@@ -235,5 +243,116 @@ public struct FolioClient: @unchecked Sendable {
         dateParseLock.lock()
         defer { dateParseLock.unlock() }
         return isoFractional.date(from: value) ?? isoPlain.date(from: value)
+    }
+}
+
+// MARK: - Upload
+
+extension FolioClient {
+    /// Uploads an image to `POST /api/v1/pieces` as multipart/form-data.
+    ///
+    /// The body carries a required `file` part (content type sniffed from the
+    /// image's magic bytes) plus optional `title`/`artist` text parts, sent
+    /// only when non-nil and non-empty. The server answers
+    /// `201 {"photo": ..., "duplicate": false}` for a fresh import and
+    /// `200 {"photo": ..., "duplicate": true}` when identical content was
+    /// already imported; both decode to `UploadResult`.
+    public func uploadPiece(
+        data: Data,
+        filename: String,
+        title: String? = nil,
+        artist: String? = nil
+    ) async throws -> UploadResult {
+        let boundary = "FolioKit-" + UUID().uuidString
+        var request = request(path: "api/v1/pieces")
+        request.httpMethod = "POST"
+        request.setValue(
+            "multipart/form-data; boundary=\(boundary)",
+            forHTTPHeaderField: "Content-Type"
+        )
+        request.httpBody = Self.multipartBody(
+            boundary: boundary,
+            fileData: data,
+            filename: filename,
+            fields: [("title", title), ("artist", artist)]
+        )
+        let envelope = try await send(request, as: UploadEnvelope.self, path: "/api/v1/pieces")
+        return UploadResult(piece: envelope.photo, duplicate: envelope.duplicate)
+    }
+
+    /// Hand-built multipart/form-data body: text fields first, the file part
+    /// last, CRLF line endings throughout, nothing percent-encoded (the file
+    /// part is raw bytes).
+    private static func multipartBody(
+        boundary: String,
+        fileData: Data,
+        filename: String,
+        fields: [(name: String, value: String?)]
+    ) -> Data {
+        var body = Data()
+        func append(_ string: String) {
+            body.append(Data(string.utf8))
+        }
+        for (name, value) in fields {
+            guard let value, !value.isEmpty else { continue }
+            append("--\(boundary)\r\n")
+            append("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n")
+            append(value)
+            append("\r\n")
+        }
+        append("--\(boundary)\r\n")
+        append("Content-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\n")
+        append("Content-Type: \(sniffImageContentType(fileData))\r\n\r\n")
+        body.append(fileData)
+        append("\r\n--\(boundary)--\r\n")
+        return body
+    }
+
+    /// Best-effort image content type from magic bytes. The server re-detects
+    /// the real format from the bytes anyway, so unknown data just falls back
+    /// to application/octet-stream.
+    static func sniffImageContentType(_ data: Data) -> String {
+        if data.starts(with: [0xFF, 0xD8, 0xFF]) {
+            return "image/jpeg"
+        }
+        if data.starts(with: [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) {
+            return "image/png"
+        }
+        if data.starts(with: Array("GIF8".utf8)) {
+            return "image/gif"
+        }
+        if data.count >= 12,
+           data.starts(with: Array("RIFF".utf8)),
+           data.dropFirst(8).prefix(4).elementsEqual(Array("WEBP".utf8)) {
+            return "image/webp"
+        }
+        return "application/octet-stream"
+    }
+}
+
+/// Hands the in-flight `URLSessionDataTask` across the cancellation boundary.
+/// The lock covers the store/cancel race: cancellation that arrives before the
+/// task is stored cancels it immediately on store.
+private final class DataTaskBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var task: URLSessionDataTask?
+    private var cancelled = false
+
+    func store(_ task: URLSessionDataTask) {
+        lock.lock()
+        self.task = task
+        let wasCancelled = cancelled
+        lock.unlock()
+        if wasCancelled {
+            task.cancel()
+        }
+    }
+
+    func cancel() {
+        lock.lock()
+        cancelled = true
+        let inFlight = task
+        lock.unlock()
+        inFlight?.cancel()
     }
 }

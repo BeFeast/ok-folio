@@ -259,6 +259,19 @@ public struct AddPieceResult: Sendable, Decodable {
     }
 }
 
+// MARK: - Upload result
+
+/// Result of `POST /api/v1/pieces` (manual image upload).
+///
+/// Wire: `201 {"photo": ..., "duplicate": false}` for a fresh import,
+/// `200 {"photo": ..., "duplicate": true}` when identical content (matched by
+/// content hash server-side) was already imported — `piece` is then the
+/// pre-existing photo.
+public struct UploadResult: Sendable {
+    public let piece: Piece
+    public let duplicate: Bool
+}
+
 // MARK: - Internal envelopes
 
 /// `{"folios": [...]}` — shared by `GET /api/v1/folios` and
@@ -271,4 +284,12 @@ struct FoliosEnvelope: Decodable {
 struct FavoriteEnvelope: Decodable {
     let id: Int
     let favorite: Bool
+}
+
+/// `{"photo": <PascalCase DownloadedPhoto>, "duplicate": bool}` — pieces.go
+/// `createPieceResponse`. The photo serializes exactly like a catalog item,
+/// so `Piece`'s catalog branch decodes it.
+struct UploadEnvelope: Decodable {
+    let photo: Piece
+    let duplicate: Bool
 }
