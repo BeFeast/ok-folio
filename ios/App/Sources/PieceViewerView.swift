@@ -64,7 +64,13 @@ struct PieceViewerView: View {
                             },
                             onDismiss: { dismiss() },
                             onZoomChanged: { zoomed in
-                                pagingLocked = zoomed
+                                // Scoped to the visible page: TabView
+                                // preloads neighbours, and their 1x onAppear
+                                // must not unlock while the selected page is
+                                // zoomed.
+                                if index == i {
+                                    pagingLocked = zoomed
+                                }
                             }
                         )
                     }
