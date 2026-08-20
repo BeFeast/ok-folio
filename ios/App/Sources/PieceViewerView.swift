@@ -10,6 +10,9 @@ struct PieceViewerView: View {
     @State private var index: Int
     @State private var chromeVisible = true
     @State private var showFolioPicker = false
+    /// True while the visible page is zoomed in; paging is disabled so the
+    /// pager's scroll recognition cannot fight the pan gesture.
+    @State private var pagingLocked = false
 
     init(model: GalleryModel, startIndex: Int) {
         self.model = model
@@ -59,7 +62,10 @@ struct PieceViewerView: View {
                                     chromeVisible.toggle()
                                 }
                             },
-                            onDismiss: { dismiss() }
+                            onDismiss: { dismiss() },
+                            onZoomChanged: { zoomed in
+                                pagingLocked = zoomed
+                            }
                         )
                     }
                 }
@@ -67,6 +73,7 @@ struct PieceViewerView: View {
             }
         }
         .tabViewStyle(.page(indexDisplayMode: .never))
+        .scrollDisabled(pagingLocked)
         .ignoresSafeArea()
         .onChange(of: index) { _, newIndex in
             // Keep paging seamless near the end of the loaded window.
@@ -163,6 +170,7 @@ private struct ZoomablePieceView: View {
     let aspectRatio: CGFloat?
     let onSingleTap: () -> Void
     let onDismiss: () -> Void
+    let onZoomChanged: (Bool) -> Void
 
     @State private var zoom: CGFloat = 1
     @State private var gestureZoom: CGFloat = 1
@@ -188,11 +196,20 @@ private struct ZoomablePieceView: View {
                     onSingleTap()
                 }
                 .gesture(magnifyGesture(in: proxy.size))
-                // Pan only while zoomed so TabView paging keeps working at 1x.
-                .gesture(panGesture(in: proxy.size), including: isZoomed ? .all : .subviews)
+                // Pan only while zoomed so TabView paging keeps working at
+                // 1x. High priority: paging is already disabled while zoomed,
+                // and nothing else may claim the drag mid-gesture (that
+                // cancel/restart cycle is what made panning jumpy).
+                .highPriorityGesture(
+                    panGesture(in: proxy.size),
+                    including: isZoomed ? .all : .subviews
+                )
                 // Simultaneous so horizontal paging drags pass through
                 // untouched; only a downward-dominant drag at 1x reacts.
                 .simultaneousGesture(dismissGesture)
+                .onChange(of: isZoomed) { _, zoomed in
+                    onZoomChanged(zoomed)
+                }
         }
     }
 
