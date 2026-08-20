@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 import SwiftUI
+import UIKit
 import UniformTypeIdentifiers
 import FolioKit
 
@@ -28,7 +29,9 @@ final class ShareUploadModel {
     struct Item: Identifiable {
         let id = UUID()
         let provider: NSItemProvider
-        let filename: String
+        /// Display name; replaced by the actual upload filename once the
+        /// bytes are sniffed (extension follows the real format).
+        var filename: String
         var state: ItemState = .waiting
     }
 
@@ -47,7 +50,7 @@ final class ShareUploadModel {
     init(providers: [NSItemProvider], onFinish: @escaping (ShareOutcome) -> Void) {
         self.onFinish = onFinish
         items = providers.enumerated().map { index, provider in
-            Item(provider: provider, filename: provider.suggestedName ?? "piece-\(index + 1).jpg")
+            Item(provider: provider, filename: provider.suggestedName ?? "piece-\(index + 1)")
         }
         client = Self.makeClient()
     }
@@ -82,15 +85,27 @@ final class ShareUploadModel {
             items[index].state = .uploading
             do {
                 let data = try await Self.loadData(from: items[index].provider)
-                let result = try await client.uploadPiece(
+                let prepared = try Self.prepareUpload(
                     data: data,
-                    filename: items[index].filename
+                    suggestedName: items[index].provider.suggestedName,
+                    index: index
+                )
+                items[index].filename = prepared.filename
+                let result = try await client.uploadPiece(
+                    data: prepared.data,
+                    filename: prepared.filename
                 )
                 items[index].state = result.duplicate ? .duplicate : .added
             } catch is CancellationError {
                 items[index].state = .waiting
                 return
             } catch {
+                // A cancelled URLSession task surfaces as a transport error,
+                // not CancellationError — do not record it as a failure.
+                if Task.isCancelled {
+                    items[index].state = .waiting
+                    return
+                }
                 items[index].state = .error(error.localizedDescription)
             }
         }
@@ -109,6 +124,62 @@ final class ShareUploadModel {
             if Task.isCancelled { return }
             onFinish(.completed)
         }
+    }
+
+    // MARK: - Upload preparation
+
+    struct PreparedUpload {
+        let data: Data
+        let filename: String
+    }
+
+    enum ShareUploadError: LocalizedError {
+        case unsupportedFormat
+
+        var errorDescription: String? { "Unsupported image format" }
+    }
+
+    /// The pieces endpoint accepts JPEG, PNG, TIFF, and WebP only. Formats it
+    /// rejects — HEIC (the iPhone camera default) and GIF — are re-encoded to
+    /// JPEG on-device; everything else is sent as the original bytes with a
+    /// filename extension matching the sniffed format.
+    static func prepareUpload(data: Data, suggestedName: String?, index: Int) throws -> PreparedUpload {
+        let format = SniffedImageFormat.sniff(data)
+        let fallbackBase = "piece-\(index + 1)"
+        if format.serverAccepted {
+            return PreparedUpload(
+                data: data,
+                filename: normalizedFilename(
+                    suggestedName: suggestedName,
+                    fallbackBase: fallbackBase,
+                    ext: format.fileExtension
+                )
+            )
+        }
+        guard let image = UIImage(data: data),
+              let jpeg = image.jpegData(compressionQuality: 0.9)
+        else {
+            throw ShareUploadError.unsupportedFormat
+        }
+        let base = baseName(from: suggestedName) ?? fallbackBase
+        return PreparedUpload(data: jpeg, filename: base + ".jpg")
+    }
+
+    private static func normalizedFilename(suggestedName: String?, fallbackBase: String, ext: String) -> String {
+        guard let suggestedName, !suggestedName.isEmpty else {
+            return fallbackBase + "." + ext
+        }
+        // The server derives the served Content-Type from the stored
+        // extension, so a missing one must come from the sniffed format.
+        return (suggestedName as NSString).pathExtension.isEmpty
+            ? suggestedName + "." + ext
+            : suggestedName
+    }
+
+    private static func baseName(from suggestedName: String?) -> String? {
+        guard let suggestedName, !suggestedName.isEmpty else { return nil }
+        let base = (suggestedName as NSString).deletingPathExtension
+        return base.isEmpty ? nil : base
     }
 
     /// Original bytes of the attachment (no transcoding, keeps metadata).
@@ -246,5 +317,69 @@ struct ShareView: View {
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(.red)
         }
+    }
+}
+
+/// Image container sniffed from magic bytes; drives the accept-or-transcode
+/// decision and the filename extension.
+enum SniffedImageFormat {
+    case jpeg
+    case png
+    case gif
+    case webp
+    case tiff
+    case heic
+    case unknown
+
+    /// Formats `POST /api/v1/pieces` accepts as-is.
+    var serverAccepted: Bool {
+        switch self {
+        case .jpeg, .png, .webp, .tiff:
+            return true
+        case .gif, .heic, .unknown:
+            return false
+        }
+    }
+
+    var fileExtension: String {
+        switch self {
+        case .jpeg: return "jpg"
+        case .png: return "png"
+        case .gif: return "gif"
+        case .webp: return "webp"
+        case .tiff: return "tiff"
+        case .heic: return "heic"
+        case .unknown: return "bin"
+        }
+    }
+
+    static func sniff(_ data: Data) -> SniffedImageFormat {
+        guard data.count >= 12 else { return .unknown }
+        let bytes = [UInt8](data.prefix(12))
+        if bytes[0] == 0xFF, bytes[1] == 0xD8, bytes[2] == 0xFF {
+            return .jpeg
+        }
+        if bytes[0] == 0x89, bytes[1] == 0x50, bytes[2] == 0x4E, bytes[3] == 0x47 {
+            return .png
+        }
+        if bytes[0] == 0x47, bytes[1] == 0x49, bytes[2] == 0x46, bytes[3] == 0x38 {
+            return .gif
+        }
+        if bytes[0] == 0x52, bytes[1] == 0x49, bytes[2] == 0x46, bytes[3] == 0x46,
+           bytes[8] == 0x57, bytes[9] == 0x45, bytes[10] == 0x42, bytes[11] == 0x50 {
+            return .webp
+        }
+        if (bytes[0] == 0x49 && bytes[1] == 0x49 && bytes[2] == 0x2A && bytes[3] == 0x00)
+            || (bytes[0] == 0x4D && bytes[1] == 0x4D && bytes[2] == 0x00 && bytes[3] == 0x2A) {
+            return .tiff
+        }
+        // ISO BMFF: "ftyp" at offset 4, HEIF-family brand at offset 8.
+        if bytes[4] == 0x66, bytes[5] == 0x74, bytes[6] == 0x79, bytes[7] == 0x70 {
+            let brand = String(decoding: bytes[8..<12], as: UTF8.self)
+            if ["heic", "heix", "hevc", "hevx", "heif", "mif1", "msf1"].contains(brand) {
+                return .heic
+            }
+        }
+        return .unknown
     }
 }

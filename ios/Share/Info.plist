@@ -33,6 +33,8 @@
 			<dict>
 				<key>NSExtensionActivationSupportsImageWithMaxCount</key>
 				<integer>20</integer>
+				<key>NSExtensionActivationDictionaryVersion</key>
+				<integer>2</integer>
 			</dict>
 		</dict>
 		<key>NSExtensionPointIdentifier</key>

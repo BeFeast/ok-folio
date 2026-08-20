@@ -28,11 +28,15 @@ final class StubURLProtocol: URLProtocol {
     /// Captured request bodies (URLSession may expose the body only as a
     /// stream inside URLProtocol, so it is drained eagerly here).
     static var recordedBodies: [Data] = []
+    /// When true, requests are recorded but never answered — for exercising
+    /// cancellation of in-flight tasks.
+    static var hang = false
 
     static func reset() {
         handler = nil
         recorded = []
         recordedBodies = []
+        hang = false
     }
 
     override class func canInit(with request: URLRequest) -> Bool { true }
@@ -42,6 +46,10 @@ final class StubURLProtocol: URLProtocol {
     override func startLoading() {
         Self.recorded.append(request)
         Self.recordedBodies.append(Self.drainBody(of: request))
+
+        if Self.hang {
+            return
+        }
 
         guard let handler = Self.handler else {
             client?.urlProtocol(self, didFailWithError: URLError(.unsupportedURL))

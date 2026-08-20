@@ -480,4 +480,47 @@ final class FolioClientTests: XCTestCase {
             XCTAssertTrue(body.contains("Failed to import piece"))
         }
     }
+
+    // MARK: - Error presentation
+
+    func testErrorDescriptionSurfacesServerMessage() {
+        let error = FolioError.httpStatus(400, body: #"{"error": "Unsupported image format"}"#)
+        XCTAssertEqual(error.errorDescription, "Unsupported image format")
+    }
+
+    func testErrorDescriptionFallsBackToStatusAndBody() {
+        XCTAssertEqual(
+            FolioError.httpStatus(502, body: "bad gateway").errorDescription,
+            "HTTP 502: bad gateway"
+        )
+        XCTAssertEqual(FolioError.httpStatus(500, body: "  ").errorDescription, "HTTP 500")
+        XCTAssertEqual(
+            FolioError.decoding(URLError(.cannotParseResponse), path: "/api/v1/stats").errorDescription,
+            "Unexpected response from /api/v1/stats"
+        )
+    }
+
+    // MARK: - Cancellation
+
+    func testCancellationCancelsInFlightRequest() async throws {
+        StubURLProtocol.hang = true
+
+        let inFlight = Task { [client] in
+            _ = try await client!.photo(id: 1)
+        }
+        // Let the request reach the stub before cancelling.
+        for _ in 0..<100 where StubURLProtocol.recorded.isEmpty {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTAssertFalse(StubURLProtocol.recorded.isEmpty, "Request never started")
+        inFlight.cancel()
+
+        switch await inFlight.result {
+        case .success:
+            XCTFail("Expected the cancelled request to fail")
+        case .failure:
+            // URLSession reports NSURLErrorCancelled, wrapped as .transport.
+            break
+        }
+    }
 }

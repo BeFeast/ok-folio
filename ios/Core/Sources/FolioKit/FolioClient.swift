@@ -176,20 +176,28 @@ public struct FolioClient: @unchecked Sendable {
 
     /// Completion-handler bridge instead of `URLSession.data(for:)` so the
     /// same code path works on swift-corelibs-foundation (Linux CI).
+    /// Task cancellation cancels the underlying data task, so a cancelled
+    /// caller does not leave the request running to completion server-side.
     private func perform(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        try await withCheckedThrowingContinuation { continuation in
-            let task = session.dataTask(with: request) { data, response, error in
-                if let error {
-                    continuation.resume(throwing: FolioError.transport(error))
-                    return
+        let box = DataTaskBox()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                let task = session.dataTask(with: request) { data, response, error in
+                    if let error {
+                        continuation.resume(throwing: FolioError.transport(error))
+                        return
+                    }
+                    guard let http = response as? HTTPURLResponse else {
+                        continuation.resume(throwing: FolioError.transport(URLError(.badServerResponse)))
+                        return
+                    }
+                    continuation.resume(returning: (data ?? Data(), http))
                 }
-                guard let http = response as? HTTPURLResponse else {
-                    continuation.resume(throwing: FolioError.transport(URLError(.badServerResponse)))
-                    return
-                }
-                continuation.resume(returning: (data ?? Data(), http))
+                box.store(task)
+                task.resume()
             }
-            task.resume()
+        } onCancel: {
+            box.cancel()
         }
     }
 
@@ -319,5 +327,32 @@ extension FolioClient {
             return "image/webp"
         }
         return "application/octet-stream"
+    }
+}
+
+/// Hands the in-flight `URLSessionDataTask` across the cancellation boundary.
+/// The lock covers the store/cancel race: cancellation that arrives before the
+/// task is stored cancels it immediately on store.
+private final class DataTaskBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var task: URLSessionDataTask?
+    private var cancelled = false
+
+    func store(_ task: URLSessionDataTask) {
+        lock.lock()
+        self.task = task
+        let wasCancelled = cancelled
+        lock.unlock()
+        if wasCancelled {
+            task.cancel()
+        }
+    }
+
+    func cancel() {
+        lock.lock()
+        cancelled = true
+        let inFlight = task
+        lock.unlock()
+        inFlight?.cancel()
     }
 }

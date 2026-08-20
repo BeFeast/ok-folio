@@ -26,3 +26,26 @@ extension FolioError: CustomStringConvertible {
         }
     }
 }
+
+/// `error.localizedDescription` is what UIs show; without this conformance it
+/// degrades to a generic NSError string that hides the server's message.
+extension FolioError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case .httpStatus(let status, let body):
+            // The Go API wraps errors as {"error": "message"} — surface the
+            // message itself when present.
+            if let data = body.data(using: .utf8),
+               let envelope = try? JSONDecoder().decode([String: String].self, from: data),
+               let message = envelope["error"], !message.isEmpty {
+                return message
+            }
+            let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? "HTTP \(status)" : "HTTP \(status): \(trimmed.prefix(200))"
+        case .decoding(_, let path):
+            return "Unexpected response from \(path)"
+        case .transport(let error):
+            return error.localizedDescription
+        }
+    }
+}
