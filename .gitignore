@@ -31,6 +31,7 @@ config.*.yaml
 
 # Frontend app icons are real source assets (not photos/thumbnails) — keep them tracked.
 !dashboard/public/*.png
+!ios/App/Assets.xcassets/AppIcon.appiconset/*.png
 *.sql.zst
 *.db
 *.sqlite
