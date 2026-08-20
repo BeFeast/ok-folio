@@ -28,6 +28,10 @@ final class AppModel {
     /// Gates the UI behind `AppLockView` when true.
     var isLocked: Bool
 
+    /// Hides content while the scene is not active so the app-switcher
+    /// snapshot (taken during `.inactive`) never shows the gallery.
+    var isCovered: Bool = false
+
     /// Rebuilt whenever `serverURLString` changes; nil until a valid URL is set.
     private(set) var client: FolioClient?
 
@@ -60,9 +64,20 @@ final class AppModel {
     }
 
     func handleScenePhase(_ phase: ScenePhase) {
-        guard faceIDLockEnabled else { return }
-        if phase == .background {
+        guard faceIDLockEnabled else {
+            isCovered = false
+            return
+        }
+        switch phase {
+        case .active:
+            isCovered = false
+        case .background:
+            isCovered = true
             isLocked = true
+        default:
+            // .inactive and any future phases: cover, but do not require
+            // re-auth yet (the Face ID prompt itself makes the scene inactive).
+            isCovered = true
         }
     }
 

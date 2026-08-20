@@ -168,7 +168,7 @@ public struct FolioClient: @unchecked Sendable {
             )
         }
         do {
-            return try Self.decoder.decode(T.self, from: data)
+            return try Self.makeDecoder().decode(T.self, from: data)
         } catch {
             throw FolioError.decoding(error, path: path)
         }
@@ -197,7 +197,9 @@ public struct FolioClient: @unchecked Sendable {
 
     /// Go's `time.Time` marshals as RFC3339Nano — fractional seconds are
     /// present only when non-zero, so both variants must parse.
-    static let decoder: JSONDecoder = {
+    /// A fresh decoder per call: JSONDecoder is not documented thread-safe,
+    /// and responses decode concurrently on URLSession callback queues.
+    static func makeDecoder() -> JSONDecoder {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .custom { decoder in
             let container = try decoder.singleValueContainer()
@@ -211,7 +213,7 @@ public struct FolioClient: @unchecked Sendable {
             )
         }
         return decoder
-    }()
+    }
 
     private static let isoFractional: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
@@ -225,7 +227,13 @@ public struct FolioClient: @unchecked Sendable {
         return formatter
     }()
 
+    /// ISO8601DateFormatter is not documented thread-safe; concurrent
+    /// responses decode in parallel, so serialize formatter access.
+    private static let dateParseLock = NSLock()
+
     private static func parseRFC3339(_ value: String) -> Date? {
-        isoFractional.date(from: value) ?? isoPlain.date(from: value)
+        dateParseLock.lock()
+        defer { dateParseLock.unlock() }
+        return isoFractional.date(from: value) ?? isoPlain.date(from: value)
     }
 }

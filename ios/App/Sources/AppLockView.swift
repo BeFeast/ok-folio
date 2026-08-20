@@ -6,6 +6,7 @@ import LocalAuthentication
 /// when Face ID / Touch ID is unavailable.
 struct AppLockView: View {
     @Environment(AppModel.self) private var app
+    @Environment(\.scenePhase) private var scenePhase
 
     @State private var isAuthenticating = false
     @State private var failed = false
@@ -30,8 +31,22 @@ struct AppLockView: View {
             }
         }
         .task {
-            authenticate()
+            authenticateIfNeeded()
         }
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase == .active {
+                authenticateIfNeeded()
+            }
+        }
+    }
+
+    /// Auto-prompt only while the scene is active — starting the biometric
+    /// prompt during backgrounding fails immediately. After a failed or
+    /// cancelled attempt, wait for the explicit Unlock button instead of
+    /// re-prompting on the .inactive/.active bounce the prompt itself causes.
+    private func authenticateIfNeeded() {
+        guard scenePhase == .active, !failed else { return }
+        authenticate()
     }
 
     private func authenticate() {
@@ -59,6 +74,22 @@ struct AppLockView: View {
                     failed = true
                 }
             }
+        }
+    }
+}
+
+/// Opaque cover shown while the scene is inactive (app switcher, incoming
+/// call) so system snapshots never capture gallery content. No controls:
+/// it disappears on its own when the scene becomes active again.
+struct PrivacyCoverView: View {
+    var body: some View {
+        ZStack {
+            Rectangle()
+                .fill(.regularMaterial)
+                .ignoresSafeArea()
+            Image(systemName: "photo.stack")
+                .font(.system(size: 40))
+                .foregroundStyle(.secondary)
         }
     }
 }

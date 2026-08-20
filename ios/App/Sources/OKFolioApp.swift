@@ -23,16 +23,29 @@ struct RootView: View {
 
     var body: some View {
         ZStack {
-            if model.client == nil {
-                // First launch: no valid server URL yet.
-                SettingsView()
-            } else {
-                GalleryView()
-            }
             if model.isLocked {
+                // Locked: content stays out of the view hierarchy entirely,
+                // so neither snapshots nor accessibility clients can reach it.
                 AppLockView()
                     .transition(.opacity)
+            } else {
+                content
+                    .overlay {
+                        if model.isCovered {
+                            PrivacyCoverView()
+                        }
+                    }
             }
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if model.client == nil {
+            // First launch: no valid server URL yet.
+            SettingsView()
+        } else {
+            GalleryView()
         }
     }
 }
