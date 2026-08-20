@@ -76,6 +76,9 @@ struct PieceViewerView: View {
         .scrollDisabled(pagingLocked)
         .ignoresSafeArea()
         .onChange(of: index) { _, newIndex in
+            // A page change means the visible page is at 1x; clear any lock
+            // a non-visible page may have left behind.
+            pagingLocked = false
             // Keep paging seamless near the end of the loaded window.
             model.loadMoreIfNeeded(index: newIndex)
         }
@@ -209,6 +212,11 @@ private struct ZoomablePieceView: View {
                 .simultaneousGesture(dismissGesture)
                 .onChange(of: isZoomed) { _, zoomed in
                     onZoomChanged(zoomed)
+                }
+                // A recreated page starts at 1x without firing onChange;
+                // reporting the actual state on appear heals a stale lock.
+                .onAppear {
+                    onZoomChanged(isZoomed)
                 }
         }
     }
