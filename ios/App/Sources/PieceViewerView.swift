@@ -44,12 +44,14 @@ struct PieceViewerView: View {
                     if let client = app.client {
                         ZoomablePieceView(
                             url: client.imageURL(id: piece.id),
-                            session: app.imageSession
-                        ) {
-                            withAnimation(.easeInOut(duration: 0.2)) {
-                                chromeVisible.toggle()
-                            }
-                        }
+                            session: app.imageSession,
+                            onSingleTap: {
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    chromeVisible.toggle()
+                                }
+                            },
+                            onDismiss: { dismiss() }
+                        )
                     }
                 }
                 .tag(i)
@@ -91,12 +93,23 @@ struct PieceViewerView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(piece.title.isEmpty ? "Untitled" : piece.title)
                     .font(.headline)
+                    .foregroundStyle(.white)
                     .lineLimit(1)
                 if !piece.artist.isEmpty {
-                    Text(piece.artist)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                    Button {
+                        filterByArtist(piece.artist)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "person")
+                                .font(.caption)
+                            Text(piece.artist)
+                                .font(.subheadline)
+                                .underline()
+                                .lineLimit(1)
+                        }
+                        .foregroundStyle(.white.opacity(0.8))
+                    }
+                    .accessibilityLabel("Show pieces by \(piece.artist)")
                 }
             }
             Spacer()
@@ -105,7 +118,7 @@ struct PieceViewerView: View {
             } label: {
                 Image(systemName: piece.favorite ? "heart.fill" : "heart")
                     .font(.title3)
-                    .foregroundStyle(piece.favorite ? .red : .primary)
+                    .foregroundStyle(piece.favorite ? .red : .white)
             }
             .accessibilityLabel(piece.favorite ? "Remove from favorites" : "Add to favorites")
             Button {
@@ -113,25 +126,37 @@ struct PieceViewerView: View {
             } label: {
                 Image(systemName: "rectangle.stack.badge.plus")
                     .font(.title3)
+                    .foregroundStyle(.white)
             }
             .accessibilityLabel("Add to folio")
         }
         .padding()
-        .background(.ultraThinMaterial)
+        // Semi-transparent scrim (not material) so the image stays readable
+        // underneath, matching the close-button chrome.
+        .background(.black.opacity(0.45))
+    }
+
+    /// Closes the viewer and filters the gallery to this artist.
+    private func filterByArtist(_ artist: String) {
+        dismiss()
+        Task { await model.setArtistFilter(artist) }
     }
 }
 
 /// One zoomable page: pinch to zoom, double-tap to toggle 1x/2.5x, drag to
-/// pan while zoomed, single tap to toggle chrome.
+/// pan while zoomed, single tap to toggle chrome, swipe down at 1x to
+/// dismiss the viewer.
 private struct ZoomablePieceView: View {
     let url: URL
     let session: URLSession
     let onSingleTap: () -> Void
+    let onDismiss: () -> Void
 
     @State private var zoom: CGFloat = 1
     @State private var gestureZoom: CGFloat = 1
     @State private var offset: CGSize = .zero
     @State private var gestureOffset: CGSize = .zero
+    @State private var dismissDrag: CGFloat = 0
 
     private var isZoomed: Bool { zoom > 1 }
 
@@ -142,7 +167,7 @@ private struct ZoomablePieceView: View {
                 .scaleEffect(zoom * gestureZoom)
                 .offset(
                     x: offset.width + gestureOffset.width,
-                    y: offset.height + gestureOffset.height
+                    y: offset.height + gestureOffset.height + dismissDrag
                 )
                 .onTapGesture(count: 2) {
                     toggleZoom()
@@ -150,39 +175,85 @@ private struct ZoomablePieceView: View {
                 .onTapGesture {
                     onSingleTap()
                 }
-                .gesture(magnifyGesture)
+                .gesture(magnifyGesture(in: proxy.size))
                 // Pan only while zoomed so TabView paging keeps working at 1x.
-                .gesture(panGesture, including: isZoomed ? .all : .subviews)
+                .gesture(panGesture(in: proxy.size), including: isZoomed ? .all : .subviews)
+                // Simultaneous so horizontal paging drags pass through
+                // untouched; only a downward-dominant drag at 1x reacts.
+                .simultaneousGesture(dismissGesture)
         }
     }
 
-    private var magnifyGesture: some Gesture {
+    private func magnifyGesture(in size: CGSize) -> some Gesture {
         MagnifyGesture()
             .onChanged { value in
                 gestureZoom = value.magnification
             }
             .onEnded { value in
-                zoom = min(max(zoom * value.magnification, 1), 4)
-                gestureZoom = 1
-                if zoom <= 1.01 {
-                    withAnimation(.easeOut(duration: 0.2)) {
+                let settled = min(max(zoom * value.magnification, 1), 4)
+                // One animated transaction, including the gesture-state
+                // reset: settling zoom or offset outside it makes the view
+                // snap by the clamped amount on release.
+                withAnimation(.easeOut(duration: 0.25)) {
+                    gestureZoom = 1
+                    if settled <= 1.01 {
                         zoom = 1
                         offset = .zero
+                    } else {
+                        zoom = settled
+                        offset = clamped(offset, zoom: settled, in: size)
                     }
                 }
             }
     }
 
-    private var panGesture: some Gesture {
+    private func panGesture(in size: CGSize) -> some Gesture {
         DragGesture()
             .onChanged { value in
                 gestureOffset = value.translation
             }
             .onEnded { value in
-                offset.width += value.translation.width
-                offset.height += value.translation.height
-                gestureOffset = .zero
+                let proposed = CGSize(
+                    width: offset.width + value.translation.width,
+                    height: offset.height + value.translation.height
+                )
+                withAnimation(.easeOut(duration: 0.2)) {
+                    gestureOffset = .zero
+                    offset = clamped(proposed, zoom: zoom, in: size)
+                }
             }
+    }
+
+    private var dismissGesture: some Gesture {
+        DragGesture(minimumDistance: 25)
+            .onChanged { value in
+                guard !isZoomed,
+                      value.translation.height > 0,
+                      value.translation.height > abs(value.translation.width)
+                else { return }
+                dismissDrag = value.translation.height
+            }
+            .onEnded { _ in
+                guard !isZoomed else { return }
+                if dismissDrag > 120 {
+                    onDismiss()
+                } else {
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        dismissDrag = 0
+                    }
+                }
+            }
+    }
+
+    /// Keeps the pan within the scaled content's bounds (view size is used
+    /// as the content bound, which is conservative for letterboxed images).
+    private func clamped(_ offset: CGSize, zoom: CGFloat, in size: CGSize) -> CGSize {
+        let maxX = max(0, (zoom - 1) * size.width / 2)
+        let maxY = max(0, (zoom - 1) * size.height / 2)
+        return CGSize(
+            width: min(max(offset.width, -maxX), maxX),
+            height: min(max(offset.height, -maxY), maxY)
+        )
     }
 
     private func toggleZoom() {
