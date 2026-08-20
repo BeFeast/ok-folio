@@ -12,6 +12,11 @@ final class GalleryModel {
     var errorMessage: String?
     var favoritesOnly = false
     var query = ""
+    private(set) var artistFilter: String?
+    /// Set by the viewer's artist button; the gallery applies it only after
+    /// the full-screen cover has finished dismissing, because reload() empties
+    /// the shared items array the pager is still displaying.
+    var pendingArtistFilter: String?
 
     private var client: FolioClient?
     private var nextPage = 1
@@ -62,7 +67,7 @@ final class GalleryModel {
                 perPage: perPage,
                 query: query.isEmpty ? nil : query,
                 favoritesOnly: favoritesOnly,
-                artist: nil
+                artist: artistFilter
             )
             guard requestGeneration == generation else { return }
             items.append(contentsOf: page.items)
@@ -74,6 +79,13 @@ final class GalleryModel {
             errorMessage = String(describing: error)
             isLoading = false
         }
+    }
+
+    func setArtistFilter(_ artist: String?) async {
+        let normalized = artist?.isEmpty == true ? nil : artist
+        guard artistFilter != normalized else { return }
+        artistFilter = normalized
+        await reload()
     }
 
     /// Optimistic favorite toggle; reverts on error, adopts the
@@ -117,6 +129,9 @@ struct GalleryView: View {
                 if let message = model.errorMessage {
                     errorBanner(message)
                 }
+                if let artist = model.artistFilter {
+                    artistChip(artist)
+                }
                 grid
                 if model.isLoading {
                     ProgressView()
@@ -124,7 +139,7 @@ struct GalleryView: View {
                 }
                 if !model.isLoading, model.errorMessage == nil, model.items.isEmpty {
                     ContentUnavailableView(
-                        model.query.isEmpty ? "No Pieces" : "No Results",
+                        model.query.isEmpty && model.artistFilter == nil ? "No Pieces" : "No Results",
                         systemImage: "photo.on.rectangle.angled"
                     )
                     .padding(.top, 80)
@@ -175,7 +190,12 @@ struct GalleryView: View {
             .sheet(isPresented: $showSettings) {
                 SettingsView()
             }
-            .fullScreenCover(item: $viewerSelection) { selection in
+            .fullScreenCover(item: $viewerSelection, onDismiss: {
+                if let artist = model.pendingArtistFilter {
+                    model.pendingArtistFilter = nil
+                    Task { await model.setArtistFilter(artist) }
+                }
+            }) { selection in
                 PieceViewerView(model: model, startIndex: selection.id)
             }
         }
@@ -219,6 +239,32 @@ struct GalleryView: View {
             .onTapGesture {
                 viewerSelection = ViewerSelection(id: index)
             }
+    }
+
+    private func artistChip(_ artist: String) -> some View {
+        HStack {
+            HStack(spacing: 6) {
+                Image(systemName: "person")
+                    .font(.caption)
+                Text(artist)
+                    .font(.footnote.bold())
+                    .lineLimit(1)
+                Button {
+                    Task { await model.setArtistFilter(nil) }
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                .accessibilityLabel("Clear artist filter")
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(.thinMaterial, in: Capsule())
+            Spacer()
+        }
+        .padding(.horizontal, 8)
+        .padding(.top, 4)
     }
 
     private func errorBanner(_ message: String) -> some View {
