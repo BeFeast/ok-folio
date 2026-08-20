@@ -13,6 +13,10 @@ final class GalleryModel {
     var favoritesOnly = false
     var query = ""
     private(set) var artistFilter: String?
+    /// Set by the viewer's artist button; the gallery applies it only after
+    /// the full-screen cover has finished dismissing, because reload() empties
+    /// the shared items array the pager is still displaying.
+    var pendingArtistFilter: String?
 
     private var client: FolioClient?
     private var nextPage = 1
@@ -186,7 +190,12 @@ struct GalleryView: View {
             .sheet(isPresented: $showSettings) {
                 SettingsView()
             }
-            .fullScreenCover(item: $viewerSelection) { selection in
+            .fullScreenCover(item: $viewerSelection, onDismiss: {
+                if let artist = model.pendingArtistFilter {
+                    model.pendingArtistFilter = nil
+                    Task { await model.setArtistFilter(artist) }
+                }
+            }) { selection in
                 PieceViewerView(model: model, startIndex: selection.id)
             }
         }

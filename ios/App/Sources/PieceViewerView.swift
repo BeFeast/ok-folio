@@ -20,6 +20,14 @@ struct PieceViewerView: View {
         model.items.indices.contains(index) ? model.items[index] : nil
     }
 
+    /// Width/height from the catalog payload; nil when the wire had none.
+    private static func aspectRatio(of piece: Piece) -> CGFloat? {
+        guard let width = piece.width, let height = piece.height,
+              width > 0, height > 0
+        else { return nil }
+        return CGFloat(width) / CGFloat(height)
+    }
+
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
@@ -45,6 +53,7 @@ struct PieceViewerView: View {
                         ZoomablePieceView(
                             url: client.imageURL(id: piece.id),
                             session: app.imageSession,
+                            aspectRatio: Self.aspectRatio(of: piece),
                             onSingleTap: {
                                 withAnimation(.easeInOut(duration: 0.2)) {
                                     chromeVisible.toggle()
@@ -136,10 +145,12 @@ struct PieceViewerView: View {
         .background(.black.opacity(0.45))
     }
 
-    /// Closes the viewer and filters the gallery to this artist.
+    /// Closes the viewer and filters the gallery to this artist. The reload
+    /// itself runs in the gallery's onDismiss — reloading here would empty
+    /// the shared items array while the pager is still on screen.
     private func filterByArtist(_ artist: String) {
+        model.pendingArtistFilter = artist
         dismiss()
-        Task { await model.setArtistFilter(artist) }
     }
 }
 
@@ -149,6 +160,7 @@ struct PieceViewerView: View {
 private struct ZoomablePieceView: View {
     let url: URL
     let session: URLSession
+    let aspectRatio: CGFloat?
     let onSingleTap: () -> Void
     let onDismiss: () -> Void
 
@@ -227,15 +239,21 @@ private struct ZoomablePieceView: View {
     private var dismissGesture: some Gesture {
         DragGesture(minimumDistance: 25)
             .onChanged { value in
-                guard !isZoomed,
-                      value.translation.height > 0,
-                      value.translation.height > abs(value.translation.width)
-                else { return }
-                dismissDrag = value.translation.height
-            }
-            .onEnded { _ in
                 guard !isZoomed else { return }
-                if dismissDrag > 120 {
+                if value.translation.height > 0,
+                   value.translation.height > abs(value.translation.width) {
+                    dismissDrag = value.translation.height
+                } else {
+                    // The drag reversed or turned horizontal: drop the
+                    // follow so a stale value cannot trigger a dismiss.
+                    dismissDrag = 0
+                }
+            }
+            .onEnded { value in
+                let shouldDismiss = !isZoomed
+                    && value.translation.height > 120
+                    && value.translation.height > abs(value.translation.width)
+                if shouldDismiss {
                     onDismiss()
                 } else {
                     withAnimation(.easeOut(duration: 0.2)) {
@@ -245,11 +263,19 @@ private struct ZoomablePieceView: View {
             }
     }
 
-    /// Keeps the pan within the scaled content's bounds (view size is used
-    /// as the content bound, which is conservative for letterboxed images).
+    /// Keeps the pan within the scaled, aspect-fitted content's bounds, so a
+    /// letterboxed image cannot be dragged into its blank margins. Without a
+    /// known aspect ratio the view size is the (conservative) bound.
     private func clamped(_ offset: CGSize, zoom: CGFloat, in size: CGSize) -> CGSize {
-        let maxX = max(0, (zoom - 1) * size.width / 2)
-        let maxY = max(0, (zoom - 1) * size.height / 2)
+        var fitted = size
+        if let aspectRatio, aspectRatio > 0 {
+            fitted = CGSize(
+                width: min(size.width, size.height * aspectRatio),
+                height: min(size.height, size.width / aspectRatio)
+            )
+        }
+        let maxX = max(0, (zoom * fitted.width - size.width) / 2)
+        let maxY = max(0, (zoom * fitted.height - size.height) / 2)
         return CGSize(
             width: min(max(offset.width, -maxX), maxX),
             height: min(max(offset.height, -maxY), maxY)
