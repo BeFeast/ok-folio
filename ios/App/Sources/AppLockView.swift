@@ -79,17 +79,37 @@ struct AppLockView: View {
 }
 
 /// Opaque cover shown while the scene is inactive (app switcher, incoming
-/// call) so system snapshots never capture gallery content. No controls:
-/// it disappears on its own when the scene becomes active again.
+/// call) so system snapshots never capture gallery content. Solid background,
+/// not material — material blurs but still reveals recognizable content.
+/// No controls: it disappears on its own when the scene becomes active again.
 struct PrivacyCoverView: View {
     var body: some View {
         ZStack {
-            Rectangle()
-                .fill(.regularMaterial)
+            Color(uiColor: .systemBackground)
                 .ignoresSafeArea()
             Image(systemName: "photo.stack")
                 .font(.system(size: 40))
                 .foregroundStyle(.secondary)
         }
+    }
+}
+
+private struct PrivacyCovered: ViewModifier {
+    @Environment(AppModel.self) private var model
+
+    func body(content: Content) -> some View {
+        content.overlay {
+            if model.isCovered {
+                PrivacyCoverView()
+            }
+        }
+    }
+}
+
+extension View {
+    /// Sheets and full-screen covers render above window-level overlays, so
+    /// every presentation root must apply its own privacy cover.
+    func privacyCovered() -> some View {
+        modifier(PrivacyCovered())
     }
 }

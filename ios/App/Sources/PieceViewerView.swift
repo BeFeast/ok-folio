@@ -29,6 +29,7 @@ struct PieceViewerView: View {
             }
         }
         .statusBarHidden(!chromeVisible)
+        .privacyCovered()
         .sheet(isPresented: $showFolioPicker) {
             if let piece = currentPiece {
                 FolioPickerSheet(photoID: piece.id)

@@ -30,11 +30,7 @@ struct RootView: View {
                     .transition(.opacity)
             } else {
                 content
-                    .overlay {
-                        if model.isCovered {
-                            PrivacyCoverView()
-                        }
-                    }
+                    .privacyCovered()
             }
         }
     }

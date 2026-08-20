@@ -55,6 +55,7 @@ struct SettingsView: View {
                 draftURL = app.serverURLString
             }
         }
+        .privacyCovered()
     }
 
     private var appVersion: String {

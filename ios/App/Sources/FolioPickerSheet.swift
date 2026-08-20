@@ -61,6 +61,7 @@ struct FolioPickerSheet: View {
             }
         }
         .presentationDetents([.medium, .large])
+        .privacyCovered()
     }
 
     private func row(for folio: Folio) -> some View {
