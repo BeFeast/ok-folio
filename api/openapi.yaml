@@ -1,0 +1,1413 @@
+openapi: 3.1.0
+info:
+  title: OK Folio API
+  version: 1.0.0
+  description: |
+    Read/curation surface of the OK Folio Go API (gallery catalog, photo detail,
+    favorites, folios, and the ingestion inbox). This spec intentionally covers
+    only the curation subset of the server; extraction, analytics, admin,
+    settings, and streaming endpoints are out of scope (see the drift test in
+    internal/api/openapi_drift_test.go for the explicit allowlist).
+
+    All endpoints produce JSON (`application/json`) except
+    `GET /api/v1/photos/{id}/thumbnail` and `GET /api/v1/photos/{id}/image`,
+    which return image bytes (thumbnails are always JPEG; full images are served
+    with a content type derived from the file extension, JPEG in practice).
+
+    The current deployment model is an unauthenticated service on a private LAN,
+    so no auth scheme is defined. Errors are returned as a JSON object with a
+    single `error` string field.
+
+    Note on JSON casing: most photo fields are serialized straight from Go
+    structs without json tags, so they keep Go's exported PascalCase names
+    (`ID`, `URL`, `Title`, ...) while explicitly tagged fields are snake_case
+    (`keywords`, `hidden_from_gallery`, ...). The schemas below list the exact
+    wire names.
+servers:
+  - url: /
+    description: Same-origin relative base (the API is served from the server root).
+  - url: https://folio.example.lan
+    description: Example placeholder for a private LAN deployment.
+tags:
+  - name: system
+  - name: search
+  - name: gallery
+  - name: photos
+  - name: favorites
+  - name: inbox
+  - name: folios
+paths:
+  /health:
+    get:
+      tags: [system]
+      operationId: getHealth
+      summary: Service health status
+      responses:
+        '200':
+          description: Health status (status is "healthy" or "degraded").
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+  /api/v1/stats:
+    get:
+      tags: [system]
+      operationId: getStats
+      summary: Download statistics
+      description: Aggregate statistics over downloaded photos. Served from a 5-minute in-process cache.
+      responses:
+        '200':
+          description: Download statistics.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatsResponse'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/search:
+    get:
+      tags: [search]
+      operationId: searchPhotos
+      summary: Search photos
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: Search query. Missing/empty value yields 400.
+          schema:
+            type: string
+        - name: limit
+          in: query
+          description: Page size. Defaults to 50; any positive integer is accepted.
+          schema:
+            type: integer
+            minimum: 1
+            default: 50
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Matching photos.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/gallery/catalog:
+    get:
+      tags: [gallery]
+      operationId: getGalleryCatalog
+      summary: Gallery catalog page with facets
+      description: |
+        Paged catalog of downloaded photos with provider/source/category/artist/
+        favorite facets. Supports ETag conditional requests (may return 304).
+      parameters:
+        - $ref: '#/components/parameters/PageLimit'
+        - $ref: '#/components/parameters/Offset'
+        - name: q
+          in: query
+          description: Free-text query filter.
+          schema:
+            type: string
+        - name: favorite
+          in: query
+          description: Filter by favorite flag. Accepts true/false, 1/0, yes/no; anything else means "not set".
+          schema:
+            type: string
+            enum: ['true', 'false', '1', '0', 'yes', 'no']
+        - name: artist
+          in: query
+          description: Filter by exact artist. An explicitly present but empty value filters for photos with no artist.
+          schema:
+            type: string
+        - name: provider
+          in: query
+          description: Filter by provider id (hostname derived from the source page, e.g. "sight.photo").
+          schema:
+            type: string
+        - name: source
+          in: query
+          description: Filter by full source page URL.
+          schema:
+            type: string
+        - name: category
+          in: query
+          description: Filter by category id.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: One catalog page plus facet counts for the active filter set.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogResponse'
+        '304':
+          description: Not Modified (ETag matched If-None-Match).
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/gallery/{id}/similar:
+    get:
+      tags: [gallery]
+      operationId: getGallerySimilar
+      summary: Visually similar pieces
+      description: |
+        Embedding-based nearest neighbours of a photo. Returns 404 when the
+        similarity feature is disabled, the embedding column is absent, or the
+        anchor photo does not exist.
+      parameters:
+        - $ref: '#/components/parameters/PhotoID'
+        - name: limit
+          in: query
+          description: Maximum number of similar pieces. Defaults to 20, clamped to 50.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+      responses:
+        '200':
+          description: Similar pieces ordered by ascending distance.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SimilarResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/photos/{id}:
+    get:
+      tags: [photos]
+      operationId: getPhotoDetail
+      summary: Photo detail
+      description: |
+        Detailed photo view. Unlike catalog items, this response is a
+        hand-built object with snake_case keys and display-oriented
+        source/provider/category names.
+      parameters:
+        - $ref: '#/components/parameters/PhotoID'
+      responses:
+        '200':
+          description: Photo detail.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PhotoDetail'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [photos]
+      operationId: updatePhotoMetadata
+      summary: Update piece metadata
+      description: |
+        Partial metadata update. Only fields present in the request body are
+        changed; each edited field is also locked against future automatic
+        (ETL) overwrites. `date` accepts RFC 3339, YYYY-MM-DD, YYYY-MM, YYYY,
+        or null to clear.
+      parameters:
+        - $ref: '#/components/parameters/PhotoID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PieceMetadataPatch'
+      responses:
+        '200':
+          description: The updated photo (full catalog serialization).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Photo'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/photos/{id}/thumbnail:
+    get:
+      tags: [photos]
+      operationId: getPhotoThumbnail
+      summary: Photo thumbnail (JPEG)
+      description: |
+        JPEG thumbnail bounded by `w` on the longest side. Sends immutable
+        cache headers and an ETag; supports 304 responses.
+      parameters:
+        - $ref: '#/components/parameters/PhotoID'
+        - name: w
+          in: query
+          description: Requested bounding size in pixels (longest side). Defaults to 400, clamped to [64, 1024].
+          schema:
+            type: integer
+            minimum: 64
+            maximum: 1024
+            default: 400
+      responses:
+        '200':
+          description: Thumbnail bytes.
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+        '304':
+          description: Not Modified (ETag matched If-None-Match).
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/photos/{id}/image:
+    get:
+      tags: [photos]
+      operationId: getPhotoImage
+      summary: Full-size original image
+      description: |
+        Streams the original file with immutable cache headers, an ETag, and an
+        inline Content-Disposition. The content type follows the file extension
+        (image/jpeg in practice; PNG/TIFF/GIF/WebP/HEIC originals keep their own
+        type, unknown extensions fall back to application/octet-stream).
+      parameters:
+        - $ref: '#/components/parameters/PhotoID'
+      responses:
+        '200':
+          description: Original image bytes.
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+        '304':
+          description: Not Modified (ETag matched If-None-Match).
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/photos/{id}/favorite:
+    get:
+      tags: [favorites]
+      operationId: getFavoriteStatus
+      summary: Favorite status of a photo
+      parameters:
+        - $ref: '#/components/parameters/PhotoID'
+      responses:
+        '200':
+          description: Current favorite status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FavoriteStatus'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags: [favorites]
+      operationId: addFavorite
+      summary: Mark a photo as favorite
+      parameters:
+        - $ref: '#/components/parameters/PhotoID'
+      responses:
+        '200':
+          description: New favorite status (favorite=true).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FavoriteStatus'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags: [favorites]
+      operationId: removeFavorite
+      summary: Unmark a photo as favorite
+      parameters:
+        - $ref: '#/components/parameters/PhotoID'
+      responses:
+        '200':
+          description: New favorite status (favorite=false).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FavoriteStatus'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/photos/{id}/folios:
+    get:
+      tags: [folios]
+      operationId: listPhotoFolios
+      summary: Folios containing a photo
+      parameters:
+        - $ref: '#/components/parameters/PhotoID'
+      responses:
+        '200':
+          description: Folios the photo belongs to.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FoliosResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/inbox:
+    get:
+      tags: [inbox]
+      operationId: listInbox
+      summary: List ingestion exceptions
+      parameters:
+        - name: status
+          in: query
+          description: Filter by exception status. Any other value yields 400.
+          schema:
+            type: string
+            enum: [duplicate, ambiguous]
+        - name: limit
+          in: query
+          description: Page size. Defaults to 50, maximum 200 (out-of-range values fall back to the default).
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: One page of inbox items.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InboxListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/inbox/counts:
+    get:
+      tags: [inbox]
+      operationId: getInboxCounts
+      summary: Inbox counts by status
+      responses:
+        '200':
+          description: Per-status counts plus the total.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InboxCountsResponse'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/inbox/{id}:
+    get:
+      tags: [inbox]
+      operationId: getInboxItem
+      summary: Single inbox item
+      parameters:
+        - $ref: '#/components/parameters/InboxItemID'
+      responses:
+        '200':
+          description: The inbox item.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InboxItem'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags: [inbox]
+      operationId: dismissInboxItem
+      summary: Dismiss (delete) an inbox item
+      parameters:
+        - $ref: '#/components/parameters/InboxItemID'
+      responses:
+        '200':
+          description: Item deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [dismissed]
+                properties:
+                  dismissed:
+                    type: boolean
+                    const: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/inbox/{id}/keep:
+    post:
+      tags: [inbox]
+      operationId: keepInboxItem
+      summary: Resolve an inbox item as kept
+      parameters:
+        - $ref: '#/components/parameters/InboxItemID'
+      responses:
+        '200':
+          description: Item resolved as kept.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [kept]
+                properties:
+                  kept:
+                    type: boolean
+                    const: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/inbox/{id}/skip:
+    post:
+      tags: [inbox]
+      operationId: skipInboxItem
+      summary: Resolve an inbox item as skipped
+      parameters:
+        - $ref: '#/components/parameters/InboxItemID'
+      responses:
+        '200':
+          description: Item resolved as skipped.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [skipped]
+                properties:
+                  skipped:
+                    type: boolean
+                    const: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/inbox/{id}/move:
+    post:
+      tags: [inbox]
+      operationId: moveInboxItem
+      summary: Move an inbox item's matched piece into a folio
+      description: |
+        Resolves the inbox item and adds its matched piece to the target folio.
+        `photo_id` is optional; when non-zero it must match the piece resolved
+        from the inbox item, otherwise the request fails with 400. Unknown JSON
+        fields are rejected.
+      parameters:
+        - $ref: '#/components/parameters/InboxItemID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [folio_id]
+              properties:
+                folio_id:
+                  type: integer
+                  format: int64
+                  minimum: 1
+                photo_id:
+                  type: integer
+                  format: int64
+      responses:
+        '200':
+          description: Item moved into the folio.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [moved, folio_id, photo_id]
+                properties:
+                  moved:
+                    type: boolean
+                    const: true
+                  folio_id:
+                    type: integer
+                    format: int64
+                  photo_id:
+                    type: integer
+                    format: int64
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/folios:
+    get:
+      tags: [folios]
+      operationId: listFolios
+      summary: List folios
+      responses:
+        '200':
+          description: All folios.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FoliosResponse'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags: [folios]
+      operationId: createFolio
+      summary: Create a folio
+      description: Unknown JSON fields are rejected. A duplicate name yields 409.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FolioRequest'
+      responses:
+        '201':
+          description: The created folio.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Folio'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          description: Folio name already exists.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/folios/{id}:
+    get:
+      tags: [folios]
+      operationId: getFolio
+      summary: Single folio
+      parameters:
+        - $ref: '#/components/parameters/FolioID'
+      responses:
+        '200':
+          description: The folio.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Folio'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    patch:
+      tags: [folios]
+      operationId: updateFolio
+      summary: Update a folio
+      description: |
+        Partial update: only provided fields change. `cover_photo_id: null`
+        clears the manual cover override (the cover then auto-resolves to the
+        newest member). At least one field must be provided. Unknown JSON
+        fields are rejected.
+      parameters:
+        - $ref: '#/components/parameters/FolioID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FolioRequest'
+      responses:
+        '200':
+          description: The updated folio.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Folio'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Folio name already exists.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags: [folios]
+      operationId: deleteFolio
+      summary: Delete a folio
+      parameters:
+        - $ref: '#/components/parameters/FolioID'
+      responses:
+        '200':
+          description: Folio deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deleted]
+                properties:
+                  deleted:
+                    type: boolean
+                    const: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/folios/{id}/pieces:
+    get:
+      tags: [folios]
+      operationId: listFolioPieces
+      summary: List pieces of a folio
+      parameters:
+        - $ref: '#/components/parameters/FolioID'
+        - name: limit
+          in: query
+          description: Page size. Defaults to 100, maximum 200 (out-of-range values fall back to the default).
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 100
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: One page of the folio's photos.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FolioPiecesResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags: [folios]
+      operationId: addFolioPiece
+      summary: Add a piece to a folio
+      description: |
+        Adds a downloaded photo to the folio. Returns 201 with
+        `{"added": true}` when the piece was added, and 200 with
+        `{"added": false, "duplicate": true}` when it was already a member.
+        Unknown JSON fields are rejected.
+      parameters:
+        - $ref: '#/components/parameters/FolioID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [photo_id]
+              properties:
+                photo_id:
+                  type: integer
+                  format: int64
+                  minimum: 1
+      responses:
+        '200':
+          description: Photo was already in the folio.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [added, duplicate]
+                properties:
+                  added:
+                    type: boolean
+                    const: false
+                  duplicate:
+                    type: boolean
+                    const: true
+        '201':
+          description: Piece added.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [added]
+                properties:
+                  added:
+                    type: boolean
+                    const: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/folios/{id}/pieces/{photoId}:
+    delete:
+      tags: [folios]
+      operationId: removeFolioPiece
+      summary: Remove a piece from a folio
+      parameters:
+        - $ref: '#/components/parameters/FolioID'
+        - name: photoId
+          in: path
+          required: true
+          description: Photo id of the piece to remove.
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      responses:
+        '200':
+          description: Piece removed.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [removed]
+                properties:
+                  removed:
+                    type: boolean
+                    const: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+components:
+  parameters:
+    PhotoID:
+      name: id
+      in: path
+      required: true
+      description: Photo id.
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+    FolioID:
+      name: id
+      in: path
+      required: true
+      description: Folio id.
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+    InboxItemID:
+      name: id
+      in: path
+      required: true
+      description: Inbox item id.
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+    PageLimit:
+      name: limit
+      in: query
+      description: Page size. Defaults to 50, maximum 200 (out-of-range values fall back to the default).
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 50
+    Offset:
+      name: offset
+      in: query
+      description: Zero-based offset into the result set. Defaults to 0.
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+  responses:
+    BadRequest:
+      description: Invalid request (bad id, bad JSON, or bad parameters).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Resource not found.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    InternalError:
+      description: Internal server error.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+    HealthResponse:
+      type: object
+      required: [status, time]
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded]
+        time:
+          type: string
+          format: date-time
+        database:
+          type: string
+          enum: [connected, disconnected]
+    StatsResponse:
+      type: object
+      required: [total_photos, total_size_bytes, unique_artists]
+      properties:
+        total_photos:
+          type: integer
+          format: int64
+        total_size_bytes:
+          type: integer
+          format: int64
+        unique_artists:
+          type: integer
+          format: int64
+        last_download:
+          type: string
+          format: date-time
+          description: Present only when at least one photo has been downloaded.
+    Photo:
+      type: object
+      description: |
+        A downloaded photo as serialized by Go encoding/json from
+        database.DownloadedPhoto. Fields without json tags keep their Go
+        PascalCase names; tagged fields are snake_case. Byte-slice hashes are
+        base64 strings (or null when absent).
+      required:
+        - ID
+        - URL
+        - URLHash
+        - SourcePage
+        - Title
+        - Artist
+        - UploadDate
+        - FilePath
+        - FileName
+        - ImageWidth
+        - ImageHeight
+        - CapturedAt
+        - CameraMake
+        - CameraModel
+        - LensModel
+        - Orientation
+        - GPSLatitude
+        - GPSLongitude
+        - DownloadedAt
+        - FileSize
+        - Notes
+        - keywords
+        - manual_fields
+        - Favorite
+        - hidden_from_gallery
+        - Provider
+        - Category
+        - ContentHash
+        - PerceptualHash
+        - Status
+        - ErrorMessage
+      properties:
+        ID:
+          type: integer
+          format: int64
+        URL:
+          type: string
+        URLHash:
+          type: ['string', 'null']
+          contentEncoding: base64
+          description: sha256 of the canonical URL, raw 32 bytes base64-encoded.
+        SourcePage:
+          type: string
+        Title:
+          type: string
+        Artist:
+          type: string
+        UploadDate:
+          type: ['string', 'null']
+          format: date-time
+        FilePath:
+          type: string
+        FileName:
+          type: string
+        ImageWidth:
+          type: integer
+        ImageHeight:
+          type: integer
+        CapturedAt:
+          type: ['string', 'null']
+          format: date-time
+        CameraMake:
+          type: string
+        CameraModel:
+          type: string
+        LensModel:
+          type: string
+        Orientation:
+          type: string
+        GPSLatitude:
+          type: ['number', 'null']
+        GPSLongitude:
+          type: ['number', 'null']
+        DownloadedAt:
+          type: ['string', 'null']
+          format: date-time
+        FileSize:
+          type: integer
+          format: int64
+        Notes:
+          type: string
+        keywords:
+          type: array
+          items:
+            type: string
+          description: Always an array (never null).
+        manual_fields:
+          type: ['array', 'null']
+          items:
+            type: string
+          description: Names of manually locked metadata fields; null when none.
+        Favorite:
+          type: boolean
+        hidden_from_gallery:
+          type: boolean
+        Provider:
+          type: string
+        connector_source_id:
+          type: integer
+          format: int64
+          description: Omitted when the photo did not come from a managed connector source.
+        Category:
+          type: string
+        ContentHash:
+          type: ['string', 'null']
+          contentEncoding: base64
+          description: Raw 32-byte content hash, base64-encoded; null for legacy rows.
+        PerceptualHash:
+          type: integer
+          format: int64
+        Status:
+          type: string
+          enum: [downloaded, failed, deleted, pending]
+        ErrorMessage:
+          type: string
+    SimilarPhoto:
+      allOf:
+        - $ref: '#/components/schemas/Photo'
+        - type: object
+          required: [distance]
+          properties:
+            distance:
+              type: number
+              description: Embedding distance to the anchor photo (lower is more similar).
+    SimilarResponse:
+      type: object
+      required: [pieces]
+      properties:
+        pieces:
+          type: array
+          items:
+            $ref: '#/components/schemas/SimilarPhoto'
+    PhotoDetail:
+      type: object
+      description: Hand-built detail view of a photo (snake_case keys, display names resolved server-side).
+      required:
+        - id
+        - url
+        - source_page
+        - source
+        - provider
+        - category
+        - title
+        - artist
+        - keywords
+        - upload_date
+        - file_path
+        - file_name
+        - downloaded_at
+        - file_size
+        - favorite
+        - status
+        - file_mod_time
+      properties:
+        id:
+          type: integer
+          format: int64
+        url:
+          type: string
+        source_page:
+          type: string
+        source:
+          type: string
+          description: Human-readable source name derived from the source page URL.
+        provider:
+          type: string
+          description: Human-readable provider name.
+        category:
+          type: string
+          description: Human-readable category name.
+        title:
+          type: string
+        artist:
+          type: string
+        keywords:
+          type: array
+          items:
+            type: string
+        upload_date:
+          type: ['string', 'null']
+          format: date-time
+        file_path:
+          type: string
+        file_name:
+          type: string
+        downloaded_at:
+          type: ['string', 'null']
+          format: date-time
+        file_size:
+          type: integer
+          format: int64
+        favorite:
+          type: boolean
+        status:
+          type: string
+          enum: [downloaded, failed, deleted, pending]
+        file_mod_time:
+          type: string
+          format: date-time
+          description: Filesystem mtime of the original; the zero time ("0001-01-01T00:00:00Z") when the file is unreadable.
+    PieceMetadataPatch:
+      type: object
+      description: All fields optional; only present fields are applied (and locked against ETL overwrites).
+      properties:
+        title:
+          type: string
+        artist:
+          type: string
+        date:
+          type: ['string', 'null']
+          description: 'RFC 3339, "YYYY-MM-DD", "YYYY-MM", or "YYYY"; null or empty clears the date.'
+        keywords:
+          type: array
+          items:
+            type: string
+        note:
+          type: string
+    FavoriteStatus:
+      type: object
+      required: [id, favorite, available]
+      properties:
+        id:
+          type: integer
+          format: int64
+        favorite:
+          type: boolean
+        available:
+          type: boolean
+          const: true
+    SearchResponse:
+      type: object
+      required: [photos, total, limit, offset, query]
+      properties:
+        photos:
+          type: array
+          items:
+            $ref: '#/components/schemas/Photo'
+        total:
+          type: integer
+          format: int64
+        limit:
+          type: integer
+        offset:
+          type: integer
+        query:
+          type: string
+    SourceFacet:
+      type: object
+      required: [id, display_name, count]
+      properties:
+        id:
+          type: string
+          description: Full source page URL.
+        display_name:
+          type: string
+        count:
+          type: integer
+          format: int64
+    ProviderFacet:
+      type: object
+      required: [id, display_name, count, sources]
+      properties:
+        id:
+          type: string
+          description: Provider id (hostname without "www.", or "unknown").
+        display_name:
+          type: string
+        count:
+          type: integer
+          format: int64
+        sources:
+          type: array
+          items:
+            $ref: '#/components/schemas/SourceFacet'
+    Facet:
+      type: object
+      required: [id, display_name, count]
+      properties:
+        id:
+          type: string
+        display_name:
+          type: string
+        count:
+          type: integer
+          format: int64
+    FavoriteFacet:
+      type: object
+      required: [id, display_name, favorite, count]
+      properties:
+        id:
+          type: string
+          enum: ['true', 'false']
+        display_name:
+          type: string
+        favorite:
+          type: boolean
+        count:
+          type: integer
+          format: int64
+    CatalogFacets:
+      type: object
+      required: [sources, categories, artists, favorites]
+      properties:
+        sources:
+          type: array
+          items:
+            $ref: '#/components/schemas/SourceFacet'
+        categories:
+          type: array
+          items:
+            $ref: '#/components/schemas/Facet'
+        artists:
+          type: array
+          items:
+            $ref: '#/components/schemas/Facet'
+        favorites:
+          type: array
+          items:
+            $ref: '#/components/schemas/FavoriteFacet'
+    CatalogResponse:
+      type: object
+      required:
+        - photos
+        - total
+        - limit
+        - offset
+        - provider
+        - source
+        - category
+        - artist
+        - favorite
+        - query
+        - providers
+        - facets
+      properties:
+        photos:
+          type: array
+          items:
+            $ref: '#/components/schemas/Photo'
+        total:
+          type: integer
+          format: int64
+        limit:
+          type: integer
+        offset:
+          type: integer
+        provider:
+          type: string
+          description: Echo of the provider filter ("" when unset).
+        source:
+          type: string
+          description: Echo of the source filter ("" when unset).
+        category:
+          type: string
+          description: Echo of the category filter ("" when unset).
+        artist:
+          type: string
+          description: Echo of the artist filter ("" when unset).
+        favorite:
+          type: ['boolean', 'null']
+          description: Echo of the favorite filter (null when unset).
+        query:
+          type: string
+          description: Echo of the q filter ("" when unset).
+        providers:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProviderFacet'
+        facets:
+          $ref: '#/components/schemas/CatalogFacets'
+    InboxItem:
+      type: object
+      required:
+        - id
+        - provider_id
+        - dedupe_key
+        - source_id
+        - media_id
+        - source_url
+        - title
+        - artist
+        - status
+        - reason
+        - cover_photo_id
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: integer
+          format: int64
+        provider_id:
+          type: string
+        dedupe_key:
+          type: string
+        source_id:
+          type: string
+        media_id:
+          type: string
+        source_url:
+          type: string
+        title:
+          type: string
+        artist:
+          type: string
+        status:
+          type: string
+          enum: [duplicate, ambiguous]
+        reason:
+          type: string
+        content_hash:
+          type: string
+          contentEncoding: base64
+          description: Raw content hash base64-encoded; omitted when absent.
+        cover_photo_id:
+          type: ['integer', 'null']
+          format: int64
+          description: Id of the already-downloaded photo matching a duplicate item; null when unresolved.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    InboxListResponse:
+      type: object
+      required: [items, total, limit, offset]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/InboxItem'
+        total:
+          type: integer
+          format: int64
+        limit:
+          type: integer
+        offset:
+          type: integer
+    InboxCountsResponse:
+      type: object
+      required: [counts, total]
+      properties:
+        counts:
+          type: object
+          additionalProperties:
+            type: integer
+            format: int64
+          description: Map of status ("duplicate", "ambiguous") to count.
+        total:
+          type: integer
+          format: int64
+    Folio:
+      type: object
+      required: [id, name, piece_count, cover_photo_id, created_at, updated_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        piece_count:
+          type: integer
+        cover_photo_id:
+          type: ['integer', 'null']
+          format: int64
+          description: Cover photo id; resolved to the newest member when no manual override is set, null for an empty folio.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    FolioRequest:
+      type: object
+      description: Create/patch body. On PATCH, only provided fields change and at least one must be present.
+      properties:
+        name:
+          type: string
+        cover_photo_id:
+          type: ['integer', 'null']
+          format: int64
+          minimum: 1
+    FoliosResponse:
+      type: object
+      required: [folios]
+      properties:
+        folios:
+          type: array
+          items:
+            $ref: '#/components/schemas/Folio'
+    FolioPiecesResponse:
+      type: object
+      required: [photos, total, limit, offset]
+      properties:
+        photos:
+          type: array
+          items:
+            $ref: '#/components/schemas/Photo'
+        total:
+          type: integer
+          format: int64
+        limit:
+          type: integer
+        offset:
+          type: integer
