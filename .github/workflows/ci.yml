@@ -55,6 +55,15 @@ jobs:
       - name: Embedder image build
         run: docker build -f sidecar/embedder/Dockerfile -t ok-folio-embedder:ci .
 
+  foliokit:
+    runs-on: ubuntu-latest
+    container: swift:5.9
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: FolioKit tests
+        run: swift test --package-path ios/Core
+
   integration:
     runs-on: ubuntu-latest
     services:
