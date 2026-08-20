@@ -1,4 +1,5 @@
 import Foundation
+import ImageIO
 import Observation
 import SwiftUI
 import UIKit
@@ -85,7 +86,7 @@ final class ShareUploadModel {
             items[index].state = .uploading
             do {
                 let data = try await Self.loadData(from: items[index].provider)
-                let prepared = try Self.prepareUpload(
+                let prepared = try await Self.prepareUpload(
                     data: data,
                     suggestedName: items[index].provider.suggestedName,
                     index: index
@@ -135,15 +136,33 @@ final class ShareUploadModel {
 
     enum ShareUploadError: LocalizedError {
         case unsupportedFormat
+        case animatedGIFUnsupported
 
-        var errorDescription: String? { "Unsupported image format" }
+        var errorDescription: String? {
+            switch self {
+            case .unsupportedFormat:
+                return "Unsupported image format"
+            case .animatedGIFUnsupported:
+                return "Animated GIFs are not supported"
+            }
+        }
     }
 
     /// The pieces endpoint accepts JPEG, PNG, TIFF, and WebP only. Formats it
-    /// rejects — HEIC (the iPhone camera default) and GIF — are re-encoded to
-    /// JPEG on-device; everything else is sent as the original bytes with a
-    /// filename extension matching the sniffed format.
-    static func prepareUpload(data: Data, suggestedName: String?, index: Int) throws -> PreparedUpload {
+    /// rejects — HEIC (the iPhone camera default) and single-frame GIF — are
+    /// re-encoded to JPEG; animated GIFs fail visibly rather than silently
+    /// losing their animation. Everything accepted is sent as the original
+    /// bytes with a filename extension matching the sniffed format.
+    ///
+    /// `nonisolated` + async: runs off the main actor, and the re-encode goes
+    /// through ImageIO's thumbnail API with a bounded max pixel size — a full
+    /// `UIImage(data:)` decode of a 48 MP camera photo would exceed the share
+    /// extension's memory limit and get it jetsammed.
+    nonisolated static func prepareUpload(
+        data: Data,
+        suggestedName: String?,
+        index: Int
+    ) async throws -> PreparedUpload {
         let format = SniffedImageFormat.sniff(data)
         let fallbackBase = "piece-\(index + 1)"
         if format.serverAccepted {
@@ -156,16 +175,43 @@ final class ShareUploadModel {
                 )
             )
         }
-        guard let image = UIImage(data: data),
-              let jpeg = image.jpegData(compressionQuality: 0.9)
-        else {
+        if format == .gif, frameCount(of: data) > 1 {
+            throw ShareUploadError.animatedGIFUnsupported
+        }
+        guard let jpeg = transcodedJPEG(from: data) else {
             throw ShareUploadError.unsupportedFormat
         }
         let base = baseName(from: suggestedName) ?? fallbackBase
         return PreparedUpload(data: jpeg, filename: base + ".jpg")
     }
 
-    private static func normalizedFilename(suggestedName: String?, fallbackBase: String, ext: String) -> String {
+    /// Memory-bounded re-encode: decodes at most `maxPixelSize` on the long
+    /// edge and bakes the EXIF orientation into the pixels.
+    private nonisolated static func transcodedJPEG(from data: Data) -> Data? {
+        let sourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary
+        guard let source = CGImageSourceCreateWithData(data as CFData, sourceOptions) else {
+            return nil
+        }
+        let thumbnailOptions = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: 4096,
+        ] as CFDictionary
+        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbnailOptions) else {
+            return nil
+        }
+        return UIImage(cgImage: cgImage).jpegData(compressionQuality: 0.9)
+    }
+
+    private nonisolated static func frameCount(of data: Data) -> Int {
+        let sourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary
+        guard let source = CGImageSourceCreateWithData(data as CFData, sourceOptions) else {
+            return 0
+        }
+        return CGImageSourceGetCount(source)
+    }
+
+    private nonisolated static func normalizedFilename(suggestedName: String?, fallbackBase: String, ext: String) -> String {
         guard let suggestedName, !suggestedName.isEmpty else {
             return fallbackBase + "." + ext
         }
@@ -176,7 +222,7 @@ final class ShareUploadModel {
             : suggestedName
     }
 
-    private static func baseName(from suggestedName: String?) -> String? {
+    private nonisolated static func baseName(from suggestedName: String?) -> String? {
         guard let suggestedName, !suggestedName.isEmpty else { return nil }
         let base = (suggestedName as NSString).deletingPathExtension
         return base.isEmpty ? nil : base
