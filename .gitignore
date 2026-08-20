@@ -80,3 +80,10 @@ Thumbs.db
 *.tmp
 *.swp
 *~
+
+# iOS build artifacts (generated on the operator Mac by xcodegen/xcodebuild)
+ios/OKFolio.xcodeproj/
+ios/.tools/
+ios/.build-xcode/
+ios/App/OKFolio.entitlements
+ios/Share/OKFolioShare.entitlements

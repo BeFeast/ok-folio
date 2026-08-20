@@ -15,8 +15,12 @@ Layout:
   `api/openapi.yaml` for the contract).
 - `App/Sources/` — SwiftUI app target `OKFolio`
   (bundle id `com.befeast.okfolio`, iOS 17.0+).
+- `Share/Sources/` + `Share/Info.plist` — share-extension target
+  `OKFolioShare` (bundle id `com.befeast.okfolio.share`), embedded into the
+  app automatically by XcodeGen.
 - `project.yml` — XcodeGen spec; `OKFolio.xcodeproj` is generated, never
-  committed.
+  committed. The `.entitlements` files for both targets are also written by
+  `xcodegen generate` — do not create or edit them by hand.
 - `scripts/m4-build-install.sh` — the operator build/install script.
 
 ## Prerequisites
@@ -56,6 +60,23 @@ portal (`-allowProvisioningDeviceRegistration`); no manual portal work.
 The server base URL is entered in the app's Settings screen (e.g. the LAN
 address of your OK Folio instance). Nothing is hardcoded in the repo. An
 optional Face ID lock can be enabled in the same screen.
+
+## Share extension
+
+`OKFolioShare` adds OK Folio to the system share sheet: share one or more
+images (up to 20) from Photos, Safari, etc. and they upload straight to the
+server, with per-image progress and duplicate detection ("Already in Folio").
+
+- The extension reads the server URL from the App Group
+  `group.com.befeast.okfolio`, shared with the main app. Open the app and set
+  the server address in Settings once before first use; until then the
+  extension shows "Set the server address in OK Folio first".
+- Automatic signing provisions the app group on first build — the extension
+  bundle id (`com.befeast.okfolio.share`) and the group are derived from the
+  app's, so no manual developer-portal work is expected.
+- After install, the extension appears in the share sheet under **OK Folio**.
+  If it is not visible, scroll the share sheet's app row to the end, tap
+  **More**, and enable it once.
 
 ## Troubleshooting
 

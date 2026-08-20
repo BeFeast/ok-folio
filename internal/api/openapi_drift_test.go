@@ -36,7 +36,6 @@ var undocumentedRoutePrefixes = []string{
 	"/api/v1/photos/today",      // legacy dashboard widgets
 	"/api/v1/photos/week",       // legacy dashboard widgets
 	"/api/v1/artists",           // legacy artist browsing endpoints
-	"/api/v1/pieces",            // manual piece upload (dashboard-only)
 	"/api/v1/catalog/bulk-edit", // bulk metadata edit (dashboard-only)
 	"/api/v1/gallery/decision",  // gallery architecture prototype metadata
 	"/api/v1/streams/",          // connector status (streams surface)

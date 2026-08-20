@@ -12,9 +12,14 @@ final class AppModel {
         static let faceIDLock = "faceIDLockEnabled"
     }
 
+    /// App Group store so the share extension sees the same server URL.
+    /// Falls back to standard defaults if the group container is unavailable
+    /// (e.g. entitlement missing in a dev build).
+    private let sharedDefaults: UserDefaults
+
     var serverURLString: String {
         didSet {
-            UserDefaults.standard.set(serverURLString, forKey: Keys.serverURL)
+            sharedDefaults.set(serverURLString, forKey: Keys.serverURL)
             client = Self.makeClient(from: serverURLString)
         }
     }
@@ -40,9 +45,20 @@ final class AppModel {
     let imageSession: URLSession
 
     init() {
-        let defaults = UserDefaults.standard
+        let defaults = UserDefaults(suiteName: AppGroup.identifier) ?? .standard
+        sharedDefaults = defaults
+
+        // One-time migration: builds before the share extension kept the
+        // server URL in standard defaults. Copy it into the group store the
+        // first time the group store is empty.
+        if defaults.string(forKey: Keys.serverURL) == nil,
+           let legacy = UserDefaults.standard.string(forKey: Keys.serverURL) {
+            defaults.set(legacy, forKey: Keys.serverURL)
+        }
+
         let storedURL = defaults.string(forKey: Keys.serverURL) ?? ""
-        let lockEnabled = defaults.bool(forKey: Keys.faceIDLock)
+        // Face ID lock stays app-private; the extension has no use for it.
+        let lockEnabled = UserDefaults.standard.bool(forKey: Keys.faceIDLock)
         serverURLString = storedURL
         faceIDLockEnabled = lockEnabled
         isLocked = lockEnabled
