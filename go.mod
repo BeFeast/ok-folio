@@ -1,10 +1,10 @@
 module ok-folio
 
-go 1.25.0
+go 1.26.0
 
 require (
 	github.com/PuerkitoBio/goquery v1.13.0
-	github.com/alicebob/miniredis/v2 v2.38.0
+	github.com/alicebob/miniredis/v2 v2.39.0
 	github.com/disintegration/imaging v1.6.2
 	github.com/go-chi/chi/v5 v5.3.2
 	github.com/jackc/pgx/v5 v5.10.0
@@ -14,7 +14,7 @@ require (
 	github.com/rs/zerolog v1.35.1
 	github.com/rwcarlsen/goexif v0.0.0-20190401172101-9e8deecbddbd
 	golang.org/x/image v0.45.0
-	golang.org/x/time v0.15.0
+	golang.org/x/time v0.16.0
 	gopkg.in/yaml.v3 v3.0.1
 	gorm.io/driver/postgres v1.6.2
 	gorm.io/driver/sqlite v1.6.0
