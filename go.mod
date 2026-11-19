@@ -3,7 +3,7 @@ module ok-folio
 go 1.26.0
 
 require (
-	github.com/PuerkitoBio/goquery v1.13.0
+	github.com/PuerkitoBio/goquery v1.14.0
 	github.com/alicebob/miniredis/v2 v2.40.0
 	github.com/disintegration/imaging v1.6.2
 	github.com/go-chi/chi/v5 v5.5.0
@@ -22,7 +22,7 @@ require (
 )
 
 require (
-	github.com/andybalholm/cascadia v1.3.4 // indirect
+	github.com/andybalholm/cascadia v1.3.5 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
@@ -36,7 +36,7 @@ require (
 	github.com/rogpeppe/go-internal v1.15.0 // indirect
 	github.com/yuin/gopher-lua v1.1.1 // indirect
 	go.uber.org/atomic v1.12.0 // indirect
-	golang.org/x/net v0.58.0 // indirect
+	golang.org/x/net v0.62.0 // indirect
 	golang.org/x/sync v0.25.0 // indirect
 	golang.org/x/sys v0.50.0 // indirect
 	golang.org/x/text v0.44.0 // indirect
