@@ -1,0 +1,34 @@
+# Optional legacy PhotoPrism storage fallback — NOT part of the normal OK Folio
+# runtime.
+#
+# The normal stack (compose.yaml) boots and serves thumbnails without the legacy
+# PhotoPrism storage mount: OK Folio generates thumbnails from its own originals
+# and derivative cache. This override adds the legacy PhotoPrism storage tree as
+# a kernel-enforced read-only mount and points OK Folio at it, so a piece whose
+# original has not been migrated yet can still serve a pre-rendered legacy
+# thumbnail instead of a 404.
+#
+# Apply it only during the legacy-retirement measurement window, alongside the
+# base compose:
+#
+#   docker compose -f compose.yaml -f compose.legacy-storage.yaml up -d
+#
+# Measure the `legacy_storage` tier on GET /api/v1/stats/thumbnail-tiers. Once it
+# holds at zero across a full reconcile window, drop this override (and the
+# PHOTOPRISM_STORAGE_HOST_PATH secret) to retire the mount. The mount must always
+# stay read-only; the stack-template check and the rendered-mount assertion both
+# reject a writable legacy storage mount.
+#
+# This override only adds a read-only volume and one environment variable, so it
+# does not touch the base network membership. Do not commit rendered values for
+# PHOTOPRISM_STORAGE_HOST_PATH.
+name: ok-folio
+
+services:
+  app:
+    environment:
+      # Point OK Folio at the in-container legacy storage mount so the optional
+      # read-only thumbnail fallback is active only while this override is applied.
+      OK_FOLIO_LEGACY_THUMB_DIR: /photoprism/storage
+    volumes:
+      - ${PHOTOPRISM_STORAGE_HOST_PATH:?PHOTOPRISM_STORAGE_HOST_PATH is required for the legacy storage override}:/photoprism/storage:ro

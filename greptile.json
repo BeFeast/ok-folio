@@ -1,0 +1,7 @@
+{
+  "strictness": 2,
+  "commentTypes": ["logic", "syntax", "style"],
+  "triggerOnUpdates": true,
+  "triggerOnDrafts": false,
+  "instructions": "Review OK Folio pull requests as a merge gate. Prioritize correctness regressions, secret exposure, unsafe runtime/deploy changes, skipped verification, CI/product-verifier failures, and scope creep outside the assigned issue. Treat committed secrets, .env data, provider cookies, database dumps, downloaded media, thumbnails, logs, build artifacts, node_modules, generated bundles, Immich changes, or direct deployment changes as blocking findings."
+}

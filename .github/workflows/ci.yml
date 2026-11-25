@@ -1,0 +1,103 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+
+      - name: Dashboard build
+        working-directory: dashboard
+        run: |
+          npm ci
+          npm run build
+
+      - name: Stage dashboard embed assets
+        run: |
+          rm -rf internal/dashboard/dist
+          cp -R dashboard/dist internal/dashboard/dist
+
+      - name: Stack and release contract checks
+        run: ./scripts/check-ok-folio-stack-template.sh
+
+      - name: Lint - no legacy MySQL driver/DSN in production code
+        run: |
+          # The legacy MariaDB is only ever read via mariadb-dump; no live GORM
+          # MySQL connection exists. Production code must not import the mysql
+          # driver or call mysql.Open, so a legacy DSN can never reach gorm.Open.
+          # (The runtime testguard.AssertNonLegacyDSN also rejects @tcp(...) DSNs
+          # before every gorm.Open.) Test files may reference these markers to
+          # exercise the boot guard.
+          if grep -rEn "gorm\.io/driver/mysql|mysql\.Open\(" --include='*.go' . | grep -v '_test\.go'; then
+            echo "::error::Found a legacy MySQL driver reference in production code; OK Folio only opens its own Postgres."
+            exit 1
+          fi
+
+      - name: Go tests
+        run: go test ./...
+
+      - name: Embedder image build
+        run: docker build -f sidecar/embedder/Dockerfile -t ok-folio-embedder:ci .
+
+  foliokit:
+    runs-on: ubuntu-latest
+    container: swift:5.9
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: FolioKit tests
+        run: swift test --package-path ios/Core
+
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        # VectorChord/pgvector image so the vector extension exists for the
+        # post-migrate embedding column. The app never runs CREATE EXTENSION.
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: ok_folio
+          POSTGRES_PASSWORD: ci-testpass
+          POSTGRES_DB: ok_folio_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ok_folio"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Pre-create the vector extension (stack initdb owns this in prod)
+        run: |
+          PGPASSWORD=ci-testpass psql -h localhost -U ok_folio -d ok_folio_test \
+            -c "CREATE EXTENSION IF NOT EXISTS vector"
+
+      - name: Postgres-backed integration test
+        env:
+          OKFOLIO_TEST_POSTGRES_DSN: "host=localhost port=5432 user=ok_folio password=ci-testpass dbname=ok_folio_test sslmode=disable TimeZone=UTC"
+        # -p 1: both packages drop and recreate the same tables in the shared
+        # CI database, so they must not run concurrently.
+        run: go test -p 1 ./internal/database/ ./internal/similarity/ -run TestPostgres -v

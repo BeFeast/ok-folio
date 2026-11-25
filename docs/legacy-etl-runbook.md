@@ -1,0 +1,243 @@
+# Legacy ETL Backfill And Incremental Sync
+
+OK Folio imports only the two owned legacy tables, `downloaded_photos` and
+`extraction_runs`. The legacy database is read-only to ETL and is never opened
+through GORM or a live MySQL client in the app. Extraction is an operator-run
+`mariadb-dump` stream; loading connects only to OK Folio Postgres and consumes
+SQL from stdin.
+
+## CLI Split: Legacy ETL vs Ongoing Maintenance
+
+Two CLIs are shipped in the release image:
+
+- `ok-folio-etl` hosts only the legacy migration commands, `load-dump` and
+  `print-legacy-checks`. This binary retires with the Wave 6 legacy cutover.
+- `ok-folio-admin` hosts the ongoing OK Folio catalog maintenance commands that
+  outlive the legacy cutover: `hash-content`, `warm-thumbnails`,
+  `audit-originals`, and `smoke-read-paths`.
+
+From a source checkout, `go run ./cmd/ok-folio-etl <command>` and
+`go run ./cmd/ok-folio-admin <command>` run the same commands the image ships as
+`/app/ok-folio-etl` and `/app/ok-folio-admin`.
+
+## Preconditions
+
+Run these checks through the host's container-exec path because the legacy DB
+port is not published.
+
+```sql
+SHOW TABLE STATUS FROM `<legacy_database>` WHERE Name IN ('downloaded_photos','extraction_runs');
+SHOW GRANTS FOR CURRENT_USER();
+```
+
+Both tables must report `ENGINE=InnoDB`. The ETL user must be
+operator-provisioned out of band with table-level `SELECT` on exactly
+`downloaded_photos` and `extraction_runs`, plus only normal `USAGE`. It must not
+have global grants, database-wide grants, `GRANT OPTION`, root credentials, or
+access to PhotoPrism tables. The password comes from the OK Folio Infisical path
+and is passed through an environment variable or MariaDB defaults file, never as
+a CLI argument.
+
+The legacy source timezone is a human decision before loading. Pass the verified
+IANA zone to `--legacy-timezone`; the loader sets the Postgres transaction time
+zone so legacy `datetime(3)` values are interpreted as the correct instant.
+
+## Backfill
+
+The dump command must include:
+
+```text
+--single-transaction --skip-lock-tables --no-create-info --no-tablespaces --compact
+```
+
+It must not include `--master-data`, `--source-data`, or `--lock-all-tables`
+because those can trigger `FLUSH TABLES WITH READ LOCK` and stall PhotoPrism.
+Binlog coordinates are not used; watermarks live in OK Folio Postgres.
+
+Use the release image's `/app/ok-folio-etl` binary to run ETL in-container. From
+a source checkout, `go run ./cmd/ok-folio-etl` runs the same command. This is an
+ETL/admin path, not part of normal app boot: the normal runtime does not join the
+legacy network. When an in-container dump must reach a live legacy host, apply the
+opt-in override `deploy/dockhand/ok-folio/compose.legacy.yaml`, which re-attaches
+the app to the external legacy network and injects the read-only legacy DB
+credentials (see the dedicated stack runbook). Print the exact checks and safe
+dump arguments before dumping:
+
+```bash
+go run ./cmd/ok-folio-etl print-legacy-checks --legacy-database "$LEGACY_DB_NAME"
+```
+
+Pipe the safe dump into the loader:
+
+```bash
+mariadb-dump --single-transaction --skip-lock-tables --no-create-info --no-tablespaces --compact \
+  "$LEGACY_DB_NAME" downloaded_photos extraction_runs \
+| go run ./cmd/ok-folio-etl load-dump --config /config/config.yaml --legacy-timezone "$LEGACY_SOURCE_TZ" --setval
+```
+
+The loader inserts real legacy IDs verbatim, stamps `provider='sight.photo'` on
+new `downloaded_photos` rows, sets `url_hash` explicitly, preserves absolute
+`file_path` and `artist`, and restarts both Postgres identity columns to
+`MAX(id)+1` when `--setval` is provided. The flag name is kept for operator
+compatibility, but the implementation uses `ALTER TABLE ... ALTER COLUMN id
+RESTART WITH` against the active identity column instead of guessing a sequence
+name with `pg_get_serial_sequence()`.
+
+## Upsert Contracts
+
+`downloaded_photos` conflicts on `url_hash`. On conflict, ETL updates only
+legacy-sourced mutable fields:
+
+```text
+source_page, title, artist, file_name, upload_date, file_path, file_size,
+status, error_message, downloaded_at
+```
+
+It never updates OK Folio-owned or insert-derived fields in the conflict SET
+list:
+
+```text
+favorite, content_hash, perceptual_hash, embedding, provider, category
+```
+
+`extraction_runs` conflicts on `id` and updates only:
+
+```text
+end_time, status, pages_processed, photos_found, photos_downloaded,
+photos_skipped, photos_failed, error_message
+```
+
+Re-running an overlapping dump is expected to be idempotent.
+
+## Incremental Sync
+
+Incremental extracts should overlap with the previous watermark:
+
+```sql
+WHERE id >= :last_id
+```
+
+For `extraction_runs`, include the start-time guard:
+
+```sql
+WHERE id >= :last_run_id OR start_time > :last
+```
+
+Because `mariadb-dump --where` applies one predicate to every table named in
+the command, run incremental extracts as table-specific dumps and pipe both into
+the loader. The helper can print each safe command shape:
+
+```bash
+go run ./cmd/ok-folio-etl print-legacy-checks \
+  --legacy-database "$LEGACY_DB_NAME" \
+  --tables downloaded_photos \
+  --where "id >= $LAST_PHOTO_ID"
+
+go run ./cmd/ok-folio-etl print-legacy-checks \
+  --legacy-database "$LEGACY_DB_NAME" \
+  --tables extraction_runs \
+  --where "id >= $LAST_RUN_ID OR start_time > '$LAST_RUN_START'"
+```
+
+The loader derives new watermarks from the rows actually loaded in the Postgres
+transaction and advances `etl_watermark` only after commit. It never queries the
+legacy source for a live `MAX(id)`.
+
+Run the incremental job about every six hours until cutover. The recurring
+runner location remains a human/deployment choice: host cron or a Dockhand
+one-off are both acceptable as long as the command path and secret injection keep
+the same constraints.
+
+## Reconcile And Cutover Gate
+
+Run a full reconcile at least daily during the migration window. Reconcile uses
+the same full two-table dump and upsert contracts so drifted mutable fields that
+do not bump a watermark, including `status` (`pending` included),
+`error_message`, and `file_size`, converge again.
+
+A final full reconcile immediately before cutover is a hard gate. The cutover
+checklist must also record row counts for both owned tables at snapshot time,
+the known-row `downloaded_at` before/after comparison to the second, and an app
+smoke test that the gallery reads the catalog and resolves `file_path` against
+the mounted originals.
+
+Before retiring the remaining legacy services, run the read-only
+legacy-retirement preflight (`make retirement-preflight`, or
+`go run ./cmd/ok-folio-preflight`) to gather the app-decoupling,
+indexing-gating, maintenance-CLI, connector-freshness, and retirement-doc
+evidence in one PASS/WARN/FAIL/PENDING report. It mutates nothing; see
+`docs/legacy-retirement-preflight.md`.
+
+Retiring the legacy PhotoPrism storage/thumb mount is a separate, later step
+gated on the `legacy_storage` thumbnail tier holding at zero across a reconcile
+window. See "Legacy Storage Fallback And Thumbnail Tier Measurement" in the
+dedicated Dockhand stack runbook for the measurement command
+(`GET /api/v1/stats/thumbnail-tiers`) and the evidence required before dropping
+the mount.
+
+## Content Hash Pass
+
+Content hashing is ongoing OK Folio catalog maintenance, decoupled from legacy
+DB extraction, and runs from the non-legacy maintenance CLI:
+
+```bash
+go run ./cmd/ok-folio-admin hash-content --config /config/config.yaml --originals-root /originals-ro --limit 500
+```
+
+The pass reads file bytes from the read-only originals mount for rows where
+`content_hash IS NULL` and writes the raw 32-byte sha256 to OK Folio Postgres.
+It performs no legacy database or file writes and can be re-run safely.
+
+## Thumbnail Warming And Originals Audit
+
+Thumbnail warming and the originals audit are also ongoing catalog maintenance
+and run from the same non-legacy maintenance CLI:
+
+```bash
+go run ./cmd/ok-folio-admin warm-thumbnails --config /config/config.yaml --widths 400,700
+go run ./cmd/ok-folio-admin audit-originals --config /config/config.yaml
+```
+
+`warm-thumbnails` pre-generates the gallery derivative widths and exits non-zero
+if any generation failed. `audit-originals` sniffs stored originals for
+undecodable files; add `--exclude` to mark undecodable rows so gallery, warm,
+and backfill sweeps skip them. Both flag sets and output lines are unchanged
+from the previous `ok-folio-etl` commands.
+
+## Wave-1 Read-Path Smoke/Perf Gate
+
+After the full legacy backfill has loaded the real catalog, run the read-path
+smoke before opening connector or cache-depth work. This is ongoing maintenance,
+so it runs from the non-legacy maintenance CLI:
+
+```bash
+go run ./cmd/ok-folio-admin smoke-read-paths \
+  --config /config/config.yaml \
+  --expected-rows 50338 \
+  --expected-artists 1953 \
+  --search-query jpg
+```
+
+The command fails if the downloaded catalog row count is not `50,338` or if the
+artist facet does not return `1,953` grouped artist rows. It records one catalog
+page, the source/category/artist/favorites facets, and the gallery catalog `q`
+search path. The category facet is explicitly measured as a SQL `GROUP BY` over
+the stored `category` column; it must not load all source URLs into Go to derive
+categories.
+
+Paste the command output here when the post-backfill smoke is run against the
+LAN runtime:
+
+| Path | Result rows | Total/count | Latency ms | Notes |
+| --- | ---: | ---: | ---: | --- |
+| catalog_page | _record from smoke output_ | 50338 | _record from smoke output_ | limit=50 offset=0 |
+| facet_source | _record from smoke output_ | 50338 | _record from smoke output_ | SQL GROUP BY source_page |
+| facet_category | _record from smoke output_ | 50338 | _record from smoke output_ | SQL GROUP BY category column |
+| facet_artist | 1953 | 50338 | _record from smoke output_ | SQL GROUP BY artist |
+| facet_favorite | 2 | 50338 | _record from smoke output_ | SQL count on favorite |
+| search | _record from smoke output_ | _record from smoke output_ | _record from smoke output_ | gallery catalog q over title/artist/file_name only |
+
+Flag any `url LIKE`, `url ILIKE`, `source_page LIKE`, or `source_page ILIKE`
+predicate found in the catalog or search read paths. The wave-1 gate permits
+ordinary grouped scans for facets, but URL-shaped text fields must not be part
+of free-text search until a real text-search index exists.

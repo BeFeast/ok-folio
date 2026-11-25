@@ -1,0 +1,134 @@
+# OK Folio extractor configuration example.
+# Copy to config.yaml for local development and provide real secrets through
+# the deployment secret store for runtime environments.
+
+source:
+  base_url: "https://sight.photo/photos/category/15/"
+  category_id: 15
+  # Optional connector-specific 6-field cron. Leave unset to use scheduler.schedule.
+  # schedule: "0 0 */6 * * *"
+
+storage:
+  base_directory: "./data/originals"
+  daily_directory: "./data/_daily"
+  # Generated thumbnails are stored here and keyed by photo id, requested width,
+  # and content_hash. This directory is rebuildable but persistent across app
+  # container recreates. The API prunes least-recently-used files when the byte
+  # cap is exceeded; set to -1 only for local experiments with no pruning.
+  derivatives_directory: "/derivatives"
+  derivatives_max_bytes: 21474836480
+  # Optional, read-only legacy PhotoPrism storage fallback. Leave empty for the
+  # normal runtime: OK Folio serves thumbnails from its own originals and the
+  # derivative cache without any legacy mount. When set (only while the opt-in
+  # deploy/dockhand/ok-folio/compose.legacy-storage.yaml override is applied) it
+  # points at the read-only legacy PhotoPrism storage mount, and OK Folio falls
+  # back to a pre-rendered legacy thumbnail only when it cannot generate one from
+  # its own original. Every fallback hit is counted as the `legacy_storage` tier
+  # on GET /api/v1/stats/thumbnail-tiers. Also settable via OK_FOLIO_LEGACY_THUMB_DIR.
+  legacy_thumb_directory: ""
+  # Warm gallery thumbnails as soon as a new photo is ingested so first gallery
+  # paint hits the derivative cache instead of generating thumbnails on demand.
+  warm_on_ingest: true
+  warm_on_ingest_widths: [400, 700]
+
+similarity:
+  # Keeps pgvector similarity routes invisible until embeddings are available.
+  # Also settable via OK_FOLIO_SIMILARITY_ENABLED.
+  enabled: false
+  # Reserved for the embedding sidecar introduced by the follow-up backfill work.
+  # Also settable via OK_FOLIO_SIMILARITY_SIDECAR_URL.
+  sidecar_url: ""
+  # Runs a resumable CPU embedding backfill from the app process.
+  # Also settable via OK_FOLIO_SIMILARITY_BACKFILL.
+  backfill: false
+
+database:
+  # OK Folio owns its own dedicated Postgres. These DB_* settings must never
+  # point at the legacy MariaDB host; the app refuses to start if they do.
+  # Defaults when unset: host=postgres, port=5432, sslmode=disable.
+  host: "postgres"
+  port: 5432
+  user: "ok_folio"
+  password: "change-me"
+  database: "ok_folio"
+  sslmode: "disable"
+  # Optional: a full connection string (URL or key/value). When set it is used
+  # verbatim and overrides the discrete fields above. Also settable via
+  # DATABASE_URL.
+  url: ""
+  max_open_conns: 15
+  max_idle_conns: 5
+  conn_max_lifetime: 10m
+
+cache:
+  # Valkey is an optional, rebuildable cache. Runtime secrets should be supplied
+  # by the deployment secret store/Infisical as CACHE_PASSWORD, not committed.
+  # Defaults when unset: host=valkey, port=6379.
+  host: "valkey"
+  port: 6379
+  password: ""
+
+api:
+  enabled: true
+  port: 8080
+  host: "0.0.0.0"
+
+scheduler:
+  enabled: false
+  schedule: "0 0 */6 * * *"
+  pages: [1, 2, 3]
+
+retry:
+  max_attempts: 3
+  initial_delay: 1s
+  max_delay: 30s
+  multiplier: 2.0
+
+exif:
+  set_artist: true
+  set_date: true
+  set_title: true
+
+# Legacy PhotoPrism integration. During legacy retirement PhotoPrism is a
+# stopped-but-startable fallback and is kept out of the normal OK Folio product
+# path, so it stays disabled by default. `enabled` gates the whole integration
+# and the admin-only POST /api/v1/photoprism/index escape hatch (which returns a
+# disabled response when off); `auto_index` additionally lets new downloads
+# trigger PhotoPrism indexing. Leave both false for normal OK Folio runtime.
+photoprism:
+  enabled: false
+  service_url: "http://localhost:2342"
+  auto_index: false
+  username: "admin"
+  password: "change-me"
+
+telegram:
+  # Supply the real token through the deployment secret store as
+  # TELEGRAM_BOT_TOKEN, never in this file.
+  bot_token: ""
+  base_url: "https://api.telegram.org"
+  file_base_url: "https://api.telegram.org/file"
+  # Back-compat scalar. Empty means ingest from every chat unless sources below
+  # or managed connector sources are configured.
+  chat_id: ""
+  # Optional static sources. Runtime-managed sources in Settings override this
+  # list when any managed Telegram source rows exist.
+  sources:
+    # - chat_id: "-1001234567890"
+    #   label: "Example channel"
+  display_name: "Telegram"
+  limit: 100
+  # Poll Telegram hourly without changing the web-gallery scrape cadence.
+  schedule: "0 0 * * * *"
+
+logging:
+  level: "info"
+  format: "json"
+  output: "stdout"
+
+download:
+  concurrent_limit: 2
+  timeout: 30s
+  user_agent: "OK-Folio/0.1"
+  delay_between: 2s
+  rate_limit_backoff: 60s

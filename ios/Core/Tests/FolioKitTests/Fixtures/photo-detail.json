@@ -1,0 +1,19 @@
+{
+  "id": 1,
+  "url": "https://source.example/pieces/piece-0001",
+  "source_page": "https://source.example/category/paintings",
+  "source": "source.example/category/paintings",
+  "provider": "source.example",
+  "category": "Category paintings",
+  "title": "Piece one",
+  "artist": "artist-a",
+  "keywords": ["synthetic"],
+  "upload_date": "2026-01-01T00:00:00Z",
+  "file_path": "2026/01/piece-0001.jpg",
+  "file_name": "piece-0001.jpg",
+  "downloaded_at": "2026-01-02T03:04:05.123456Z",
+  "file_size": 123456,
+  "favorite": true,
+  "status": "downloaded",
+  "file_mod_time": "2026-01-02T03:04:05Z"
+}

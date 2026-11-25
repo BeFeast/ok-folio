@@ -1,0 +1,347 @@
+name: Release image
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_NAME: ok-folio
+  EMBEDDER_IMAGE_NAME: ok-folio-embedder
+
+jobs:
+  build-smoke-push:
+    name: Build, smoke, and push image
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        # Match the deployed VectorChord/Postgres runtime so the smoke database
+        # can own the vector extension before the app migrates. Keep the
+        # bootstrap administrator separate from the app role, as in production.
+        image: ghcr.io/tensorchord/vchord-postgres:pg18-v1.1.1
+        env:
+          POSTGRES_USER: ok_folio_admin
+          POSTGRES_PASSWORD: ok-folio-admin-password
+          POSTGRES_DB: ok_folio_smoke
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ok_folio_admin -d ok_folio_smoke"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Initialize smoke database with production role grants
+        env:
+          PGHOST: localhost
+          PGPASSWORD: ok-folio-admin-password
+          POSTGRES_USER: ok_folio_admin
+          POSTGRES_DB: ok_folio_smoke
+          DB_USER: ok_folio_app
+          DB_PASSWORD: ok-folio-app-password
+        run: ./deploy/dockhand/ok-folio/initdb/010-vector-extensions.sh
+
+      - name: Prepare image metadata
+        id: image
+        env:
+          REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
+        run: |
+          set -euo pipefail
+          registry="${REGISTRY_URL#http://}"
+          registry="${registry#https://}"
+          while [ "${registry%/}" != "$registry" ]; do
+            registry="${registry%/}"
+          done
+          if [ -z "$registry" ]; then
+            echo "REGISTRY_URL secret must contain the registry host" >&2
+            exit 1
+          fi
+          if [ "$registry" != "${registry%%/*}" ]; then
+            echo "REGISTRY_URL secret must not include a repository name or path component" >&2
+            exit 1
+          fi
+          if [[ "$registry" == *"?"* || "$registry" == *"#"* ]]; then
+            echo "REGISTRY_URL secret must contain only the registry host" >&2
+            exit 1
+          fi
+          if [[ "$registry" =~ [[:space:]] || ! "$registry" =~ ^[A-Za-z0-9._-]+(:[0-9]+)?$ ]]; then
+            echo "REGISTRY_URL secret must be a valid registry host, optionally with a numeric port" >&2
+            exit 1
+          fi
+          image="$registry/${IMAGE_NAME}"
+          embedder_image="$registry/${EMBEDDER_IMAGE_NAME}"
+          sha_tag="${GITHUB_SHA}"
+          smoke_tag="smoke-${GITHUB_SHA}"
+          {
+            echo "registry=$registry"
+            echo "image=$image"
+            echo "embedder_image=$embedder_image"
+            echo "sha_tag=$sha_tag"
+            echo "smoke_tag=$smoke_tag"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build smoke image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          load: true
+          tags: ${{ steps.image.outputs.image }}:${{ steps.image.outputs.smoke_tag }}
+
+      - name: Build embedder smoke image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./sidecar/embedder/Dockerfile
+          load: true
+          tags: ${{ steps.image.outputs.embedder_image }}:${{ steps.image.outputs.smoke_tag }}
+
+      - name: Smoke test image
+        env:
+          IMAGE_REF: ${{ steps.image.outputs.image }}:${{ steps.image.outputs.smoke_tag }}
+        run: |
+          set -euo pipefail
+          config_dir="$(mktemp -d)"
+          health_log="$(mktemp)"
+          container_name="ok-folio-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          # shellcheck disable=SC2329 # Invoked indirectly by the EXIT trap.
+          cleanup() {
+            docker rm -f "$container_name" >/dev/null 2>&1 || true
+            rm -f "$health_log"
+            rm -rf "$config_dir"
+          }
+          trap cleanup EXIT
+
+          cat > "$config_dir/config.yaml" <<'YAML'
+          source:
+            base_url: "https://example.com/gallery/category/1/"
+            category_id: 1
+          storage:
+            base_directory: "/tmp/ok-folio/originals"
+            daily_directory: "/tmp/ok-folio/_daily"
+          database:
+            host: "127.0.0.1"
+            port: 5432
+            user: "ok_folio_app"
+            password: "ok-folio-app-password"
+            database: "ok_folio_smoke"
+            sslmode: "disable"
+            max_open_conns: 2
+            max_idle_conns: 1
+            conn_max_lifetime: 10m
+          api:
+            enabled: true
+            port: 18080
+            host: "0.0.0.0"
+          scheduler:
+            enabled: false
+            schedule: "0 0 */6 * * *"
+            pages: [1]
+          retry:
+            max_attempts: 1
+            initial_delay: 1s
+            max_delay: 1s
+            multiplier: 1.0
+          exif:
+            set_artist: false
+            set_date: false
+            set_title: false
+          photoprism:
+            enabled: false
+            service_url: "http://localhost:2342"
+            auto_index: false
+            username: "ci"
+            password: "ci"
+          logging:
+            level: "info"
+            format: "json"
+            output: "stdout"
+          download:
+            concurrent_limit: 1
+            timeout: 5s
+            user_agent: "OK-Folio-CI/1.0"
+            delay_between: 1s
+            rate_limit_backoff: 1s
+          YAML
+
+          docker run -d \
+            --name "$container_name" \
+            --network host \
+            -v "$config_dir/config.yaml:/config/config.yaml:ro" \
+            "$IMAGE_REF"
+
+          for _ in $(seq 1 30); do
+            if curl -fsS "http://127.0.0.1:18080/health" >"$health_log"; then
+              if jq -e '.status == "healthy" and .database == "connected"' "$health_log" >/dev/null; then
+                cat "$health_log"
+                exit 0
+              fi
+            fi
+            sleep 2
+          done
+
+          echo "Smoke test did not receive a healthy response with a connected database" >&2
+          if [ -s "$health_log" ]; then
+            cat "$health_log" >&2
+          fi
+          docker logs "$container_name"
+          exit 1
+
+      - name: Smoke test ETL CLI
+        env:
+          IMAGE_REF: ${{ steps.image.outputs.image }}:${{ steps.image.outputs.smoke_tag }}
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint /app/ok-folio-etl "$IMAGE_REF" print-legacy-checks --legacy-database ok_folio_smoke >/dev/null
+
+      - name: Smoke test maintenance CLI
+        env:
+          IMAGE_REF: ${{ steps.image.outputs.image }}:${{ steps.image.outputs.smoke_tag }}
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint /app/ok-folio-admin "$IMAGE_REF" warm-thumbnails -h >/dev/null 2>&1
+          docker run --rm --entrypoint /app/ok-folio-admin "$IMAGE_REF" audit-originals -h >/dev/null 2>&1
+
+      - name: Smoke test embedder image
+        env:
+          IMAGE_REF: ${{ steps.image.outputs.embedder_image }}:${{ steps.image.outputs.smoke_tag }}
+        run: |
+          set -euo pipefail
+          response_log="$(mktemp)"
+          fixture_image="$(mktemp)"
+          container_name="ok-folio-embedder-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          # shellcheck disable=SC2329 # Invoked indirectly by the EXIT trap.
+          cleanup() {
+            docker rm -f "$container_name" >/dev/null 2>&1 || true
+            rm -f "$response_log" "$fixture_image"
+          }
+          trap cleanup EXIT
+
+          python3 - <<'PY' "$fixture_image"
+          import sys
+          pixels = bytes([
+              255, 0, 0, 0, 255, 0,
+              0, 0, 255, 255, 255, 255,
+          ])
+          with open(sys.argv[1], "wb") as f:
+              f.write(b"P6\n2 2\n255\n" + pixels)
+          PY
+
+          docker run -d \
+            --name "$container_name" \
+            -p 127.0.0.1:18081:8081 \
+            "$IMAGE_REF"
+
+          for _ in $(seq 1 60); do
+            if curl -fsS "http://127.0.0.1:18081/health" >"$response_log"; then
+              if jq -e '.ok == true and .model == "clip-vit-b32" and .dim == 512' "$response_log" >/dev/null; then
+                break
+              fi
+            fi
+            sleep 2
+          done
+          if ! jq -e '.ok == true and .model == "clip-vit-b32" and .dim == 512' "$response_log" >/dev/null 2>&1; then
+            echo "Embedder smoke test did not receive a healthy response" >&2
+            if [ -s "$response_log" ]; then
+              cat "$response_log" >&2
+            fi
+            docker logs "$container_name"
+            exit 1
+          fi
+
+          curl -fsS -X POST --data-binary "@$fixture_image" "http://127.0.0.1:18081/embed" >"$response_log"
+          jq -e '
+            .model == "clip-vit-b32"
+            and .dim == 512
+            and (.embedding | length) == 512
+            and ((.embedding | map(. * .) | add) > 0.999)
+            and ((.embedding | map(. * .) | add) < 1.001)
+          ' "$response_log" >/dev/null
+
+      - name: Log in to registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ steps.image.outputs.registry }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+
+      - name: Check immutable tag availability
+        id: immutable
+        env:
+          IMAGE: ${{ steps.image.outputs.image }}
+          EMBEDDER_IMAGE: ${{ steps.image.outputs.embedder_image }}
+          SHA_TAG: ${{ steps.image.outputs.sha_tag }}
+        run: |
+          set -euo pipefail
+          inspect_log="$(mktemp)"
+          cleanup() {
+            rm -f "$inspect_log"
+          }
+          trap cleanup EXIT
+
+          check_ref() {
+            local output_name="$1"
+            local immutable_ref="$2"
+            if docker manifest inspect "$immutable_ref" >"$inspect_log" 2>&1; then
+              echo "Immutable image tag already exists and will not be overwritten: $immutable_ref"
+              echo "$output_name=true" >> "$GITHUB_OUTPUT"
+              return
+            fi
+
+            if grep -Eiq '(manifest unknown|manifest.*not found|no such manifest|not found|name unknown)' "$inspect_log"; then
+              echo "Immutable image tag is not present yet: $immutable_ref"
+              echo "$output_name=false" >> "$GITHUB_OUTPUT"
+              return
+            fi
+
+            echo "Could not verify whether immutable image tag exists: $immutable_ref" >&2
+            cat "$inspect_log" >&2
+            exit 1
+          }
+
+          check_ref "app_sha_present" "$IMAGE:$SHA_TAG"
+          check_ref "embedder_sha_present" "$EMBEDDER_IMAGE:$SHA_TAG"
+
+      - name: Push immutable and dev tags
+        env:
+          IMAGE: ${{ steps.image.outputs.image }}
+          EMBEDDER_IMAGE: ${{ steps.image.outputs.embedder_image }}
+          SMOKE_TAG: ${{ steps.image.outputs.smoke_tag }}
+          SHA_TAG: ${{ steps.image.outputs.sha_tag }}
+          APP_SHA_PRESENT: ${{ steps.immutable.outputs.app_sha_present }}
+          EMBEDDER_SHA_PRESENT: ${{ steps.immutable.outputs.embedder_sha_present }}
+        run: |
+          set -euo pipefail
+          docker tag "$IMAGE:$SMOKE_TAG" "$IMAGE:dev"
+          docker tag "$EMBEDDER_IMAGE:$SMOKE_TAG" "$EMBEDDER_IMAGE:dev"
+          if [ "$APP_SHA_PRESENT" != "true" ]; then
+            docker tag "$IMAGE:$SMOKE_TAG" "$IMAGE:$SHA_TAG"
+            docker push "$IMAGE:$SHA_TAG"
+          else
+            echo "Skipping already-published immutable app tag $IMAGE:$SHA_TAG"
+          fi
+          docker push "$IMAGE:dev"
+          if [ "$EMBEDDER_SHA_PRESENT" != "true" ]; then
+            docker tag "$EMBEDDER_IMAGE:$SMOKE_TAG" "$EMBEDDER_IMAGE:$SHA_TAG"
+            docker push "$EMBEDDER_IMAGE:$SHA_TAG"
+          else
+            echo "Skipping already-published immutable embedder tag $EMBEDDER_IMAGE:$SHA_TAG"
+          fi
+          docker push "$EMBEDDER_IMAGE:dev"
+
+      - name: Log out of registry
+        if: always()
+        env:
+          REGISTRY: ${{ steps.image.outputs.registry }}
+        run: |
+          set -euo pipefail
+          if [ -n "$REGISTRY" ]; then
+            docker logout "$REGISTRY" >/dev/null 2>&1 || true
+          fi

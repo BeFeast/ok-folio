@@ -1,0 +1,150 @@
+{
+  "photos": [
+    {
+      "ID": 1,
+      "URL": "https://source.example/pieces/piece-0001",
+      "URLHash": "q83vEjRWeJCrze8SNFZ4kKvN7xI0VniQq83vEjRWeJA=",
+      "SourcePage": "https://source.example/category/paintings",
+      "Title": "Piece one",
+      "Artist": "artist-a",
+      "UploadDate": "2026-01-01T00:00:00Z",
+      "FilePath": "2026/01/piece-0001.jpg",
+      "FileName": "piece-0001.jpg",
+      "ImageWidth": 800,
+      "ImageHeight": 600,
+      "CapturedAt": null,
+      "CameraMake": "",
+      "CameraModel": "",
+      "LensModel": "",
+      "Orientation": "",
+      "GPSLatitude": null,
+      "GPSLongitude": null,
+      "DownloadedAt": "2026-01-02T03:04:05.123456Z",
+      "FileSize": 123456,
+      "Notes": "",
+      "keywords": ["synthetic"],
+      "manual_fields": [],
+      "Favorite": true,
+      "hidden_from_gallery": false,
+      "Provider": "source.example",
+      "Category": "paintings",
+      "ContentHash": null,
+      "PerceptualHash": 0,
+      "Status": "downloaded",
+      "ErrorMessage": ""
+    },
+    {
+      "ID": 2,
+      "URL": "https://source.example/pieces/piece-0002",
+      "URLHash": "u83vEjRWeJCrze8SNFZ4kKvN7xI0VniQq83vEjRWeJB=",
+      "SourcePage": "https://source.example/category/sculpture",
+      "Title": "Piece two",
+      "Artist": "artist-b",
+      "UploadDate": null,
+      "FilePath": "2026/01/piece-0002.jpg",
+      "FileName": "piece-0002.jpg",
+      "ImageWidth": 1024,
+      "ImageHeight": 768,
+      "CapturedAt": null,
+      "CameraMake": "",
+      "CameraModel": "",
+      "LensModel": "",
+      "Orientation": "",
+      "GPSLatitude": null,
+      "GPSLongitude": null,
+      "DownloadedAt": "2026-01-03T00:00:00Z",
+      "FileSize": 234567,
+      "Notes": "",
+      "keywords": [],
+      "manual_fields": [],
+      "Favorite": false,
+      "hidden_from_gallery": false,
+      "Provider": "source.example",
+      "Category": "sculpture",
+      "ContentHash": null,
+      "PerceptualHash": 0,
+      "Status": "downloaded",
+      "ErrorMessage": ""
+    }
+  ],
+  "total": 42,
+  "limit": 20,
+  "offset": 0,
+  "provider": "",
+  "source": "",
+  "category": "",
+  "artist": "",
+  "favorite": null,
+  "query": "",
+  "providers": [
+    {
+      "id": "source.example",
+      "display_name": "source.example",
+      "count": 42,
+      "sources": [
+        {
+          "id": "https://source.example/category/paintings",
+          "display_name": "source.example/category/paintings",
+          "count": 30
+        },
+        {
+          "id": "https://source.example/category/sculpture",
+          "display_name": "source.example/category/sculpture",
+          "count": 12
+        }
+      ]
+    }
+  ],
+  "facets": {
+    "sources": [
+      {
+        "id": "https://source.example/category/paintings",
+        "display_name": "source.example/category/paintings",
+        "count": 30
+      },
+      {
+        "id": "https://source.example/category/sculpture",
+        "display_name": "source.example/category/sculpture",
+        "count": 12
+      }
+    ],
+    "categories": [
+      {
+        "id": "paintings",
+        "display_name": "Category paintings",
+        "count": 30
+      },
+      {
+        "id": "sculpture",
+        "display_name": "Category sculpture",
+        "count": 12
+      }
+    ],
+    "artists": [
+      {
+        "id": "artist-a",
+        "display_name": "artist-a",
+        "count": 30
+      },
+      {
+        "id": "artist-b",
+        "display_name": "artist-b",
+        "count": 12
+      }
+    ],
+    "favorites": [
+      {
+        "id": "true",
+        "display_name": "Favorites",
+        "favorite": true,
+        "count": 5
+      },
+      {
+        "id": "false",
+        "display_name": "Not favorites",
+        "favorite": false,
+        "count": 37
+      }
+    ]
+  }
+}

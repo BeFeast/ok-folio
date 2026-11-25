@@ -1,0 +1,43 @@
+module ok-folio
+
+go 1.26.0
+
+require (
+	github.com/PuerkitoBio/goquery v1.14.0
+	github.com/alicebob/miniredis/v2 v2.40.0
+	github.com/disintegration/imaging v1.6.2
+	github.com/go-chi/chi/v5 v5.5.0
+	github.com/jackc/pgx/v5 v5.13.0
+	github.com/lib/pq v1.12.3
+	github.com/redis/go-redis/v9 v9.23.0
+	github.com/robfig/cron/v3 v3.0.1
+	github.com/rs/zerolog v1.35.1
+	github.com/rwcarlsen/goexif v0.0.0-20190401172101-9e8deecbddbd
+	golang.org/x/image v0.48.0
+	golang.org/x/time v0.16.0
+	gopkg.in/yaml.v3 v3.0.1
+	gorm.io/driver/postgres v1.6.3
+	gorm.io/driver/sqlite v1.6.0
+	gorm.io/gorm v1.31.2
+)
+
+require (
+	github.com/andybalholm/cascadia v1.3.5 // indirect
+	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/jackc/pgpassfile v1.0.0 // indirect
+	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
+	github.com/jackc/puddle/v2 v2.2.3 // indirect
+	github.com/jinzhu/inflection v1.0.0 // indirect
+	github.com/jinzhu/now v1.1.5 // indirect
+	github.com/kr/text v0.2.0 // indirect
+	github.com/mattn/go-colorable v0.1.14 // indirect
+	github.com/mattn/go-isatty v0.0.20 // indirect
+	github.com/mattn/go-sqlite3 v1.14.22 // indirect
+	github.com/rogpeppe/go-internal v1.15.0 // indirect
+	github.com/yuin/gopher-lua v1.1.1 // indirect
+	go.uber.org/atomic v1.12.0 // indirect
+	golang.org/x/net v0.62.0 // indirect
+	golang.org/x/sync v0.25.0 // indirect
+	golang.org/x/sys v0.50.0 // indirect
+	golang.org/x/text v0.44.0 // indirect
+)

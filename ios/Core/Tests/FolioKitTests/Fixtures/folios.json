@@ -1,0 +1,20 @@
+{
+  "folios": [
+    {
+      "id": 1,
+      "name": "Folio one",
+      "piece_count": 3,
+      "cover_photo_id": 7,
+      "created_at": "2026-01-01T00:00:00Z",
+      "updated_at": "2026-01-05T00:00:00Z"
+    },
+    {
+      "id": 2,
+      "name": "Folio two",
+      "piece_count": 0,
+      "cover_photo_id": null,
+      "created_at": "2026-01-02T00:00:00Z",
+      "updated_at": "2026-01-02T00:00:00Z"
+    }
+  ]
+}

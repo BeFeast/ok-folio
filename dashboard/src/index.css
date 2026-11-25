@@ -1,0 +1,199 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: light;
+
+  /* OK Folio design tokens (light defaults).
+     The runtime theme applier overrides these inline on <html> for theme
+     switching; these values keep first paint correct before JS runs. */
+  --bg: #f3efe7;
+  --surface: #fbf9f3;
+  --surface-2: #ffffff;
+  --wall: #e7e1d5;
+  --ink: #1c1a16;
+  --graphite: #57534b;
+  --muted: #8b847a;
+  --faint: #b6ae9f;
+  --line: #e6dfd2;
+  --line-2: #d8cfbe;
+  --accent: #7c2420;
+  --accent-soft: rgba(124, 36, 32, 0.08);
+  --accent-line: rgba(124, 36, 32, 0.34);
+  --on-accent: #fbf6ee;
+  --shadow: rgba(48, 40, 28, 0.1);
+  --shadow-2: rgba(48, 40, 28, 0.2);
+  --serif: "Newsreader", Georgia, "Times New Roman", serif;
+  --sans: "Instrument Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --mobile-tab-height: 70px;
+
+  /* Legacy operations surfaces reference --folio-* — alias them onto the new
+     tokens so those pages follow the active theme automatically. */
+  --folio-paper: var(--bg);
+  --folio-surface: var(--surface);
+  --folio-surface-muted: var(--wall);
+  --folio-ink: var(--ink);
+  --folio-graphite: var(--graphite);
+  --folio-line: var(--line);
+  --folio-accent: var(--accent);
+  --folio-accent-strong: var(--accent);
+  --folio-shadow: 0 24px 70px var(--shadow);
+
+  font-family: var(--sans);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+}
+
+body {
+  min-height: 100vh;
+  min-height: 100dvh;
+  background: var(--bg);
+  color: var(--ink);
+  -webkit-text-size-adjust: 100%;
+}
+
+#root {
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+@media (max-width: 640px) {
+  :root {
+    font-size: 15px;
+  }
+}
+
+::selection {
+  background: rgba(124, 36, 32, 0.16);
+}
+
+img {
+  -webkit-user-drag: none;
+  user-select: none;
+}
+
+::-webkit-scrollbar {
+  width: 11px;
+  height: 11px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--line-2);
+  border-radius: 99px;
+  border: 3px solid var(--bg);
+}
+
+@keyframes okf-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes okf-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes okf-pop {
+  0% {
+    transform: scale(1);
+  }
+  38% {
+    transform: scale(1.35);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes okf-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+.okf-shimmer {
+  position: relative;
+  overflow: hidden;
+}
+
+.okf-shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.28), transparent);
+  animation: okf-shimmer 1.15s ease-in-out infinite;
+}
+
+@keyframes okf-shimmer {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+/* Honor the Reduce-motion preference toggled in Settings. */
+:root[data-reduce-motion="1"] *,
+:root[data-reduce-motion="1"] *::before,
+:root[data-reduce-motion="1"] *::after {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
+}
+
+/* Piece Viewer chrome — cream-tinted buttons brighten on hover. Active
+   (pressed/open) buttons keep their accent fill and do not brighten. */
+.okf-chrome-btn:hover:not(.okf-chrome-btn--active) {
+  background: rgba(251, 246, 238, 0.24);
+}
+
+/* Prev/next arrows brighten on hover. */
+.okf-chrome-arrow:hover {
+  background: rgba(251, 246, 238, 0.24);
+}
+
+/* In-folios dashed "Add to folio" chip hover. */
+.okf-folio-add-chip:hover {
+  color: #dc8a70;
+  border-color: rgba(220, 138, 112, 0.6);
+}
+
+/* Museum-label note affordance: subtle hover/focus wash. */
+.okf-panel-heart:hover {
+  background: rgba(251, 246, 238, 0.12);
+}
+
+.okf-note-box:hover {
+  background: rgba(251, 246, 238, 0.08);
+}

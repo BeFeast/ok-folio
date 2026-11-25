@@ -1,0 +1,90 @@
+# Secrets and local runtime config
+.env
+.env.*
+!.env.example
+config.yaml
+config.*.yaml
+!config.example.yaml
+*.pem
+*.key
+*.crt
+
+# Live data and generated media
+/Pictures/
+/originals/
+/storage/
+/database/
+/_daily/
+/downloads/
+/uploads/
+/thumbs/
+/thumbnails/
+*.jpg
+*.jpeg
+*.png
+*.webp
+*.gif
+*.mp4
+*.mov
+*.heic
+*.sql
+
+# Frontend app icons are real source assets (not photos/thumbnails) — keep them tracked.
+!dashboard/public/*.png
+!ios/App/Assets.xcassets/AppIcon.appiconset/*.png
+*.sql.zst
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs and generated artifacts
+*.log
+coverage/
+*.out
+*.test
+dist/
+build/
+tmp/
+temp/
+*.tar
+*.tar.gz
+*.zip
+
+# Go build artifacts
+/extractor
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Frontend dependencies/build output
+node_modules/
+dashboard/node_modules/
+dashboard/dist/
+dashboard/.vite/
+dashboard/playwright-report/
+dashboard/test-results/
+
+# The Go binary embeds internal/dashboard/dist via `//go:embed dist/*`. Keep a
+# committed fallback index.html so `go build`/`go test` compile on a clean
+# checkout; real build artifacts staged over it stay ignored.
+!internal/dashboard/dist/
+internal/dashboard/dist/*
+!internal/dashboard/dist/index.html
+
+# OS / editor
+.DS_Store
+Thumbs.db
+._*
+.vscode/
+.idea/
+*.tmp
+*.swp
+*~
+
+# iOS build artifacts (generated on the operator Mac by xcodegen/xcodebuild)
+ios/OKFolio.xcodeproj/
+ios/.tools/
+ios/.build-xcode/
+ios/App/OKFolio.entitlements
+ios/Share/OKFolioShare.entitlements
